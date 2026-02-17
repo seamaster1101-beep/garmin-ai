@@ -70,13 +70,23 @@ if gemini_key:
                        f"Дай краткую оценку восстановления и совет по нагрузке на завтра (2 предложения).")
 
         # Настройки запроса
+        # Финальная версия для Gemini 1.5 Flash
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key_clean}"
         headers = {'Content-Type': 'application/json'}
-        data = {
-            "contents": [{
-                "parts": [{"text": user_prompt}]
-            }]
+        payload = {
+            "contents": [
+                {
+                    "parts": [{"text": user_prompt}]
+                }
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 300,
+                "temperature": 0.7
+            }
         }
+
+        # Отправляем именно payload через параметр json
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
 
         # Отправка
         response = requests.post(url, headers=headers, json=data, timeout=15)
