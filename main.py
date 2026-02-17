@@ -58,34 +58,39 @@ except:
 # ---------- AI ANALYSIS BLOCK ----------
 ai_advice = "Анализ не выполнен"
 if gemini_key:
-    api_key_clean = str(gemini_key).strip()
-    
-    workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
-    
-    prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
-              f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
-              f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
-              f"Дай краткую оценку восстановления и совет по нагрузке на завтра (2 предложения).")
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key_clean}"
-    
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        api_key_clean = str(gemini_key).strip()
+        
+        # Собираем данные для промпта
+        workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
+        
+        user_prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
+                       f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
+                       f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
+                       f"Дай краткую оценку восстановления и совет по нагрузке на завтра (2 предложения).")
+
+        # Настройки запроса
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key_clean}"
+        headers = {'Content-Type': 'application/json'}
+        data = {
+            "contents": [{
+                "parts": [{"text": user_prompt}]
+            }]
+        }
+
+        # Отправка
+        response = requests.post(url, headers=headers, json=data, timeout=15)
         
         if response.status_code == 200:
-            ai_advice = response.json()['candidates'][0]['content']['parts'][0]['text']
-        elif response.status_code == 400:
-            ai_advice = "Ошибка 400: Неверный формат ключа или запроса"
-        elif response.status_code == 403:
-            ai_advice = "Ошибка 403: Доступ запрещен (проверьте регион в Google AI Studio)"
-        elif response.status_code == 429:
-            ai_advice = "Ошибка 429: Слишком много запросов"
+            result = response.json()
+            # Достаем текст ответа аккуратно
+            ai_advice = result['candidates'][0]['content']['parts'][0]['text']
         else:
-            ai_advice = f"Ошибка {response.status_code}: {response.text[:50]}"
+            # Если ошибка — пишем код и кратко текст ошибки
+            ai_advice = f"API Error {response.status_code}: {response.reason}"
             
     except Exception as e:
-        ai_advice = f"Ошибка соединения: {str(e)[:50]}"
+        ai_advice = f"Local Error: {str(e)[:50]}"
 
 # ---------- GOOGLE SHEETS ----------
 creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
