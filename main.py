@@ -56,32 +56,36 @@ except:
     weight, hrv, sleep_score, sleep_min = "", "", "", ""
 
 # ---------- AI ANALYSIS BLOCK ----------
-# ---------- AI ANALYSIS BLOCK ----------
-ai_advice = "Анализ не выполнен (проверьте API ключ)"
+ai_advice = "Анализ не выполнен"
 if gemini_key:
-    # Добавили .strip(), чтобы убрать лишние пробелы, если они есть
-    api_key_clean = gemini_key.strip()
+    api_key_clean = str(gemini_key).strip()
     
     workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
     
-    prompt = (f"Проанализируй мои показатели за сегодня ({today_date}): "
+    prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
               f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
               f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
-              f"Дай краткую оценку восстановления и совет по нагрузке на завтра (макс 2-3 предложения).")
+              f"Дай краткую оценку восстановления и совет по нагрузке на завтра (2 предложения).")
     
-    # Используем чистый ключ в URL
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key_clean}"
     
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
-        response = requests.post(url, json=payload)
-        # Добавим вывод ошибки в лог, если ключ не сработал
-        if response.status_code != 200:
-            ai_advice = f"Ошибка API ({response.status_code}): {response.text[:100]}"
-        else:
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
             ai_advice = response.json()['candidates'][0]['content']['parts'][0]['text']
+        elif response.status_code == 400:
+            ai_advice = "Ошибка 400: Неверный формат ключа или запроса"
+        elif response.status_code == 403:
+            ai_advice = "Ошибка 403: Доступ запрещен (проверьте регион в Google AI Studio)"
+        elif response.status_code == 429:
+            ai_advice = "Ошибка 429: Слишком много запросов"
+        else:
+            ai_advice = f"Ошибка {response.status_code}: {response.text[:50]}"
+            
     except Exception as e:
-        ai_advice = f"Ошибка ИИ: {str(e)}"
+        ai_advice = f"Ошибка соединения: {str(e)[:50]}"
 
 # ---------- GOOGLE SHEETS ----------
 creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
