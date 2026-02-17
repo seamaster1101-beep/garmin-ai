@@ -86,17 +86,12 @@ if gemini_key:
         }
 
         # Отправляем именно payload через параметр json
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-
-        # Отправка
-        response = requests.post(url, headers=headers, json=data, timeout=15)
+   response = requests.post(url, headers=headers, json=payload, timeout=15)
         
         if response.status_code == 200:
             result = response.json()
-            # Достаем текст ответа аккуратно
             ai_advice = result['candidates'][0]['content']['parts'][0]['text']
         else:
-            # Если ошибка — пишем код и кратко текст ошибки
             ai_advice = f"API Error {response.status_code}: {response.reason}"
             
     except Exception as e:
