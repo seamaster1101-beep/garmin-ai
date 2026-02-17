@@ -5,9 +5,12 @@ from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
 
-print("Starting Garmin → Google Sheets sync")
+print("🚀 Starting Garmin → Google Sheets sync")
 
-# ---------- GARMIN ----------
+# ---------- SETTINGS ----------
+HR_MAX = 165   # <-- если нужно, поменяем после анализа
+
+# ---------- GARMIN LOGIN ----------
 email = os.environ["GARMIN_EMAIL"]
 password = os.environ["GARMIN_PASSWORD"]
 
@@ -16,7 +19,6 @@ client.login()
 
 now = datetime.now()
 today_date = now.strftime("%Y-%m-%d")
-start_time = now.strftime("%H:%M")
 
 print("Fetching data for:", today_date)
 
@@ -36,10 +38,11 @@ try:
         last_act = activities[0]
     else:
         last_act = None
-except:
+except Exception as e:
+    print("Activity fetch error:", e)
     last_act = None
 
-# ---------- HEALTH / MORNING ----------
+# ---------- HEALTH ----------
 try:
     body_data = client.get_body_composition(today_date)
     weight = body_data.get('totalWeight', 0) / 1000 if body_data else ""
@@ -77,44 +80,4 @@ daily_sheet.append_row([
 
 # ---------- WRITE ACTIVITY ----------
 if last_act:
-    activities_sheet = spreadsheet.worksheet("Activities")
-
-    duration_hr = round(last_act['duration'] / 3600, 2)
-
-    activities_sheet.append_row([
-        today_date,                                    # Date
-        last_act['startTimeLocal'][11:16],              # Start_Time
-        last_act['activityType']['typeKey'].capitalize(),  # Sport
-        duration_hr,                                    # Duration_hr
-        round(last_act.get('distance', 0) / 1000, 2),   # Distance_km
-        last_act.get('averageHR', ""),                  # Avg_HR
-        last_act.get('maxHR', ""),                      # Max_HR
-        last_act.get('trainingLoad', ""),               # Training_Load
-        last_act.get('trainingEffect', ""),             # Training_Effect
-        last_act.get('calories', ""),                   # Calories
-        last_act.get('avgPower', ""),                   # Avg_Power
-        last_act.get('averageRunningCadence', ""),      # Cadence
-        "",                                             # HR_Intensity (formula)
-        ""                                              # Session_Type (manual)
-    ])
-
-# ---------- WRITE MORNING ----------
-morning_sheet = spreadsheet.worksheet("Morning")
-morning_sheet.append_row([
-    today_date,
-    round(weight, 1) if weight else "",
-    resting_hr,
-    hrv,
-    body_battery,
-    sleep_score,
-    round(sleep_min, 0) if sleep_min else ""
-])
-
-# ---------- LOG ----------
-spreadsheet.worksheet("AI_Log").append_row([
-    now.strftime("%Y-%m-%d %H:%M"),
-    "Sync successful",
-    "Activities, Daily, Morning updated"
-])
-
-print("✅ Sync completed successfully!")
+    activities_sheet = spr_
