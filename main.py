@@ -4,11 +4,13 @@ from datetime import datetime
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
+import requests
 
-print("🚀 Starting Garmin → Google Sheets sync")
+print("🚀 Starting Garmin → Google Sheets PRO + AI analysis")
 
 # ---------- SETTINGS ----------
-HR_MAX = 165   # <-- если нужно, поменяем после анализа
+HR_MAX = 165
+gemini_key = os.environ.get("GEMINI_API_KEY")
 
 # ---------- GARMIN LOGIN ----------
 email = os.environ["GARMIN_EMAIL"]
@@ -24,7 +26,6 @@ print("Fetching data for:", today_date)
 
 # ---------- DAILY STATS ----------
 stats = client.get_stats(today_date)
-
 steps = stats.get("totalSteps", 0)
 daily_calories = stats.get("totalKilocalories", 0)
 daily_distance_km = stats.get("totalDistanceMeters", 0) / 1000
@@ -46,105 +47,70 @@ except Exception as e:
 try:
     body_data = client.get_body_composition(today_date)
     weight = body_data.get('totalWeight', 0) / 1000 if body_data else ""
-
     hrv_data = client.get_hrv_data(today_date)
     hrv = hrv_data[0].get('lastNightAvg', "") if hrv_data else ""
-
     sleep_data = client.get_sleep_data(today_date)
     sleep_score = sleep_data.get('dailySleepDTO', {}).get('sleepScore', "")
     sleep_min = sleep_data.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) / 60
 except:
     weight, hrv, sleep_score, sleep_min = "", "", "", ""
 
+# ---------- AI ANALYSIS BLOCK ----------
+ai_advice = "Анализ не выполнен (проверьте API ключ)"
+if gemini_key:
+    # Собираем контекст для ИИ из всех новых переменных
+    workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
+    
+    prompt = (f"Проанализируй мои показатели за сегодня ({today_date}): "
+              f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
+              f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
+              f"Дай краткую оценку восстановления и совет по нагрузке на завтра (макс 2-3 предложения).")
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    try:
+        response = requests.post(url, json=payload)
+        ai_advice = response.json()['candidates'][0]['content']['parts'][0]['text']
+    except Exception as e:
+        ai_advice = f"Ошибка ИИ: {str(e)}"
+
 # ---------- GOOGLE SHEETS ----------
 creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
-scopes = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
-credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
 gc = gspread.authorize(credentials)
-
 spreadsheet = gc.open("Garmin_Data")
 
-# ---------- WRITE DAILY ----------
+# 1. Лист DAILY
 daily_sheet = spreadsheet.worksheet("Daily")
-daily_sheet.append_row([
-    today_date,
-    steps,
-    round(daily_distance_km, 2),
-    daily_calories,
-    resting_hr,
-    body_battery
-])
+daily_sheet.append_row([today_date, steps, round(daily_distance_km, 2), daily_calories, resting_hr, body_battery])
 
-# ---------- WRITE ACTIVITY ----------
+# 2. Лист ACTIVITIES
 if last_act:
-    activities_sheet = spreadsheet.worksheet("Activities")
+    act_sheet = spreadsheet.worksheet("Activities")
+    avg_hr = last_act.get('averageHR', 0)
+    hr_intensity = round(avg_hr / HR_MAX, 2) if avg_hr else ""
+    te = last_act.get('trainingEffect', 0)
+    
+    if te:
+        if te < 2.0: session_type = "Recovery"
+        elif te < 3.0: session_type = "Base"
+        elif te < 4.0: session_type = "Tempo"
+        else: session_type = "HIIT"
+    else: session_type = ""
 
-    duration_hr = round(last_act['duration'] / 3600, 2)
-    distance_km = round(last_act.get('distance', 0) / 1000, 2)
-    avg_hr = last_act.get('averageHR', "")
-    max_hr = last_act.get('maxHR', "")
-    training_load = last_act.get('trainingLoad', "")
-    training_effect = last_act.get('trainingEffect', "")
-    calories = last_act.get('calories', "")
-    avg_power = last_act.get('avgPower', "")
-    cadence = last_act.get('averageRunningCadence', "")
-
-    # ---- HR Intensity ----
-    if avg_hr:
-        hr_intensity = round(avg_hr / HR_MAX, 2)
-    else:
-        hr_intensity = ""
-
-    # ---- Auto Session Type ----
-    if training_effect:
-        if training_effect < 2.0:
-            session_type = "Recovery"
-        elif training_effect < 3.0:
-            session_type = "Base"
-        elif training_effect < 4.0:
-            session_type = "Tempo"
-        else:
-            session_type = "HIIT"
-    else:
-        session_type = ""
-
-    activities_sheet.append_row([
-        today_date,                                     # A Date
-        last_act['startTimeLocal'][11:16],               # B Start_Time
-        last_act['activityType']['typeKey'].capitalize(),# C Sport
-        duration_hr,                                     # D Duration_hr
-        distance_km,                                     # E Distance_km
-        avg_hr,                                          # F Avg_HR
-        max_hr,                                          # G Max_HR
-        training_load,                                   # H Training_Load
-        training_effect,                                 # I Training_Effect
-        calories,                                        # J Calories
-        avg_power,                                       # K Avg_Power
-        cadence,                                         # L Cadence
-        hr_intensity,                                    # M HR_Intensity
-        session_type                                     # N Session_Type
+    act_sheet.append_row([
+        today_date, last_act['startTimeLocal'][11:16], last_act['activityType']['typeKey'].capitalize(),
+        round(last_act['duration'] / 3600, 2), round(last_act.get('distance', 0) / 1000, 2),
+        avg_hr, last_act.get('maxHR', ""), last_act.get('trainingLoad', ""),
+        te, last_act.get('calories', ""), last_act.get('avgPower', ""),
+        last_act.get('averageRunningCadence', ""), hr_intensity, session_type
     ])
 
-# ---------- WRITE MORNING ----------
+# 3. Лист MORNING
 morning_sheet = spreadsheet.worksheet("Morning")
-morning_sheet.append_row([
-    today_date,
-    round(weight, 1) if weight else "",
-    resting_hr,
-    hrv,
-    body_battery,
-    sleep_score,
-    round(sleep_min, 0) if sleep_min else ""
-])
+morning_sheet.append_row([today_date, round(weight, 1) if weight else "", resting_hr, hrv, body_battery, sleep_score, round(sleep_min, 0) if sleep_min else ""])
 
-# ---------- LOG ----------
-spreadsheet.worksheet("AI_Log").append_row([
-    now.strftime("%Y-%m-%d %H:%M"),
-    "Sync successful",
-    "Full system update complete"
-])
+# 4. Лист AI_LOG (Записываем вердикт!)
+spreadsheet.worksheet("AI_Log").append_row([now.strftime("%Y-%m-%d %H:%M"), "AI Analysis Complete", ai_advice])
 
-print("✅ Sync completed successfully — PRO version active.")
+print(f"✅ Sync Successful! AI Advice: {ai_advice[:50]}...")
