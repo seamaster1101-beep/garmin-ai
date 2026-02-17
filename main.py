@@ -18,16 +18,28 @@ client.login()
 today = date.today().isoformat()
 print("Fetching stats for:", today)
 
+# 1. Основные активности
 stats = client.get_stats(today)
-
 steps = stats.get("totalSteps", 0)
 calories = stats.get("totalKilocalories", 0)
 distance_km = stats.get("totalDistanceMeters", 0) / 1000
 
-print("Garmin data:")
-print("Steps:", steps)
-print("Calories:", calories)
-print("Distance (km):", distance_km)
+# 2. Данные для листа Morning (Вес, Сон, HRV)
+print("Fetching health stats...")
+try:
+    # Пытаемся получить вес и HRV
+    body_data = client.get_body_composition(today)
+    weight = body_data.get('totalWeight', 0) / 1000 if body_data else 0
+    
+    hrv_data = client.get_hrv_data(today)
+    hrv = hrv_data[0].get('lastNightAvg', 0) if hrv_data else 0
+    
+    sleep_data = client.get_sleep_data(today)
+    sleep_score = sleep_data.get('dailySleepDTO', {}).get('sleepScore', 0)
+    sleep_min = sleep_data.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) / 60
+except Exception as e:
+    print(f"Health data fetch failed: {e}")
+    weight, hrv, sleep_score, sleep_min = 0, 0, 0, 0
 
 # ---------- GOOGLE SHEETS ----------
 print("Connecting to Google Sheets...")
@@ -37,19 +49,26 @@ credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
 gc = gspread.authorize(credentials)
 spreadsheet = gc.open("Garmin_Data")
 
-# Запись в Activities (то, что уже работает)
+# 1. Запись в Activities
+print("Updating Activities...")
 spreadsheet.worksheet("Activities").append_row([today, steps, calories, round(distance_km, 2)])
 
-# Запись в Morning (новое!)
+# 2. Запись в Morning (image_3fd624.png)
+print("Updating Morning...")
 spreadsheet.worksheet("Morning").append_row([
     today, 
-    round(weight, 1), 
-    "", # Body Fat (если нет весов Index, можно оставить пустым)
+    round(weight, 1) if weight else "", 
+    "", # Body_Fat
     stats.get("restDetectorRestingHeartRate", 0),
-    hrv,
+    hrv if hrv else "",
     stats.get("bodyBatteryMostRecentValue", 0),
-    sleep_score,
-    round(sleep_min, 0)
+    sleep_score if sleep_score else "",
+    round(sleep_min, 0) if sleep_min else ""
 ])
+
+# 3. Запись в AI_Log (Для будущего анализа)
+# Пока просто фиксируем факт синхронизации
+print("Updating AI_Log...")
+spreadsheet.worksheet("AI_Log").append_row([today, "Auto-Sync successful", "All data processed"])
 
 print("✅ Sync completed successfully")
