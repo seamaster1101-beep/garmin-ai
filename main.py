@@ -67,7 +67,7 @@ if gemini_key:
                        f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
                        f"Дай краткую оценку восстановления и совет на завтра (2 предложения).")
 
-        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={api_key_clean}"
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key_clean}"
         headers = {'Content-Type': 'application/json'}
         payload = {
             "contents": [{"parts": [{"text": user_prompt}]}],
