@@ -22,7 +22,7 @@ client.login()
 now = datetime.now()
 today_date = now.strftime("%Y-%m-%d")
 
-print("Fetching data for:", today_date)
+print(f"Fetching data for: {today_date}")
 
 # ---------- DAILY STATS ----------
 stats = client.get_stats(today_date)
@@ -40,7 +40,7 @@ try:
     else:
         last_act = None
 except Exception as e:
-    print("Activity fetch error:", e)
+    print(f"Activity fetch error: {e}")
     last_act = None
 
 # ---------- HEALTH ----------
@@ -60,33 +60,21 @@ ai_advice = "Анализ не выполнен"
 if gemini_key:
     try:
         api_key_clean = str(gemini_key).strip()
-        
-        # Собираем данные для промпта
         workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
         
         user_prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
                        f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
                        f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
-                       f"Дай краткую оценку восстановления и совет по нагрузке на завтра (2 предложения).")
+                       f"Дай краткую оценку восстановления и совет на завтра (2 предложения).")
 
-        # Настройки запроса
-        # Финальная версия для Gemini 1.5 Flash
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key_clean}"
         headers = {'Content-Type': 'application/json'}
         payload = {
-            "contents": [
-                {
-                    "parts": [{"text": user_prompt}]
-                }
-            ],
-            "generationConfig": {
-                "maxOutputTokens": 300,
-                "temperature": 0.7
-            }
+            "contents": [{"parts": [{"text": user_prompt}]}],
+            "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7}
         }
 
-        # Отправляем именно payload через параметр json
-   response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
         
         if response.status_code == 200:
             result = response.json()
@@ -133,7 +121,7 @@ if last_act:
 morning_sheet = spreadsheet.worksheet("Morning")
 morning_sheet.append_row([today_date, round(weight, 1) if weight else "", resting_hr, hrv, body_battery, sleep_score, round(sleep_min, 0) if sleep_min else ""])
 
-# 4. Лист AI_LOG (Записываем вердикт!)
-spreadsheet.worksheet("AI_Log").append_row([now.strftime("%Y-%m-%d %H:%M"), "AI Analysis Complete", ai_advice])
+# 4. Лист AI_LOG
+spreadsheet.worksheet("AI_Log").append_row([now.strftime("%Y-%m-%d %H:%M"), "Sync Complete", ai_advice])
 
-print(f"✅ Sync Successful! AI Advice: {ai_advice[:50]}...")
+print(f"✅ Done! AI Advice: {ai_advice[:50]}...")
