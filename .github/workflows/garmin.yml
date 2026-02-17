@@ -30,4 +30,5 @@ jobs:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  # Добавляем доступ к ключу ИИ
         run: python main.py
