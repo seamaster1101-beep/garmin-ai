@@ -56,9 +56,12 @@ except:
     weight, hrv, sleep_score, sleep_min = "", "", "", ""
 
 # ---------- AI ANALYSIS BLOCK ----------
+# ---------- AI ANALYSIS BLOCK ----------
 ai_advice = "Анализ не выполнен (проверьте API ключ)"
 if gemini_key:
-    # Собираем контекст для ИИ из всех новых переменных
+    # Добавили .strip(), чтобы убрать лишние пробелы, если они есть
+    api_key_clean = gemini_key.strip()
+    
     workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
     
     prompt = (f"Проанализируй мои показатели за сегодня ({today_date}): "
@@ -66,11 +69,17 @@ if gemini_key:
               f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
               f"Дай краткую оценку восстановления и совет по нагрузке на завтра (макс 2-3 предложения).")
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+    # Используем чистый ключ в URL
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key_clean}"
+    
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
         response = requests.post(url, json=payload)
-        ai_advice = response.json()['candidates'][0]['content']['parts'][0]['text']
+        # Добавим вывод ошибки в лог, если ключ не сработал
+        if response.status_code != 200:
+            ai_advice = f"Ошибка API ({response.status_code}): {response.text[:100]}"
+        else:
+            ai_advice = response.json()['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
         ai_advice = f"Ошибка ИИ: {str(e)}"
 
