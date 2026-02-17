@@ -80,4 +80,71 @@ daily_sheet.append_row([
 
 # ---------- WRITE ACTIVITY ----------
 if last_act:
-    activities_sheet = spr_
+    activities_sheet = spreadsheet.worksheet("Activities")
+
+    duration_hr = round(last_act['duration'] / 3600, 2)
+    distance_km = round(last_act.get('distance', 0) / 1000, 2)
+    avg_hr = last_act.get('averageHR', "")
+    max_hr = last_act.get('maxHR', "")
+    training_load = last_act.get('trainingLoad', "")
+    training_effect = last_act.get('trainingEffect', "")
+    calories = last_act.get('calories', "")
+    avg_power = last_act.get('avgPower', "")
+    cadence = last_act.get('averageRunningCadence', "")
+
+    # ---- HR Intensity ----
+    if avg_hr:
+        hr_intensity = round(avg_hr / HR_MAX, 2)
+    else:
+        hr_intensity = ""
+
+    # ---- Auto Session Type ----
+    if training_effect:
+        if training_effect < 2.0:
+            session_type = "Recovery"
+        elif training_effect < 3.0:
+            session_type = "Base"
+        elif training_effect < 4.0:
+            session_type = "Tempo"
+        else:
+            session_type = "HIIT"
+    else:
+        session_type = ""
+
+    activities_sheet.append_row([
+        today_date,                                     # A Date
+        last_act['startTimeLocal'][11:16],               # B Start_Time
+        last_act['activityType']['typeKey'].capitalize(),# C Sport
+        duration_hr,                                     # D Duration_hr
+        distance_km,                                     # E Distance_km
+        avg_hr,                                          # F Avg_HR
+        max_hr,                                          # G Max_HR
+        training_load,                                   # H Training_Load
+        training_effect,                                 # I Training_Effect
+        calories,                                        # J Calories
+        avg_power,                                       # K Avg_Power
+        cadence,                                         # L Cadence
+        hr_intensity,                                    # M HR_Intensity
+        session_type                                     # N Session_Type
+    ])
+
+# ---------- WRITE MORNING ----------
+morning_sheet = spreadsheet.worksheet("Morning")
+morning_sheet.append_row([
+    today_date,
+    round(weight, 1) if weight else "",
+    resting_hr,
+    hrv,
+    body_battery,
+    sleep_score,
+    round(sleep_min, 0) if sleep_min else ""
+])
+
+# ---------- LOG ----------
+spreadsheet.worksheet("AI_Log").append_row([
+    now.strftime("%Y-%m-%d %H:%M"),
+    "Sync successful",
+    "Full system update complete"
+])
+
+print("✅ Sync completed successfully — PRO version active.")
