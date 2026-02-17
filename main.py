@@ -34,7 +34,8 @@ print("Connecting to Google Sheets...")
 
 creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
 
-scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+scopes = ["https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"]
 credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
 gc = gspread.authorize(credentials)
 
