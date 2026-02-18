@@ -21,7 +21,7 @@ def update_or_append(sheet, date_str, row_data):
                 break
         if found_idx != -1:
             for i, val in enumerate(row_data[1:], start=2):
-                if val not in (None, "", 0, "0"): 
+                if val not in (None, "", 0, "0", 0.0): 
                     sheet.update_cell(found_idx, i, val)
             return "Updated"
         else:
@@ -37,40 +37,44 @@ except: print("Fail login"); exit(1)
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
-yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+# Для веса и HRV берем диапазон, чтобы точно найти данные
+start_date = (now - timedelta(days=3)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK ---
+# --- 1. MORNING BLOCK (Сон, HRV, Вес) ---
+morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
+
 try:
+    # 1.1 Сон и время пробуждения
     sl = gar.get_sleep_data(today_str)
     s_dto = sl.get("dailySleepDTO") or {}
     
-    # Пытаемся достать ЛОКАЛЬНОЕ время пробуждения
-    raw_wake = s_dto.get("sleepEndTimeLocal")
-    if raw_wake:
-        # Превращаем "2026-02-18T07:15:00.0" в "2026-02-18 07:15"
-        morning_ts = raw_wake.replace("T", " ")[:16]
-    else:
-        # Если данных о сне нет, ставим сегодняшнее число и 08:00
-        morning_ts = f"{today_str} 08:00"
-
+    # Ищем локальное время окончания сна (sleepEndTimeLocal)
+    wake_time = s_dto.get("sleepEndTimeLocal")
+    if wake_time:
+        # Убираем лишние секунды и букву T: 2024-05-20T07:30:00 -> 2024-05-20 07:30
+        morning_ts = wake_time.replace("T", " ")[:16]
+    
     slp_h = round(s_dto.get("sleepTimeSeconds", 0)/3600, 1) if s_dto.get("sleepTimeSeconds") else ""
     slp_sc = s_dto.get("sleepScore", "")
-    
-    # HRV за последнюю ночь
+
+    # 1.2 HRV (ночное)
     hrv_data = gar.get_hrv_data(today_str)
-    hrv = hrv_data[0].get("lastNightAvg", "") if hrv_data else ""
-    
-    # Вес (сегодня или вчера)
-    w_comp = gar.get_body_composition(today_str)
-    if not w_comp.get('uploads'): w_comp = gar.get_body_composition(yesterday_str)
-    weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1) if w_comp.get('uploads') else ""
-    
+    if hrv_data and isinstance(hrv_data, list):
+        hrv = hrv_data[0].get("lastNightAvg", "")
+
+    # 1.3 Вес (ищем последнее измерение за 3 дня)
+    w_comp = gar.get_body_composition(start_date, today_str)
+    if w_comp.get('uploads'):
+        weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
+
+    # 1.4 BB и Пульс
     summary = gar.get_user_summary(today_str) or {}
     bb_morning = summary.get("bodyBatteryHighestValue", "")
     r_hr = summary.get("restingHeartRate", "")
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
-except:
+except Exception as e:
+    print(f"Morning Logic Error: {e}")
     morning_row = [f"{today_str} 08:00", "", "", "", "", "", ""]
 
 # --- 2. DAILY BLOCK ---
@@ -91,8 +95,8 @@ try:
     acts.sort(key=lambda x: x.get('startTimeLocal', ''))
     for a in acts:
         st_time = a.get('startTimeLocal', "")[11:16]
-        # Расширенный поиск каденса (вело датчики)
-        cad = a.get('averageBikingCadence') or a.get('averageCadence') or a.get('averageRunCadence') or ""
+        # Каденс для вело (часто 'averageBikingCadence')
+        cad = a.get('averageBikingCadence') or a.get('averageCadence') or ""
         avg_hr = a.get('averageHR', 0)
         
         intensity = "N/A"
@@ -124,6 +128,6 @@ try:
         if f"{act[0]}_{act[1]}_{act[2]}" not in existing:
             act_sheet.append_row(act)
     
-    print(f"✔ Готово. Время Morning: {morning_ts}")
+    print(f"✔ Синхронизация: Morning Time = {morning_ts}")
 except Exception as e:
-    print(f"❌ Ошибка: {e}")
+    print(f"❌ Ошибка записи: {e}")
