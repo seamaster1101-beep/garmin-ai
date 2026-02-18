@@ -23,12 +23,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install garminconnect gspread google-auth
+          pip install garminconnect gspread google-auth requests google-generativeai
 
       - name: Run script
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  # Добавляем доступ к ключу ИИ
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
