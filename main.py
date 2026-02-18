@@ -123,4 +123,42 @@ try:
         ])
 except: pass
 
-# ---
+# --- 4. GOOGLE SHEETS SYNC ---
+try:
+    creds = json.loads(GOOGLE_CREDS_JSON)
+    c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(c_obj).open("Garmin_Data")
+    
+    # Daily
+    update_or_append(ss.worksheet("Daily"), today_date, daily_row)
+    
+    # Morning
+    update_or_append(ss.worksheet("Morning"), current_ts, morning_row)
+    
+    # Activities (Умная проверка дублей)
+    act_sheet = ss.worksheet("Activities")
+    all_acts = act_sheet.get_all_values()
+    existing_keys = [f"{r[0]}_{r[1]}_{r[2]}" for r in all_acts if len(r) > 2]
+    
+    for act in activities_to_log:
+        key = f"{act[0]}_{act[1]}_{act[2]}"
+        if key not in existing_keys:
+            act_sheet.append_row(act)
+
+    # --- 5. AI LOG ---
+    advice = "AI analysis skipped or failed"
+    if GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY.strip())
+            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            m_name = "models/gemini-1.5-flash" if "models/gemini-1.5-flash" in models else models[0]
+            model = genai.GenerativeModel(m_name)
+            prompt = f"Данные {today_date}: Шаги {daily_row[1]}, Сон {slp_h}ч, Тренировок: {len(activities_to_log)}. Дай совет на 2 фразы."
+            advice = model.generate_content(prompt).text.strip()
+        except: pass
+        
+    ss.worksheet("AI_Log").append_row([current_ts, "Sync Successful", advice])
+    print(f"✔ Синхронизация окончена. Тренировок обработано: {len(activities_to_log)}")
+
+except Exception as e:
+    print(f"❌ Ошибка Sheets: {e}")
