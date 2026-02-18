@@ -57,41 +57,48 @@ try:
 except:
     weight, hrv, sleep_score, sleep_min = "", "", "", ""
 
-# ---------- AI ANALYSIS BLOCK (OFFICIAL SDK - FIX 404) ----------
+# ---------- AI ANALYSIS BLOCK (ULTIMATE AUTO-FIND) ----------
 import google.generativeai as genai
 
 ai_advice = "Анализ не выполнен"
 if gemini_key:
     try:
-        # Принудительно настраиваем на стабильный поток
         genai.configure(api_key=gemini_key.strip())
         
-        # Указываем полную версию модели, если короткая не находится
-        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        # Автоматический поиск доступной модели (чтобы не гадать с 1.5-flash)
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        print(f"Available models: {available_models}")
         
-        workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
+        # Выбираем первую попавшуюся модель flash или pro
+        target_model = None
+        for m_name in ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-8b', 'models/gemini-1.0-pro']:
+            if m_name in available_models:
+                target_model = m_name
+                break
         
-        user_prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
-                       f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
-                       f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
-                       f"Дай краткую оценку восстановления и совет на завтра (2 sentences).")
-
-        # Просим ИИ сгенерировать текст
-        response = model.generate_content(user_prompt)
-        
-        # Если ответ пришел — берем текст
-        if response:
-            ai_advice = response.text
-            print("✅ Наконец-то! SDK выдал результат.")
+        if not target_model and available_models:
+            target_model = available_models[0]
             
-    except Exception as e:
-        # Если 1.5 Flash всё еще капризничает, пробуем Gemini Pro как запасной вариант
-        try:
-            model = genai.GenerativeModel('gemini-pro')
+        if target_model:
+            print(f"Using model: {target_model}")
+            model = genai.GenerativeModel(target_model)
+            
+            workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
+            
+            user_prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
+                           f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
+                           f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
+                           f"Дай краткую оценку восстановления и совет на завтра (2 sentences).")
+
             response = model.generate_content(user_prompt)
             ai_advice = response.text
-        except:
-            ai_advice = f"SDK Final Error: {str(e)[:100]}"
+            print("✅ ПОБЕДА! ИИ ответил.")
+        else:
+            ai_advice = "Error: No supported models found in this account."
+
+    except Exception as e:
+        ai_advice = f"Ultimate Error: {str(e)[:100]}"
+        print(f"❌ Ошибка: {e}")
 
 print(f"Final AI Status: {ai_advice}")
 
