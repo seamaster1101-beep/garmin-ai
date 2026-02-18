@@ -23,7 +23,7 @@ def update_or_append(sheet, date_str, row_data):
                 break
         if found_idx != -1:
             for i, val in enumerate(row_data[1:], start=2):
-                if val not in (None, "", 0, "0", 0.0): 
+                if val not in (None, "", 0, "0", 0.0, "N/A"): 
                     sheet.update_cell(found_idx, i, val)
             return "Updated"
         else:
@@ -41,66 +41,78 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 three_days_ago = (now - timedelta(days=3)).strftime("%Y-%m-%d")
 
-# Инициализация переменных для ИИ
-steps, dist, cals, r_hr, bb_morning, slp_h, weight, hrv = 0, 0, 0, 0, 0, 0, 0, 0
+# --- 1. MORNING BLOCK (Weight, HRV, Sleep Score) ---
+morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
 
-# --- 1. MORNING BLOCK ---
-morning_ts = f"{today_str} 08:00"
 try:
+    # Вес (пробуем достать через body_composition)
+    w_data = gar.get_body_composition(three_days_ago, today_str)
+    if w_data.get('uploads'):
+        weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
+
+    # Сон и Sleep Score
     sl = gar.get_sleep_data(today_str)
     s_dto = sl.get("dailySleepDTO") or {}
-    wake_time = s_dto.get("sleepEndTimeLocal")
-    if wake_time:
-        morning_ts = wake_time.replace("T", " ")[:16]
-    
-    slp_h = round(s_dto.get("sleepTimeSeconds", 0)/3600, 1) if s_dto.get("sleepTimeSeconds") else 0
-    slp_sc = s_dto.get("sleepScore", 0)
+    slp_sc = s_dto.get("sleepScore", "") # Тот самый Score
+    slp_h = round(s_dto.get("sleepTimeSeconds", 0)/3600, 1) if s_dto.get("sleepTimeSeconds") else ""
+    if s_dto.get("sleepEndTimeLocal"):
+        morning_ts = s_dto.get("sleepEndTimeLocal").replace("T", " ")[:16]
 
-    h_data = gar.get_hrv_data(today_str)
-    hrv = h_data[0].get("lastNightAvg", 0) if h_data and isinstance(h_data, list) else 0
-
-    w_comp = gar.get_body_composition(three_days_ago, today_str)
-    if w_comp.get('uploads'):
-        weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
+    # HRV
+    hrv_res = gar.get_hrv_data(today_str)
+    if hrv_res:
+        # HRV может быть списком или словарем
+        hrv = hrv_res[0].get("lastNightAvg", "") if isinstance(hrv_res, list) else hrv_res.get("lastNightAvg", "")
 
     summary = gar.get_user_summary(today_str) or {}
-    bb_morning = summary.get("bodyBatteryHighestValue", 0)
-    r_hr = summary.get("restingHeartRate", 0)
+    bb_morning = summary.get("bodyBatteryHighestValue", "")
+    r_hr = summary.get("restingHeartRate", "")
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
-except:
-    morning_row = [morning_ts, 0, 0, 0, 0, 0, 0]
+except: morning_row = [morning_ts, "", "", "", "", "", ""]
 
-# --- 2. DAILY BLOCK ---
+# --- 2. DAILY BLOCK (Calories) ---
 try:
     step_data = gar.get_daily_steps(today_str, today_str)
     steps = step_data[0].get('totalSteps', 0) if step_data else 0
     dist = round(step_data[0].get('totalDistance', 0) / 1000, 2) if step_data else 0
-    cals = (summary.get("activeCalories", 0) or 0) + (summary.get("bmrCalories", 0) or 0)
     
-    daily_row = [today_str, steps, dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", 0)]
-except:
-    daily_row = [today_str, 0, 0, 0, 0, 0]
+    # КАЛОРИИ: Берем total, если 0 - считаем сумму
+    total_c = summary.get("totalCalories", 0)
+    if total_c == 0:
+        total_c = (summary.get("activeCalories", 0) or 0) + (summary.get("bmrCalories", 0) or 0)
+    cals = total_c if total_c > 0 else ""
+    
+    daily_row = [today_str, steps, dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+except: daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES ---
+# --- 3. ACTIVITIES (Load & Cadence) ---
 activities_to_log = []
 try:
     acts = gar.get_activities_by_date(today_str, today_str)
     acts.sort(key=lambda x: x.get('startTimeLocal', ''))
     for a in acts:
         st_time = a.get('startTimeLocal', "")[11:16]
-        cad = a.get('averageBikingCadence') or a.get('averageCadence') or ""
-        avg_hr = a.get('averageHR', 0)
         
+        # КАДЕНС: проверяем все возможные поля для ANT+ датчиков
+        cad = (a.get('averageBikingCadence') or 
+               a.get('averageCadence') or 
+               a.get('averageRunCadence') or 
+               a.get('maxCadence', ""))
+        
+        # НАГРУЗКА (Training Load)
+        t_load = a.get('trainingLoad', "")
+        
+        avg_hr = a.get('averageHR', 0)
         intensity = "N/A"
-        if avg_hr and r_hr > 0:
+        if avg_hr and r_hr and r_hr > 0:
             res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
             intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
 
         activities_to_log.append([
             today_str, st_time, a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
-            avg_hr, a.get('maxHR', ""), a.get('trainingLoad', ""),
+            avg_hr, a.get('maxHR', ""), t_load,
             round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
             a.get('avgPower', ""), cad, intensity
         ])
@@ -121,26 +133,17 @@ try:
         if f"{act[0]}_{act[1]}_{act[2]}" not in existing:
             act_sheet.append_row(act)
 
-    # --- AI SECTION ---
-    advice = "AI Skip"
+    # AI Section (с защитой от Quota)
+    advice = "AI Limit"
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
-            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            if models:
-                model = genai.GenerativeModel(models[0])
-                prompt = (f"Анализ данных за {today_str}: Вес {weight}кг, HRV {hrv}, Сон {slp_h}ч, "
-                          f"Шаги {steps}, Ккал {cals}, Body Battery утром {bb_morning}. "
-                          f"Тренировок сегодня: {len(activities_to_log)}. "
-                          f"Дай краткий профессиональный совет по восстановлению или нагрузке на завтра.")
-                response = model.generate_content(prompt)
-                advice = response.text.strip()
-        except Exception as e:
-            if "429" in str(e): advice = "AI Limit Reached"
-            else: advice = f"AI Error: {str(e)[:30]}"
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = f"Данные: HRV {hrv}, Сон {slp_h}ч (Score: {slp_sc}), Ккал {cals}. Дай совет."
+            advice = model.generate_content(prompt).text.strip()
+        except: pass
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Готово. AI: {advice[:50]}...")
+    print(f"✔ Обновлено. Load: {t_load if activities_to_log else 'N/A'}, Score: {slp_sc}")
 
-except Exception as e:
-    print(f"❌ Ошибка: {e}")
+except Exception as e: print(f"❌ Error: {e}")
