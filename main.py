@@ -82,21 +82,69 @@ try:
     morning_row = [current_ts, weight, r_hr, hrv, morning_bb, slp_sc, slp_h]
 except: morning_row = [current_ts, "", "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Хронология) ---
-activities = []
+# --- 1. ТРЕНИРОВКИ (Лист Activities) ---
+activities_to_log = []
 try:
+    # Получаем данные о пульсе покоя для расчета интенсивности
+    stats = gar.get_stats(today_date) or {}
+    r_hr = stats.get("restingHeartRate", "")
+
     acts = gar.get_activities_by_date(today_date, today_date)
+    # Сортируем строго по времени: сначала силовая, потом вело
     acts.sort(key=lambda x: x.get('startTimeLocal', ''))
+    
     for a in acts:
-        st = a.get('startTimeLocal', '').split('T')[-1][:5]
-        activities.append([
-            today_date, st, a.get('activityType', {}).get('typeKey', ''),
-            round(a.get('duration', 0)/3600, 2), round(a.get('distance', 0)/1000, 2),
-            a.get('averageHR', ''), a.get('maxHR', ''), a.get('trainingLoad', ''),
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ''),
-            a.get('avgPower', ''), a.get('averageCadence', ''), ""
+        # 1. Время старта (извлекаем строго HH:MM из '2026-02-18T16:30:00.0')
+        raw_start = a.get('startTimeLocal', "")
+        st_time = raw_start.split('T')[1][:5] if 'T' in raw_start else "00:00"
+        
+        # 2. Интенсивность
+        avg_hr = a.get('averageHR', '')
+        intensity_label = calculate_intensity(avg_hr, r_hr) # Используем твою формулу
+        
+        activities_to_log.append([
+            today_date,                                   # A: Date
+            st_time,                                      # B: Start_Time
+            a.get('activityType', {}).get('typeKey', ''),  # C: Sport
+            round(a.get('duration', 0) / 3600, 2),        # D: Duration_hr
+            round(a.get('distance', 0) / 1000, 2),        # E: Distance_km
+            avg_hr,                                       # F: Avg_HR
+            a.get('maxHR', ''),                           # G: Max_HR
+            a.get('trainingLoad', ''),                    # H: Training_Load
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), # I: Training_Effect
+            a.get('calories', ''),                        # J: Calories
+            a.get('avgPower', ''),                        # K: Avg_Power
+            a.get('averageCadence', ''),                  # L: Cadence
+            intensity_label                               # M: HR_Intensity
         ])
-except: pass
+except Exception as e:
+    print(f"Ошибка сбора тренировок: {e}")
+
+# --- 2. ЗАПИСЬ (С защитой от дублей) ---
+try:
+    act_sheet = ss.worksheet("Activities")
+    # Читаем всю таблицу, чтобы проверить на наличие такой тренировки
+    all_rows = act_sheet.get_all_values()
+    
+    for act in activities_to_log:
+        # Уникальный ключ: "Дата_Время_Спорт" (например "2026-02-18_16:30_cycling")
+        activity_key = f"{act[0]}_{act[1]}_{act[2]}"
+        
+        is_duplicate = False
+        for row in all_rows:
+            if len(row) >= 3:
+                existing_key = f"{row[0]}_{row[1]}_{row[2]}"
+                if activity_key == existing_key:
+                    is_duplicate = True
+                    break
+        
+        if not is_duplicate:
+            act_sheet.append_row(act)
+            print(f"Записана новая тренировка: {act[2]} в {act[1]}")
+        else:
+            print(f"Тренировка {act[2]} в {act[1]} уже есть, пропускаем.")
+except Exception as e:
+    print(f"Ошибка записи в Sheets: {e}")
 
 # --- 4. AI & SYNC ---
 try:
