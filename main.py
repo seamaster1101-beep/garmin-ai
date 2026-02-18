@@ -57,17 +57,17 @@ try:
 except:
     weight, hrv, sleep_score, sleep_min = "", "", "", ""
 
-# ---------- AI ANALYSIS BLOCK (OFFICIAL SDK MODE) ----------
+# ---------- AI ANALYSIS BLOCK (OFFICIAL SDK - FIX 404) ----------
 import google.generativeai as genai
 
 ai_advice = "Анализ не выполнен"
 if gemini_key:
     try:
-        # Настройка официального клиента
+        # Принудительно настраиваем на стабильный поток
         genai.configure(api_key=gemini_key.strip())
         
-        # Выбираем самую стабильную модель
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Указываем полную версию модели, если короткая не находится
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
         
         workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
         
@@ -76,19 +76,22 @@ if gemini_key:
                        f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
                        f"Дай краткую оценку восстановления и совет на завтра (2 sentences).")
 
-        # Официальный вызов без ручных URL
+        # Просим ИИ сгенерировать текст
         response = model.generate_content(user_prompt)
         
-        if response.text:
+        # Если ответ пришел — берем текст
+        if response:
             ai_advice = response.text
-            print("✅ Официальный SDK сработал!")
-        else:
-            ai_advice = "API вернул пустой ответ"
+            print("✅ Наконец-то! SDK выдал результат.")
             
     except Exception as e:
-        # Если даже SDK не помог, выводим полную ошибку для диагностики
-        ai_advice = f"SDK Error: {str(e)[:100]}"
-        print(f"❌ Ошибка SDK: {e}")
+        # Если 1.5 Flash всё еще капризничает, пробуем Gemini Pro как запасной вариант
+        try:
+            model = genai.GenerativeModel('gemini-pro')
+            response = model.generate_content(user_prompt)
+            ai_advice = response.text
+        except:
+            ai_advice = f"SDK Final Error: {str(e)[:100]}"
 
 print(f"Final AI Status: {ai_advice}")
 
