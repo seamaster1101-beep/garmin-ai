@@ -38,7 +38,9 @@ def update_or_append(sheet, date_str, row_data):
         
         if found_idx != -1:
             for i, val in enumerate(row_data[1:], start=2):
-                if val != "": sheet.update_cell(found_idx, i, val)
+                # Обновляем ячейку только если новое значение не пустое
+                if val != "" and val is not None: 
+                    sheet.update_cell(found_idx, i, val)
             return "Updated"
         else:
             sheet.append_row(row_data)
@@ -56,21 +58,26 @@ today_date = now.strftime("%Y-%m-%d")
 current_ts = now.strftime("%Y-%m-%d %H:%M")
 yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. DAILY (Усиленный поиск данных) ---
+# --- 1. DAILY (Исправленный сбор данных) ---
 try:
-    s = gar.get_stats(today_date) or {}
+    # Используем Summary - это самый надежный источник для шагов и калорий
     sm = gar.get_user_summary(today_date) or {}
-    r_hr = s.get("restingHeartRate") or sm.get("restingHeartRate") or ""
     
-    daily_row = [
-        today_date, 
-        s.get("steps") or sm.get("steps") or "", 
-        round((s.get("distance", 0) or sm.get("distance", 0)) / 1000, 2),
-        s.get("calories") or sm.get("calories") or "", 
-        r_hr, 
-        s.get("bodyBatteryMostRecentValue") or ""
-    ]
-except: daily_row = [today_date, "", "", "", "", ""]
+    steps = sm.get("totalSteps") or sm.get("steps") or ""
+    # Дистанция в Summary обычно в сантиметрах, переводим в КМ
+    raw_dist = sm.get("totalDistanceMeters") or sm.get("distance", 0)
+    dist = round(float(raw_dist) / 1000, 2) if raw_dist else ""
+    
+    # Калории (активные + покой)
+    cals = sm.get("totalCalories") or sm.get("calories") or ""
+    
+    r_hr = sm.get("restingHeartRate") or ""
+    bb = sm.get("bodyBatteryMostRecentValue") or ""
+    
+    daily_row = [today_date, steps, dist, cals, r_hr, bb]
+except Exception as e:
+    print(f"Daily Data Error: {e}")
+    daily_row = [today_date, "", "", "", "", ""]
 
 # --- 2. MORNING (HRV, Сон, Вес, Макс Батарейка) ---
 try:
@@ -86,29 +93,19 @@ try:
     slp_h = round(d.get("sleepTimeSeconds", 0)/3600, 1) if d.get("sleepTimeSeconds") else ""
     
     bb_full = gar.get_body_battery(today_date)
-    m_bb = max([i['value'] for i in bb_full if int(i['timeOffsetInSeconds']) < 36000]) if bb_full else daily_row[5]
+    m_bb = max([i['value'] for i in bb_full if int(i['timeOffsetInSeconds']) < 36000]) if bb_full else bb
     
     morning_row = [current_ts, weight, r_hr, hrv, m_bb, slp_sc, slp_h]
 except: morning_row = [current_ts, "", "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Исправленное время!) ---
+# --- 3. ACTIVITIES (Проверенная логика) ---
 activities_to_log = []
 try:
     acts = gar.get_activities_by_date(today_date, today_date)
-    # Сортировка по времени старта
     acts.sort(key=lambda x: x.get('startTimeLocal', ''))
-    
     for a in acts:
-        # Пытаемся взять локальное время старта (startTimeLocal)
-        # Оно обычно в формате "2026-02-18 16:30:00" или "2026-02-18T16:30:00"
         raw_start = a.get('startTimeLocal', "")
-        if "T" in raw_start:
-            st_time = raw_start.split('T')[1][:5]
-        elif " " in raw_start:
-            st_time = raw_start.split(' ')[1][:5]
-        else:
-            st_time = raw_start[:5] # На случай если пришло только время
-        
+        st_time = raw_start.split('T')[1][:5] if 'T' in raw_start else (raw_start.split(' ')[1][:5] if ' ' in raw_start else "00:00")
         avg_hr = a.get('averageHR', '')
         
         activities_to_log.append([
@@ -128,34 +125,34 @@ try:
     c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(c_obj).open("Garmin_Data")
     
-    # 1. Activities (С жестким контролем дублей)
+    # Лист Daily
+    update_or_append(ss.worksheet("Daily"), today_date, daily_row)
+    
+    # Лист Morning
+    update_or_append(ss.worksheet("Morning"), today_date, morning_row)
+    
+    # Лист Activities
     act_sheet = ss.worksheet("Activities")
     all_acts = act_sheet.get_all_values()
-    # Ключ: Дата + Время + Спорт (чтобы точно отличить силовую от вело)
     existing_keys = [f"{r[0]}_{r[1]}_{r[2]}" for r in all_acts if len(r) > 2]
-    
     for act in activities_to_log:
         key = f"{act[0]}_{act[1]}_{act[2]}"
         if key not in existing_keys:
             act_sheet.append_row(act)
 
-    # 2. Daily & Morning
-    update_or_append(ss.worksheet("Daily"), today_date, daily_row)
-    update_or_append(ss.worksheet("Morning"), today_date, morning_row)
-
-    # 3. AI Log (с выбором живой модели)
-    advice = "AI analysis skipped"
+    # --- AI LOG ---
+    advice = "AI skipped"
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
             m_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             model = genai.GenerativeModel(m_list[0])
-            prompt = f"Данные {today_date}: Шаги {daily_row[1]}, Сон {slp_h}ч, Тренировок: {len(activities_to_log)}. Дай совет."
+            prompt = f"Данные: Шаги {steps}, Сон {slp_h}ч, BB {bb}. Дай совет на 2 фразы."
             advice = model.generate_content(prompt).text.strip()
         except: pass
-        
-    ss.worksheet("AI_Log").append_row([current_ts, "Sync Successful", advice])
-    print(f"✔ Готово! Время тренировок проверено.")
+    
+    ss.worksheet("AI_Log").append_row([current_ts, "Daily Update Success", advice])
+    print(f"✔ Готово! Шаги: {steps}, Калории: {cals}")
 
 except Exception as e:
     print(f"❌ Ошибка: {e}")
