@@ -16,40 +16,66 @@ def safe_value(val):
     """Проверка на пустые значения"""
     return val if val not in (None, "", 0) else ""
 
-def find_hrv_for_days(client, dates):
-    """Ищем HRV за несколько дней, возвращаем первый непустой"""
-    for d in dates:
-        try:
-            data = client.get_hrv_data(d) or []
-            if data and data[0].get("lastNightAvg"):
-                return safe_value(data[0].get("lastNightAvg")), d
-        except:
-            pass
-    return "", ""
+def get_past_dates(n=7):
+    """Возвращает список дат (строк) за последние n дней"""
+    base = datetime.now()
+    return [(base - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
 
-def find_sleep_for_days(client, dates):
-    """Ищем данные сна за несколько дней"""
+def find_hrv(client, dates):
+    """Ищем HRV за несколько дней"""
     for d in dates:
         try:
-            sleep = client.get_sleep_data(d) or {}
-            dto = sleep.get("dailySleepDTO", {})
+            raw = client.get_hrv_data(d) or []
+            if raw and raw[0].get("lastNightAvg"):
+                return safe_value(raw[0].get("lastNightAvg")), d, raw
+        except Exception as e:
+            return "", d, {"error": str(e)}
+    return "", "", []
+
+def find_sleep(client, dates):
+    """Ищем сон за несколько дней"""
+    for d in dates:
+        try:
+            raw = client.get_sleep_data(d) or {}
+            dto = raw.get("dailySleepDTO", {})
             score = dto.get("sleepScore")
             secs = dto.get("sleepTimeSeconds", 0)
             if score or secs > 0:
                 hrs = round(secs / 3600, 1) if secs else ""
-                return safe_value(score), safe_value(hrs), d
-        except:
-            pass
-    return "", "", ""
+                return safe_value(score), safe_value(hrs), d, raw
+        except Exception as e:
+            return "", "", d, {"error": str(e)}
+    return "", "", "", {}
+
+def find_weight(client, dates):
+    """Пытаемся взять вес за несколько дней"""
+    for d in dates:
+        try:
+            raw = client.get_body_composition(d, d) or {}
+            if "uploads" in raw and raw["uploads"]:
+                w = raw["uploads"][-1].get("weight")
+                if w:
+                    return safe_value(round(w / 1000, 1)), d, raw
+        except Exception as e:
+            return "", d, {"error": str(e)}
+    # Попробуем summary за последнюю дату
+    try:
+        raw = client.get_user_summary(dates[0]) or {}
+        w2 = raw.get("weight")
+        if w2:
+            return safe_value(round(w2 / 1000, 1)), dates[0], raw
+    except Exception as e:
+        return "", dates[0], {"error": str(e)}
+    return "", "", {}
 
 def update_or_append(sheet, date_str, row_data):
     try:
         dates = sheet.col_values(1)
         if date_str in dates:
             idx = dates.index(date_str) + 1
-            for i, val in enumerate(row_data[1:], start=2):
+            for col, val in enumerate(row_data[1:], start=2):
                 if safe_value(val) != "":
-                    sheet.update_cell(idx, i, val)
+                    sheet.update_cell(idx, col, val)
             return "Updated"
         else:
             sheet.append_row(row_data)
@@ -65,45 +91,34 @@ except Exception as e:
     print(f"🚨 Garmin login error: {e}")
     exit(1)
 
-now = datetime.now()
-today = now.strftime("%Y-%m-%d")
-yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-day2 = (now - timedelta(days=2)).strftime("%Y-%m-%d")
-debug = [f"Dates tried: {today}, {yesterday}, {day2}"]
+dates = get_past_dates(7)
+debug = [f"Dates tried: {', '.join(dates)}"]
 
-# --- STATS ---
+# --- STATS (TODAY) ---
 try:
-    stats = garmin.get_stats(today) or {}
+    stats = garmin.get_stats(dates[0]) or {}
     resting_hr = safe_value(stats.get("restingHeartRate"))
     body_battery = safe_value(stats.get("bodyBatteryMostRecentValue"))
-    debug.append(f"Stats: HR {resting_hr}, BB {body_battery}")
+    debug.append(f"Stats (today): HR {resting_hr}, BB {body_battery}")
 except Exception as e:
     resting_hr = ""
     body_battery = ""
     debug.append(f"StatsErr:{e}")
 
-# --- WEIGHT ---
-weight = ""
-try:
-    w_data = garmin.get_body_composition(yesterday, today) or {}
-    if "uploads" in w_data and w_data["uploads"]:
-        weight = safe_value(round(w_data["uploads"][-1].get("weight", 0) / 1000, 1))
-        debug.append(f"WgtFromUploads:{weight}")
-    else:
-        summary = garmin.get_user_summary(today) or {}
-        w2 = summary.get("weight", 0)
-        weight = safe_value(round(w2 / 1000, 1)) if w2 else ""
-        debug.append(f"WgtFromSummary:{weight}")
-except Exception as e:
-    debug.append(f"WeightErr:{e}")
+# --- WEIGHT (7 days) ---
+weight, w_date, w_raw = find_weight(garmin, dates)
+debug.append(f"Weight:{weight}kg from {w_date}")
+debug.append(f"Weight_raw:{json.dumps(w_raw)[:200]}")
 
-# --- HRV (за 3 дня) ---
-hrv, hrv_date = find_hrv_for_days(garmin, [today, yesterday, day2])
-debug.append(f"HRV:{hrv} from {hrv_date if hrv_date else 'none'}")
+# --- HRV (7 days) ---
+hrv, hrv_date, hrv_raw = find_hrv(garmin, dates)
+debug.append(f"HRV:{hrv} from {hrv_date}")
+debug.append(f"HRV_raw:{json.dumps(hrv_raw)[:200]}")
 
-# --- SLEEP (за 3 дня) ---
-sleep_score, sleep_hours, sleep_date = find_sleep_for_days(garmin, [today, yesterday, day2])
-debug.append(f"Sleep Score:{sleep_score} Hours:{sleep_hours} from {sleep_date if sleep_date else 'none'}")
+# --- SLEEP (7 days) ---
+sleep_score, sleep_hours, sleep_date, sleep_raw = find_sleep(garmin, dates)
+debug.append(f"Sleep Score:{sleep_score} Hours:{sleep_hours} from {sleep_date}")
+debug.append(f"Sleep_raw:{json.dumps(sleep_raw)[:200]}")
 
 # --- AI ADVICE ---
 ai_advice = "No advice"
@@ -116,8 +131,8 @@ try:
 
         prompt = (
             f"Данные: Сон {sleep_hours}ч (Score {sleep_score}), HRV {hrv},"
-            f" Пульс покоя {resting_hr}, BodyBattery {body_battery}. "
-            "Дай краткий совет на завтра (2 предложения)."
+            f" Пульс покоя {resting_hr}, BodyBattery {body_battery}, Вес {weight}. "
+            "Краткий совет на завтра (2 предложения)."
         )
         ai_advice = model.generate_content(prompt).text.strip()
         debug.append("AI:OK")
@@ -137,7 +152,7 @@ try:
 
     morning = sheet.worksheet("Morning")
     row = [
-        today,
+        dates[0],
         weight,
         resting_hr,
         hrv,
@@ -145,11 +160,11 @@ try:
         sleep_score,
         sleep_hours
     ]
-    result = update_or_append(morning, today, row)
+    result = update_or_append(morning, dates[0], row)
 
     ai_log = sheet.worksheet("AI_Log")
     ai_log.append_row([
-        now.strftime("%Y-%m-%d %H:%M:%S"),
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         result,
         " | ".join(debug),
         ai_advice
