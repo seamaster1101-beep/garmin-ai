@@ -24,13 +24,15 @@ today_date = now.strftime("%Y-%m-%d")
 
 print(f"Fetching data for: {today_date}")
 
-# ---------- DAILY STATS ----------
+# ---------- DAILY STATS (С защитой от пустых данных) ----------
 stats = client.get_stats(today_date)
-steps = stats.get("totalSteps", 0)
-daily_calories = stats.get("totalKilocalories", 0)
-daily_distance_km = stats.get("totalDistanceMeters", 0) / 1000
-resting_hr = stats.get("restingHeartRate", 0)
-body_battery = stats.get("bodyBatteryMostRecentValue", 0)
+steps = stats.get("totalSteps") or 0
+daily_calories = stats.get("totalKilocalories") or 0
+# Защита от None: если дистанции нет, ставим 0
+raw_dist = stats.get("totalDistanceMeters") or 0
+daily_distance_km = round(raw_dist / 1000, 2)
+resting_hr = stats.get("restingHeartRate") or 0
+body_battery = stats.get("bodyBatteryMostRecentValue") or 0
 
 # ---------- LAST ACTIVITY ----------
 try:
@@ -46,16 +48,17 @@ except Exception as e:
 # ---------- HEALTH ----------
 try:
     body_data = client.get_body_composition(today_date)
-    weight = body_data.get('totalWeight', 0) / 1000 if body_data else ""
+    weight = round(body_data.get('totalWeight', 0) / 1000, 1) if body_data and body_data.get('totalWeight') else ""
     hrv_data = client.get_hrv_data(today_date)
     hrv = hrv_data[0].get('lastNightAvg', "") if hrv_data else ""
     sleep_data = client.get_sleep_data(today_date)
     sleep_score = sleep_data.get('dailySleepDTO', {}).get('sleepScore', "")
-    sleep_min = sleep_data.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) / 60
+    s_sec = sleep_data.get('dailySleepDTO', {}).get('sleepTimeSeconds') or 0
+    sleep_min = round(s_sec / 60, 0) if s_sec > 0 else ""
 except:
     weight, hrv, sleep_score, sleep_min = "", "", "", ""
 
-# ---------- AI ANALYSIS BLOCK ----------
+# ---------- AI ANALYSIS BLOCK (Исправленный URL v1) ----------
 ai_advice = "Анализ не выполнен"
 if gemini_key:
     try:
@@ -67,6 +70,7 @@ if gemini_key:
                        f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
                        f"Дай краткую оценку восстановления и совет на завтра (2 предложения).")
 
+        # Используем стабильный URL v1
         url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key_clean}"
         headers = {'Content-Type': 'application/json'}
         payload = {
@@ -93,7 +97,7 @@ spreadsheet = gc.open("Garmin_Data")
 
 # 1. Лист DAILY
 daily_sheet = spreadsheet.worksheet("Daily")
-daily_sheet.append_row([today_date, steps, round(daily_distance_km, 2), daily_calories, resting_hr, body_battery])
+daily_sheet.append_row([today_date, steps, daily_distance_km, daily_calories, resting_hr, body_battery])
 
 # 2. Лист ACTIVITIES
 if last_act:
@@ -119,9 +123,9 @@ if last_act:
 
 # 3. Лист MORNING
 morning_sheet = spreadsheet.worksheet("Morning")
-morning_sheet.append_row([today_date, round(weight, 1) if weight else "", resting_hr, hrv, body_battery, sleep_score, round(sleep_min, 0) if sleep_min else ""])
+morning_sheet.append_row([today_date, weight, resting_hr, hrv, body_battery, sleep_score, sleep_min])
 
 # 4. Лист AI_LOG
 spreadsheet.worksheet("AI_Log").append_row([now.strftime("%Y-%m-%d %H:%M"), "Sync Complete", ai_advice])
 
-print(f"✅ Done! AI Advice: {ai_advice[:50]}...")
+print(f"✅ Sync Successful! AI Advice: {ai_advice[:50]}...")
