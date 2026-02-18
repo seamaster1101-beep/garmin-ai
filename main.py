@@ -57,49 +57,40 @@ try:
 except:
     weight, hrv, sleep_score, sleep_min = "", "", "", ""
 
-# ---------- AI ANALYSIS BLOCK (АВТО-ПЕРЕБОР) ----------
-ai_advice = "Анализ не выполнен (Все эндпоинты вернули ошибку)"
+# ---------- AI ANALYSIS BLOCK (OFFICIAL SDK MODE) ----------
+import google.generativeai as genai
+
+ai_advice = "Анализ не выполнен"
 if gemini_key:
-    api_key_clean = str(gemini_key).strip()
-    workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
-    
-    user_prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
-                   f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
-                   f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
-                   f"Дай краткую оценку восстановления и совет на завтра (2 предложения).")
+    try:
+        # Настройка официального клиента
+        genai.configure(api_key=gemini_key.strip())
+        
+        # Выбираем самую стабильную модель
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
+        
+        user_prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
+                       f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
+                       f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
+                       f"Дай краткую оценку восстановления и совет на завтра (2 sentences).")
 
-    # Список вариантов для перебора
-    endpoints = [
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key_clean}",
-        f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key_clean}",
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key_clean}",
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key={api_key_clean}",
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key_clean}"
-    ]
-
-    headers = {'Content-Type': 'application/json'}
-    payload = {
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7}
-    }
-
-    for url in endpoints:
-        try:
-            model_name = url.split('models/')[1].split(':')[0]
-            print(f"Trying endpoint: {model_name}...")
-            response = requests.post(url, headers=headers, json=payload, timeout=10)
+        # Официальный вызов без ручных URL
+        response = model.generate_content(user_prompt)
+        
+        if response.text:
+            ai_advice = response.text
+            print("✅ Официальный SDK сработал!")
+        else:
+            ai_advice = "API вернул пустой ответ"
             
-            if response.status_code == 200:
-                result = response.json()
-                ai_advice = result['candidates'][0]['content']['parts'][0]['text']
-                print(f"✅ Success with {model_name}!")
-                break
-            else:
-                print(f"❌ {model_name} failed with status {response.status_code}")
-                ai_advice = f"API Error {response.status_code}: {response.reason}"
-        except Exception as e:
-            print(f"⚠️ Local error on {url}: {e}")
-            continue
+    except Exception as e:
+        # Если даже SDK не помог, выводим полную ошибку для диагностики
+        ai_advice = f"SDK Error: {str(e)[:100]}"
+        print(f"❌ Ошибка SDK: {e}")
+
+print(f"Final AI Status: {ai_advice}")
 
 # ---------- GOOGLE SHEETS ----------
 creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
