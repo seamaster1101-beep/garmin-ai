@@ -12,17 +12,6 @@ GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
-def calculate_intensity(avg_hr, resting_hr):
-    try:
-        if not avg_hr or not resting_hr: return "N/A"
-        avg_hr, resting_hr = float(avg_hr), float(resting_hr)
-        max_hr = 185 
-        reserve = (avg_hr - resting_hr) / (max_hr - resting_hr)
-        if reserve < 0.5: return "Low"
-        if reserve < 0.75: return "Moderate"
-        return "High"
-    except: return "N/A"
-
 def update_or_append(sheet, date_str, row_data):
     try:
         col_values = sheet.col_values(1)
@@ -40,85 +29,74 @@ def update_or_append(sheet, date_str, row_data):
         else:
             sheet.append_row(row_data)
             return "Appended"
-    except Exception as e: return f"Err: {str(e)[:15]}"
+    except Exception as e: return f"Err: {e}"
 
 # --- LOGIN ---
 try:
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
-except: print("Garmin Login Fail"); exit(1)
+except: print("Fail login"); exit(1)
 
 now = datetime.now()
 today_date = now.strftime("%Y-%m-%d")
 current_ts = now.strftime("%Y-%m-%d %H:%M")
 yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. DAILY (Смена источника на Activity Stats) ---
+# Инициализируем переменные заранее, чтобы AI не выдавал ошибку NameError
+steps, dist, cals, r_hr, bb, slp_h = "", "", "", "", "", ""
+
+# --- 1. DAILY & CALORIES (Комбинированный метод) ---
 try:
-    # Запрашиваем статистику активности напрямую
-    stats = gar.get_stats(today_date) or {}
+    # 1. Тянем шаги и дистанцию (самый точный метод)
+    step_data = gar.get_daily_steps(today_date, today_date)
+    if step_data:
+        steps = step_data[0].get('totalSteps', "")
+        # Дистанция в метрах, переводим в км
+        dist = round(step_data[0].get('totalDistance', 0) / 1000, 2)
+
+    # 2. Тянем калории через User Summary
     summary = gar.get_user_summary(today_date) or {}
+    active = summary.get("activeCalories", 0) or 0
+    bmr = summary.get("bmrCalories", 0) or 0
+    cals = active + bmr if (active + bmr) > 0 else summary.get("totalCalories", "")
     
-    # ШАГИ
-    steps = stats.get("steps") or summary.get("totalSteps") or summary.get("steps") or ""
-    
-    # ДИСТАНЦИЯ (Пробуем вытащить из stats, там точнее)
-    # Если Garmin отдает 640000 (см), делим на 100 000
-    raw_dist = stats.get("distance") or summary.get("totalDistanceMeters") or 0
-    dist = round(float(raw_dist) / 100000, 2) if raw_dist > 500 else round(float(raw_dist) / 1000, 2)
-    
-    # Если дистанция всё равно странная (меньше 1км, хотя ты прошел 6), проверяем альтернативное поле
-    if dist < 0.5 and raw_dist > 0:
-        dist = round(float(raw_dist) / 1000, 2)
-
-    # КАЛОРИИ: Берем напрямую из stats['calories']
-    cals = stats.get("calories") or ""
-    if not cals:
-        # Если пусто, суммируем bmr + active
-        cals = (summary.get("bmrCalories", 0) or 0) + (summary.get("activeCalories", 0) or 0)
-
-    r_hr = stats.get("restingHeartRate") or summary.get("restingHeartRate") or ""
-    bb = stats.get("bodyBatteryMostRecentValue") or ""
+    r_hr = summary.get("restingHeartRate") or ""
+    bb = summary.get("bodyBatteryMostRecentValue") or ""
     
     daily_row = [today_date, steps, dist, cals, r_hr, bb]
 except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_date, "", "", "", "", ""]
 
-# --- 2. MORNING ---
+# --- 2. MORNING & SLEEP ---
 try:
+    sl = gar.get_sleep_data(today_date)
+    d = sl.get("dailySleepDTO") or {}
+    slp_h = round(d.get("sleepTimeSeconds", 0)/3600, 1) if d.get("sleepTimeSeconds") else ""
+    
+    # Вес и HRV
     w_comp = gar.get_body_composition(yesterday, today_date)
     weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1) if w_comp and w_comp.get('uploads') else ""
     h_data = gar.get_hrv_data(today_date) or gar.get_hrv_data(yesterday)
     hrv = h_data[0].get("lastNightAvg", "") if isinstance(h_data, list) and h_data else ""
-    sl = gar.get_sleep_data(today_date)
-    d = sl.get("dailySleepDTO") or {}
-    slp_sc = d.get("sleepScore", "")
-    slp_h = round(d.get("sleepTimeSeconds", 0)/3600, 1) if d.get("sleepTimeSeconds") else ""
-    bb_full = gar.get_body_battery(today_date)
-    m_bb = max([i['value'] for i in bb_full if int(i['timeOffsetInSeconds']) < 36000]) if bb_full else bb
-    morning_row = [current_ts, weight, r_hr, hrv, m_bb, slp_sc, slp_h]
+    
+    morning_row = [current_ts, weight, r_hr, hrv, bb, d.get("sleepScore", ""), slp_h]
 except: morning_row = [current_ts, "", "", "", "", "", ""]
 
 # --- 3. ACTIVITIES ---
-activities_to_log = []
 try:
     acts = gar.get_activities_by_date(today_date, today_date)
-    acts.sort(key=lambda x: x.get('startTimeLocal', ''))
+    activities_to_log = []
     for a in acts:
-        raw_start = a.get('startTimeLocal', "")
-        st_time = raw_start.split('T')[1][:5] if 'T' in raw_start else (raw_start.split(' ')[1][:5] if ' ' in raw_start else "00:00")
-        avg_hr = a.get('averageHR', '')
         activities_to_log.append([
-            today_date, st_time, a.get('activityType', {}).get('typeKey', ''),
+            today_date, a.get('startTimeLocal', "")[11:16], a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
-            avg_hr, a.get('maxHR', ''), a.get('trainingLoad', ''),
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ''),
-            a.get('avgPower', ''), a.get('averageCadence', ''), calculate_intensity(avg_hr, r_hr)
+            a.get('averageHR', ''), a.get('maxHR', ''), a.get('trainingLoad', ''),
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', '')
         ])
-except: pass
+except: activities_to_log = []
 
-# --- 4. SYNC ---
+# --- 4. SYNC & AI ---
 try:
     creds = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -127,23 +105,21 @@ try:
     update_or_append(ss.worksheet("Daily"), today_date, daily_row)
     update_or_append(ss.worksheet("Morning"), today_date, morning_row)
     
+    # Запись активностей
     act_sheet = ss.worksheet("Activities")
-    all_acts = act_sheet.get_all_values()
-    existing_keys = [f"{r[0]}_{r[1]}_{r[2]}" for r in all_acts if len(r) > 2]
     for act in activities_to_log:
-        if f"{act[0]}_{act[1]}_{act[2]}" not in existing_keys: act_sheet.append_row(act)
+        act_sheet.append_row(act)
 
-    # --- AI ---
+    # AI Совет (теперь переменные точно определены)
     advice = "AI Skip"
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
-            m_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            model = genai.GenerativeModel(m_list[0])
-            prompt = f"Совет: Шаги {steps}, Дистанция {dist}, Ккал {cals}. Будь краток."
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = f"Данные: Шаги {steps}, Ккал {cals}, Дистанция {dist}км. Дай 1 короткий совет."
             advice = model.generate_content(prompt).text.strip()
-        except: pass
+        except Exception as e: advice = f"AI Error: {e}"
     
-    ss.worksheet("AI_Log").append_row([current_ts, "Update Check", advice])
-    print(f"✔ Данные Daily: Дистанция {dist}км, Калории {cals}")
-except Exception as e: print(f"❌ Ошибка: {e}")
+    ss.worksheet("AI_Log").append_row([current_ts, "Success", advice])
+    print(f"✔ Готово! Калории: {cals}, Дистанция: {dist}")
+except Exception as e: print(f"❌ Ошибка синхронизации: {e}")
