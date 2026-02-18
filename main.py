@@ -39,75 +39,76 @@ except: print("Fail login"); exit(1)
 
 now = datetime.now()
 today_date = now.strftime("%Y-%m-%d")
-current_ts = now.strftime("%Y-%m-%d %H:%M")
 yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# Начальные значения
-steps, dist, cals, r_hr, bb, slp_h, weight, hrv = 0, 0, 0, 0, 0, 0, 0, 0
-
-# --- 1. DAILY (Возвращаем рабочую дистанцию и ищем калории) ---
-try:
-    # Дистанция и шаги (самый точный метод для твоего аккаунта)
-    step_data = gar.get_daily_steps(today_date, today_date)
-    if step_data:
-        steps = step_data[0].get('totalSteps', 0)
-        dist = round(step_data[0].get('totalDistance', 0) / 1000, 2)
-
-    # Калории и пульс
-    summary = gar.get_user_summary(today_date) or {}
-    r_hr = summary.get("restingHeartRate") or 0
-    bb = summary.get("bodyBatteryMostRecentValue") or 0
-    
-    # Пытаемся найти калории (Active + BMR)
-    cals = (summary.get("activeCalories", 0) or 0) + (summary.get("bmrCalories", 0) or 0)
-    
-    # Если все еще 0, пробуем get_stats
-    if cals < 100:
-        st = gar.get_stats(today_date) or {}
-        cals = st.get("calories", cals)
-
-    daily_row = [today_date, steps, dist, cals, r_hr, bb]
-except Exception as e:
-    print(f"Daily Err: {e}")
-    daily_row = [today_date, 0, 0, 0, 0, 0]
-
-# --- 2. MORNING & SLEEP ---
+# --- 1. SLEEP & MORNING DATA (Смещаем фокус на утро) ---
+morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = "", 0, 0, 0, 0, 0, 0
 try:
     sl = gar.get_sleep_data(today_date)
     d = sl.get("dailySleepDTO") or {}
+    
+    # Время пробуждения
+    if d.get("sleepEndTimeGMT"):
+        # Конвертируем из GMT в локальное (примерно)
+        morning_ts = today_date + " 08:00" # Заглушка, если не выйдет вытянуть точно
+        slp_end = d.get("sleepEndTimeLocal") or d.get("sleepEndTimeGMT")
+        morning_ts = slp_end.replace("T", " ")[:16]
+    
     slp_h = round(d.get("sleepTimeSeconds", 0)/3600, 1) if d.get("sleepTimeSeconds") else 0
     slp_sc = d.get("sleepScore", 0)
     
-    w_comp = gar.get_body_composition(yesterday, today_date)
-    weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1) if w_comp and w_comp.get('uploads') else 0
-        
-    h_data = gar.get_hrv_data(today_date) or gar.get_hrv_data(yesterday)
-    hrv = h_data[0].get("lastNightAvg", 0) if isinstance(h_data, list) and h_data else 0
-    morning_row = [current_ts, weight, r_hr, hrv, bb, slp_sc, slp_h]
-except:
-    morning_row = [current_ts, 0, 0, 0, 0, 0, 0]
+    # Body Battery на утро (берем значение из сна)
+    bb_morning = d.get("awakeCount", 0) # Это не совсем то, ищем в summary
+    summary = gar.get_user_summary(today_date) or {}
+    bb_morning = summary.get("bodyBatteryHighestValue", 0) # Пиковое значение обычно утром
+    r_hr = summary.get("restingHeartRate", 0)
 
-# --- 3. ACTIVITIES (Каденс и Интенсивность) ---
+    # Вес (проверяем сегодня и вчера)
+    w_comp = gar.get_body_composition(today_date)
+    if not w_comp.get('uploads'): w_comp = gar.get_body_composition(yesterday)
+    if w_comp.get('uploads'):
+        weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
+        
+    # HRV (ночное среднее)
+    h_data = gar.get_hrv_data(today_date)
+    if not h_data: h_data = gar.get_hrv_data(yesterday)
+    hrv = h_data[0].get("lastNightAvg", 0) if isinstance(h_data, list) and h_data else 0
+    
+    morning_row = [morning_ts or (today_date + " 08:00"), weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+except:
+    morning_row = [today_date + " 08:00", 0, 0, 0, 0, 0, 0]
+
+# --- 2. DAILY ---
+try:
+    step_data = gar.get_daily_steps(today_date, today_date)
+    steps = step_data[0].get('totalSteps', 0) if step_data else 0
+    dist = round(step_data[0].get('totalDistance', 0) / 1000, 2) if step_data else 0
+    
+    st = gar.get_stats(today_date) or {}
+    cals = st.get("calories", (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0)))
+    
+    daily_row = [today_date, steps, dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", 0)]
+except:
+    daily_row = [today_date, 0, 0, 0, 0, 0]
+
+# --- 3. ACTIVITIES (Тройной поиск Cadence) ---
 activities_to_log = []
 try:
     acts = gar.get_activities_by_date(today_date, today_date)
     acts.sort(key=lambda x: x.get('startTimeLocal', ''))
     for a in acts:
-        st_time = a.get('startTimeLocal', "")[11:16]
-        sport = a.get('activityType', {}).get('typeKey', '')
+        # Ищем каденс везде: в базе, в вело-поле, в беговом
+        cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
+               a.get('averageRunCadence') or a.get('metadata', {}).get('avgCadence', ""))
+        
         avg_hr = a.get('averageHR', 0)
-        
-        # Проверка всех полей каденса
-        cad = a.get('averageBikingCadence') or a.get('averageCadence') or a.get('averageRunCadence') or ""
-        
-        # Расчет интенсивности
         intensity = "N/A"
-        if avg_hr and r_hr:
+        if avg_hr and r_hr > 0:
             res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
             intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
 
         activities_to_log.append([
-            today_date, st_time, sport,
+            today_date, a.get('startTimeLocal', "")[11:16], a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
             avg_hr, a.get('maxHR', 0), a.get('trainingLoad', 0),
             round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', 0),
@@ -127,20 +128,7 @@ try:
     act_sheet = ss.worksheet("Activities")
     existing = [f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2]
     for act in activities_to_log:
-        if f"{act[0]}_{act[1]}_{act[2]}" not in existing:
-            act_sheet.append_row(act)
+        if f"{act[0]}_{act[1]}_{act[2]}" not in existing: act_sheet.append_row(act)
 
-    # Безопасный вызов AI
-    advice = "AI Quota Exceeded"
-    if GEMINI_API_KEY:
-        try:
-            genai.configure(api_key=GEMINI_API_KEY.strip())
-            m_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            if m_list:
-                model = genai.GenerativeModel(m_list[0])
-                advice = model.generate_content(f"Шаги {steps}, Ккал {cals}. Совет в 1 предложении.").text.strip()
-        except: pass
-    
-    ss.worksheet("AI_Log").append_row([current_ts, "Success", advice])
-    print(f"✔ Синхронизация: Дистанция {dist} км, Калории {cals}")
+    print(f"✔ Лист Morning: {morning_ts}, HRV: {hrv}, Ккал: {cals}")
 except Exception as e: print(f"❌ Error: {e}")
