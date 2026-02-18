@@ -41,34 +41,36 @@ now = datetime.now()
 today = now.strftime("%Y-%m-%d")
 yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- DATA ---
-# 1. Stats
+# --- DATA COLLECTION ---
+# 1. Stats (HR, Body Battery)
 try:
     stats = gar.get_stats(today) or {}
     hr = safe_val(stats.get("restingHeartRate"))
     bb = safe_val(stats.get("bodyBatteryMostRecentValue"))
 except: hr = bb = ""
 
-# 2. Weight (Fix syntax)
+# 2. Weight (3-step check)
 weight = ""
 try:
-    w_data = gar.get_body_composition(today, today)
-    if w_data and w_data.get('uploads'):
-        weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-    else:
-        summary = gar.get_user_summary(today)
-        if summary.get('weight'):
-            weight = round(summary['weight'] / 1000, 1)
+    w_comp = gar.get_body_composition(today, today)
+    if w_comp and w_comp.get('uploads'):
+        weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
+    if not weight:
+        summ = gar.get_user_summary(today)
+        weight = round(summ.get('weight', 0) / 1000, 1) if summ.get('weight') else ""
 except: weight = ""
 
-# 3. HRV
+# 3. HRV (Stable check)
 hrv = ""
 try:
     h_data = gar.get_hrv_data(today) or gar.get_hrv_data(yesterday)
-    if h_data: hrv = safe_val(h_data[0].get("lastNightAvg"))
+    if h_data and isinstance(h_data, list) and len(h_data) > 0:
+        hrv = safe_val(h_data[0].get("lastNightAvg"))
+    elif h_data and isinstance(h_data, dict):
+        hrv = safe_val(h_data.get("lastNightAvg"))
 except: hrv = ""
 
-# 4. Sleep
+# 4. Sleep (Hours & Score)
 slp_score = ""; slp_hours = ""
 try:
     s = gar.get_sleep_data(today)
@@ -78,32 +80,35 @@ try:
     if sec > 0: slp_hours = round(sec/3600, 1)
 except: pass
 
-# --- AI ---
+# --- AI ADVICE (No 404 Error) ---
 advice = "No advice"
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY.strip())
-        model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        m_name = "models/gemini-1.5-pro" if "models/gemini-1.5-pro" in model_list else model_list[0]
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # Используем 1.5-flash если есть, иначе первую доступную
+        m_name = "models/gemini-1.5-flash" if "models/gemini-1.5-flash" in available_models else available_models[0]
         model = genai.GenerativeModel(m_name)
-        prompt = f"Данные: Сон {slp_hours}ч (Score {slp_score}), HRV {hrv}, HR {hr}, BB {bb}, Вес {weight}. Дай совет на завтра (2 фразы)."
+        prompt = f"Данные на сегодня: Сон {slp_hours}ч (Score {slp_score}), HRV {hrv}, HR {hr}, BB {bb}, Вес {weight}. Дай короткий совет на завтра (2 фразы)."
         advice = model.generate_content(prompt).text.strip()
-    except Exception as e: advice = f"AI Error: {str(e)[:50]}"
+    except Exception as e:
+        advice = f"AI Status: {str(e)[:50]}"
 
-# --- SHEETS ---
+# --- SHEETS SYNC ---
 try:
     creds = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(c_obj).open("Garmin_Data")
     
-    # Morning update
+    # Update Morning
     m_status = update_or_append(ss.worksheet("Morning"), today, [today, weight, hr, hrv, bb, slp_score, slp_hours])
     
-    # Clean Log
+    # Update Clean Log
     ss.worksheet("AI_Log").append_row([
         datetime.now().strftime("%Y-%m-%d %H:%M"),
-        f"Status: {m_status} | W:{weight} | HRV:{hrv}",
+        f"Status: {m_status} | W:{weight} | HRV:{hrv} | S_Sc:{slp_score}",
         advice
     ])
-    print("Done!")
-except Exception as e: print(f"Sheets error: {e}")
+    print(f"✔ Финиш! Вес: {weight}, HRV: {hrv}, Score: {slp_score}")
+except Exception as e:
+    print(f"Sheets error: {e}")
