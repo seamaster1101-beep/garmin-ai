@@ -53,26 +53,32 @@ today_date = now.strftime("%Y-%m-%d")
 current_ts = now.strftime("%Y-%m-%d %H:%M")
 yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. DAILY (Надежный метод сложения калорий) ---
+# --- 1. DAILY (Смена источника на Activity Stats) ---
 try:
-    # Берем сводку за день
-    sm = gar.get_user_summary(today_date) or {}
+    # Запрашиваем статистику активности напрямую
+    stats = gar.get_stats(today_date) or {}
+    summary = gar.get_user_summary(today_date) or {}
     
-    steps = sm.get("totalSteps") or sm.get("steps") or ""
+    # ШАГИ
+    steps = stats.get("steps") or summary.get("totalSteps") or summary.get("steps") or ""
     
-    raw_dist = sm.get("totalDistanceMeters") or sm.get("distance", 0)
-    dist = round(float(raw_dist) / 1000, 2) if raw_dist else ""
+    # ДИСТАНЦИЯ (Пробуем вытащить из stats, там точнее)
+    # Если Garmin отдает 640000 (см), делим на 100 000
+    raw_dist = stats.get("distance") or summary.get("totalDistanceMeters") or 0
+    dist = round(float(raw_dist) / 100000, 2) if raw_dist > 500 else round(float(raw_dist) / 1000, 2)
     
-    # КАЛОРИИ: Складываем Активные + Базовые (BMR)
-    # Это самый надежный способ, так как эти два поля всегда заполнены
-    active_cals = sm.get("activeCalories", 0) or 0
-    bmr_cals = sm.get("bmrCalories", 0) or 0
-    total_energy = active_cals + bmr_cals
-    
-    cals = total_energy if total_energy > 500 else (sm.get("totalCalories") or "")
-    
-    r_hr = sm.get("restingHeartRate") or ""
-    bb = sm.get("bodyBatteryMostRecentValue") or ""
+    # Если дистанция всё равно странная (меньше 1км, хотя ты прошел 6), проверяем альтернативное поле
+    if dist < 0.5 and raw_dist > 0:
+        dist = round(float(raw_dist) / 1000, 2)
+
+    # КАЛОРИИ: Берем напрямую из stats['calories']
+    cals = stats.get("calories") or ""
+    if not cals:
+        # Если пусто, суммируем bmr + active
+        cals = (summary.get("bmrCalories", 0) or 0) + (summary.get("activeCalories", 0) or 0)
+
+    r_hr = stats.get("restingHeartRate") or summary.get("restingHeartRate") or ""
+    bb = stats.get("bodyBatteryMostRecentValue") or ""
     
     daily_row = [today_date, steps, dist, cals, r_hr, bb]
 except Exception as e:
@@ -134,10 +140,10 @@ try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
             m_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             model = genai.GenerativeModel(m_list[0])
-            prompt = f"Совет на основе: Шаги {steps}, Ккал {cals}, Сон {slp_h}ч. 1 предложение."
+            prompt = f"Совет: Шаги {steps}, Дистанция {dist}, Ккал {cals}. Будь краток."
             advice = model.generate_content(prompt).text.strip()
         except: pass
     
-    ss.worksheet("AI_Log").append_row([current_ts, "Success", advice])
-    print(f"✔ Синхронизация: Шаги {steps}, Калории {cals}")
-except Exception as e: print(f"❌ Ошибка записи: {e}")
+    ss.worksheet("AI_Log").append_row([current_ts, "Update Check", advice])
+    print(f"✔ Данные Daily: Дистанция {dist}км, Калории {cals}")
+except Exception as e: print(f"❌ Ошибка: {e}")
