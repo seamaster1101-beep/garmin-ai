@@ -13,15 +13,15 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
 def safe_val(v):
-    return v if v not in (None, "", 0) else ""
+    return v if v not in (None, "", 0, "0") else ""
 
-# Функция обновления или добавления строки
 def update_or_append(sheet, date_str, row_data):
+    """Ищет дату в 1-м столбце. Если нашел — обновляет непустые ячейки."""
     try:
         col_values = sheet.col_values(1)
         if date_str in col_values:
             row_idx = col_values.index(date_str) + 1
-            # Обновляем со 2-го столбца
+            # Обновляем ячейки со 2-й колонки (B, C, D...)
             for i, val in enumerate(row_data[1:], start=2):
                 if val != "":
                     sheet.update_cell(row_idx, i, val)
@@ -30,14 +30,14 @@ def update_or_append(sheet, date_str, row_data):
             sheet.append_row(row_data)
             return "Appended"
     except Exception as e:
-        return f"Error: {e}"
+        return f"Sheets Err: {e}"
 
 # --- LOGIN ---
 try:
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
 except Exception as e:
-    print("Garmin login fail:", e)
+    print(f"Garmin login fail: {e}")
     exit(1)
 
 now = datetime.now()
@@ -46,23 +46,28 @@ yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
 # --- DATA COLLECTION ---
 
-# 1. Основные статы (Пульс, Батарейка)
+# 1. Базовые статы
 try:
     stats = gar.get_stats(today) or {}
     resting_hr = safe_val(stats.get("restingHeartRate"))
     body_battery = safe_val(stats.get("bodyBatteryMostRecentValue"))
 except: resting_hr = body_battery = ""
 
-# 2. Вес (Берем из саммари - самый надежный способ)
+# 2. Вес (Пробуем 2 метода)
 weight = ""
 try:
+    # Метод 1: Summary
     summary = gar.get_user_summary(today)
-    w_raw = summary.get("weight")
-    if w_raw:
-        weight = round(w_raw / 1000, 1)
+    if summary.get("weight"):
+        weight = round(summary["weight"] / 1000, 1)
+    else:
+        # Метод 2: Composition за последние 2 дня
+        w_comp = gar.get_body_composition(yesterday, today)
+        if w_comp.get("uploads"):
+            weight = round(w_comp["uploads"][-1]["weight"] / 1000, 1)
 except: weight = ""
 
-# 3. HRV (Проверяем сегодня и вчера)
+# 3. HRV (Сегодня или вчера)
 hrv = ""
 try:
     hr_data = gar.get_hrv_data(today) or gar.get_hrv_data(yesterday)
@@ -75,28 +80,28 @@ sleep_score = ""
 sleep_hours = ""
 try:
     sr = gar.get_sleep_data(today)
-    dto = sr.get("dailySleepDTO", {})
-    sc = dto.get("sleepScore")
+    dto = sr.get("daily_sleep_dto", sr.get("dailySleepDTO", {}))
+    sleep_score = safe_val(dto.get("sleepScore"))
     secs = dto.get("sleepTimeSeconds", 0)
-    if sc or secs > 0:
-        sleep_score = safe_val(sc)
-        sleep_hours = safe_val(round(secs/3600, 1))
+    if secs > 0:
+        sleep_hours = round(secs / 3600, 1)
 except: sleep_score = sleep_hours = ""
 
-# --- AI ADVICE ---
-ai_advice = "No advice"
+# --- AI ADVICE (С защитой от 404) ---
+ai_advice = "No advice available"
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY.strip())
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = (
-            f"Анализ на {today}: Сон {sleep_hours}ч (Score {sleep_score}), HRV {hrv}, "
-            f"Пульс {resting_hr}, Батарейка {body_battery}, Вес {weight}. "
-            f"Дай краткий совет на завтра (2 предложения)."
-        )
-        ai_advice = model.generate_content(prompt).text.strip()
+        # Авто-подбор доступной модели
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        target_model = "models/gemini-1.5-flash" if "models/gemini-1.5-flash" in models else models[0]
+        
+        gen_model = genai.GenerativeModel(target_model)
+        prompt = (f"Анализ {today}: Сон {sleep_hours}ч, HRV {hrv}, HR {resting_hr}, "
+                  f"Батарейка {body_battery}, Вес {weight}. Дай короткий совет (2 фразы).")
+        ai_advice = gen_model.generate_content(prompt).text.strip()
     except Exception as e:
-        ai_advice = f"AI Error: {e}"
+        ai_advice = f"AI Status: Модель недоступна ({str(e)[:50]})"
 
 # --- WRITE TO SHEETS ---
 try:
@@ -105,19 +110,19 @@ try:
     gs = gspread.authorize(cred_obj)
     ss = gs.open("Garmin_Data")
 
-    # Обновляем Morning (без дублей)
-    morning_sheet = ss.worksheet("Morning")
-    morning_row = [today, weight, resting_hr, hrv, body_battery, sleep_score, sleep_hours]
-    res_m = update_or_append(morning_sheet, today, morning_row)
+    # 1. Morning Sheet (Update existing or Add new)
+    m_sheet = ss.worksheet("Morning")
+    m_row = [today, weight, resting_hr, hrv, body_battery, sleep_score, sleep_hours]
+    m_status = update_or_append(m_sheet, today, m_row)
 
-    # Обновляем AI_Log (чистый вид)
-    log_sheet = ss.worksheet("AI_Log")
-    log_sheet.append_row([
+    # 2. AI_Log (Clean Log)
+    l_sheet = ss.worksheet("AI_Log")
+    l_sheet.append_row([
         datetime.now().strftime("%Y-%m-%d %H:%M"),
-        f"Status: {res_m}",
+        f"Sync: {m_status} (W:{weight}, HRV:{hrv})",
         ai_advice
     ])
 
-    print(f"✔ Done! Morning: {res_m}, Weight: {weight}, HRV: {hrv}")
+    print(f"✔ Финиш! Статус: {m_status}, Вес: {weight}, HRV: {hrv}")
 except Exception as e:
-    print("Sheets Err:", e)
+    print(f"Sheets Error: {e}")
