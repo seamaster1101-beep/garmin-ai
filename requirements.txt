@@ -1,3 +1,4 @@
 garminconnect
 gspread
 google-auth
+google-generativeai
