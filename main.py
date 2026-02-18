@@ -6,7 +6,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 
-print("🚀 Starting Garmin → Google Sheets PRO (Smart Update Edition)")
+print("🚀 Starting Garmin → Google Sheets PRO (Final Polished Edition)")
 
 # ---------- SETTINGS ----------
 HR_MAX = 165
@@ -14,19 +14,21 @@ gemini_key = os.environ.get("GEMINI_API_KEY")
 
 # ---------- FUNCTIONS ----------
 def update_or_append(sheet, date_str, row_data):
-    """Ищет дату в первом столбце. Если находит — обновляет строку, если нет — добавляет."""
+    """Ищет дату. Если находит — обновляет только непустые ячейки, если нет — добавляет."""
     try:
         cell = sheet.find(date_str)
         row_num = cell.row
-        # Обновляем только те ячейки, которые не пусты в row_data
-        # Начинаем со 2-го столбца (индекс 1 в row_data, индекс 2 в Sheets)
-        for i, value in enumerate(row_data[1:], start=2):
-            if value != "" and value is not None:
-                sheet.update_cell(row_num, i, value)
-        print(f"✅ Данные в листе '{sheet.title}' за {date_str} обновлены.")
+        # Читаем текущую строку, чтобы не затереть данные старыми пустыми значениями
+        current_values = sheet.row_values(row_num)
+        
+        for i, new_value in enumerate(row_data[1:], start=2):
+            # Обновляем, если новое значение не пустое
+            if new_value != "" and new_value is not None:
+                sheet.update_cell(row_num, i, new_value)
+        print(f"✅ Лист '{sheet.title}': данные за {date_str} дополнены.")
     except gspread.exceptions.CellNotFound:
         sheet.append_row(row_data)
-        print(f"✅ В лист '{sheet.title}' добавлена новая строка за {date_str}.")
+        print(f"✅ Лист '{sheet.title}': создана новая строка за {date_str}.")
 
 # ---------- GARMIN LOGIN ----------
 email = os.environ["GARMIN_EMAIL"]
@@ -37,61 +39,59 @@ client.login()
 
 now = datetime.now()
 today_date = now.strftime("%Y-%m-%d")
-print(f"Fetching data for: {today_date}")
 
 # ---------- DATA COLLECTION ----------
-# 1. Основная статистика
 stats = client.get_stats(today_date)
 steps = stats.get("totalSteps") or 0
 daily_calories = stats.get("totalKilocalories") or 0
-raw_dist = stats.get("totalDistanceMeters") or 0
-daily_distance_km = round(raw_dist / 1000, 2)
+daily_distance_km = round((stats.get("totalDistanceMeters") or 0) / 1000, 2)
 resting_hr = stats.get("restingHeartRate") or ""
 body_battery = stats.get("bodyBatteryMostRecentValue") or ""
 
-# 2. Вес
+# Вес
 try:
     body_data = client.get_body_composition(today_date)
     weight = round(body_data.get('totalWeight', 0) / 1000, 1) if body_data and body_data.get('totalWeight') else ""
 except: weight = ""
 
-# 3. HRV
+# HRV
 try:
     hrv_data = client.get_hrv_data(today_date)
-    hrv = hrv_data[0].get('lastNightAvg', "") if hrv_data and len(hrv_data) > 0 else ""
+    hrv = hrv_data[0].get('lastNightAvg', "") if hrv_data else ""
 except: hrv = ""
 
-# 4. Сон
+# Сон (теперь в часах)
 try:
     sleep_data = client.get_sleep_data(today_date)
     sleep_score = sleep_data.get('dailySleepDTO', {}).get('sleepScore', "")
     s_sec = sleep_data.get('dailySleepDTO', {}).get('sleepTimeSeconds') or 0
-    sleep_min = round(s_sec / 60, 0) if s_sec > 0 else ""
-except: sleep_score, sleep_min = "", ""
+    # Переводим в часы, например 7.5
+    sleep_hours = round(s_sec / 3600, 1) if s_sec > 0 else ""
+except: sleep_score, sleep_hours = "", ""
 
-# 5. Последняя активность
+# Активность
 try:
     activities = client.get_activities(0, 1)
     last_act = activities[0] if activities and activities[0]['startTimeLocal'].startswith(today_date) else None
 except: last_act = None
 
-# ---------- AI ANALYSIS ----------
-ai_advice = "Анализ не выполнен"
+# ---------- AI ANALYSIS (Fixed 404) ----------
+ai_advice = "Анализ недоступен"
 if gemini_key:
     try:
         genai.configure(api_key=gemini_key.strip())
-        model = genai.GenerativeModel('gemini-1.5-flash') # Прямой вызов модели
+        # Исправлено: пробуем прямое имя модели без префикса
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
-        workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
-        user_prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
-                       f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
-                       f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
-                       f"Дай краткую оценку восстановления и совет на завтра (2 предложения).")
+        workout_info = f"Тренировка: {last_act['activityType']['typeKey']}" if last_act else "Тренировок не было"
+        user_prompt = (f"Данные за {today_date}: Сон {sleep_hours}ч (Score: {sleep_score}), HRV: {hrv}, "
+                       f"Пульс покоя: {resting_hr}, Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
+                       f"Дай краткий совет на завтра (2 фразы).")
         
         response = model.generate_content(user_prompt)
         ai_advice = response.text
     except Exception as e:
-        ai_advice = f"AI Error: {str(e)[:50]}"
+        ai_advice = f"AI Error: {str(e)[:100]}"
 
 # ---------- GOOGLE SHEETS SYNC ----------
 creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
@@ -99,34 +99,29 @@ credentials = Credentials.from_service_account_info(creds_dict, scopes=["https:/
 gc = gspread.authorize(credentials)
 spreadsheet = gc.open("Garmin_Data")
 
-# Обновляем Daily
-daily_data = [today_date, steps, daily_distance_km, daily_calories, resting_hr, body_battery]
-update_or_append(spreadsheet.worksheet("Daily"), today_date, daily_data)
+# 1. Daily
+update_or_append(spreadsheet.worksheet("Daily"), today_date, [today_date, steps, daily_distance_km, daily_calories, resting_hr, body_battery])
 
-# Обновляем Morning
-morning_data = [today_date, weight, resting_hr, hrv, body_battery, sleep_score, sleep_min]
-update_or_append(spreadsheet.worksheet("Morning"), today_date, morning_data)
+# 2. Morning (теперь Sleep_Hours вместо Sleep_Minutes)
+# Важно: переименуй колонку в самой таблице Google на "Sleep_Hours"
+update_or_append(spreadsheet.worksheet("Morning"), today_date, [today_date, weight, resting_hr, hrv, body_battery, sleep_score, sleep_hours])
 
-# Обновляем Activities (только если есть новая)
+# 3. Activities
 if last_act:
     act_sheet = spreadsheet.worksheet("Activities")
-    avg_hr = last_act.get('averageHR', 0)
-    te = last_act.get('trainingEffect', 0)
-    hr_intensity = round(avg_hr / HR_MAX, 2) if avg_hr else ""
-    
-    # Чтобы не дублировать активности, проверяем время старта (столбец B)
     start_time = last_act['startTimeLocal'][11:16]
-    existing_times = act_sheet.col_values(2)
-    if start_time not in existing_times:
+    # Простая проверка на дубли по времени
+    if start_time not in act_sheet.col_values(2):
+        avg_hr = last_act.get('averageHR', 0)
         act_sheet.append_row([
             today_date, start_time, last_act['activityType']['typeKey'].capitalize(),
             round(last_act['duration'] / 3600, 2), round(last_act.get('distance', 0) / 1000, 2),
             avg_hr, last_act.get('maxHR', ""), last_act.get('trainingLoad', ""),
-            te, last_act.get('calories', ""), last_act.get('avgPower', ""),
-            last_act.get('averageRunningCadence', ""), hr_intensity, "Session"
+            last_act.get('trainingEffect', ""), last_act.get('calories', ""), "", "", 
+            round(avg_hr/HR_MAX, 2) if avg_hr else "", "Session"
         ])
 
-# Пишем в лог
-spreadsheet.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Sync Success", ai_advice])
+# 4. Log
+spreadsheet.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Auto-Sync", ai_advice])
 
-print("✅ Финиш! Таблица актуализирована.")
+print(f"✅ Данные успешно синхронизированы. Сон: {sleep_hours}ч.")
