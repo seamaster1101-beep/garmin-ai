@@ -4,12 +4,10 @@ from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
 
 # --- CONFIG ---
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
 def update_or_append(sheet, date_str, row_data):
@@ -23,7 +21,7 @@ def update_or_append(sheet, date_str, row_data):
                 break
         if found_idx != -1:
             for i, val in enumerate(row_data[1:], start=2):
-                if val != "" and val is not None: 
+                if val not in (None, "", 0, "0"): 
                     sheet.update_cell(found_idx, i, val)
             return "Updated"
         else:
@@ -38,80 +36,75 @@ try:
 except: print("Fail login"); exit(1)
 
 now = datetime.now()
-today_date = now.strftime("%Y-%m-%d")
-yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+today_str = now.strftime("%Y-%m-%d")
+yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. SLEEP & MORNING DATA (Смещаем фокус на утро) ---
-morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = "", 0, 0, 0, 0, 0, 0
+# --- 1. MORNING BLOCK ---
 try:
-    sl = gar.get_sleep_data(today_date)
-    d = sl.get("dailySleepDTO") or {}
+    sl = gar.get_sleep_data(today_str)
+    s_dto = sl.get("dailySleepDTO") or {}
     
-    # Время пробуждения
-    if d.get("sleepEndTimeGMT"):
-        # Конвертируем из GMT в локальное (примерно)
-        morning_ts = today_date + " 08:00" # Заглушка, если не выйдет вытянуть точно
-        slp_end = d.get("sleepEndTimeLocal") or d.get("sleepEndTimeGMT")
-        morning_ts = slp_end.replace("T", " ")[:16]
-    
-    slp_h = round(d.get("sleepTimeSeconds", 0)/3600, 1) if d.get("sleepTimeSeconds") else 0
-    slp_sc = d.get("sleepScore", 0)
-    
-    # Body Battery на утро (берем значение из сна)
-    bb_morning = d.get("awakeCount", 0) # Это не совсем то, ищем в summary
-    summary = gar.get_user_summary(today_date) or {}
-    bb_morning = summary.get("bodyBatteryHighestValue", 0) # Пиковое значение обычно утром
-    r_hr = summary.get("restingHeartRate", 0)
+    # Пытаемся достать ЛОКАЛЬНОЕ время пробуждения
+    raw_wake = s_dto.get("sleepEndTimeLocal")
+    if raw_wake:
+        # Превращаем "2026-02-18T07:15:00.0" в "2026-02-18 07:15"
+        morning_ts = raw_wake.replace("T", " ")[:16]
+    else:
+        # Если данных о сне нет, ставим сегодняшнее число и 08:00
+        morning_ts = f"{today_str} 08:00"
 
-    # Вес (проверяем сегодня и вчера)
-    w_comp = gar.get_body_composition(today_date)
-    if not w_comp.get('uploads'): w_comp = gar.get_body_composition(yesterday)
-    if w_comp.get('uploads'):
-        weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
-        
-    # HRV (ночное среднее)
-    h_data = gar.get_hrv_data(today_date)
-    if not h_data: h_data = gar.get_hrv_data(yesterday)
-    hrv = h_data[0].get("lastNightAvg", 0) if isinstance(h_data, list) and h_data else 0
+    slp_h = round(s_dto.get("sleepTimeSeconds", 0)/3600, 1) if s_dto.get("sleepTimeSeconds") else ""
+    slp_sc = s_dto.get("sleepScore", "")
     
-    morning_row = [morning_ts or (today_date + " 08:00"), weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+    # HRV за последнюю ночь
+    hrv_data = gar.get_hrv_data(today_str)
+    hrv = hrv_data[0].get("lastNightAvg", "") if hrv_data else ""
+    
+    # Вес (сегодня или вчера)
+    w_comp = gar.get_body_composition(today_str)
+    if not w_comp.get('uploads'): w_comp = gar.get_body_composition(yesterday_str)
+    weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1) if w_comp.get('uploads') else ""
+    
+    summary = gar.get_user_summary(today_str) or {}
+    bb_morning = summary.get("bodyBatteryHighestValue", "")
+    r_hr = summary.get("restingHeartRate", "")
+
+    morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 except:
-    morning_row = [today_date + " 08:00", 0, 0, 0, 0, 0, 0]
+    morning_row = [f"{today_str} 08:00", "", "", "", "", "", ""]
 
-# --- 2. DAILY ---
+# --- 2. DAILY BLOCK ---
 try:
-    step_data = gar.get_daily_steps(today_date, today_date)
-    steps = step_data[0].get('totalSteps', 0) if step_data else 0
-    dist = round(step_data[0].get('totalDistance', 0) / 1000, 2) if step_data else 0
+    step_data = gar.get_daily_steps(today_str, today_str)
+    steps = step_data[0].get('totalSteps', "") if step_data else ""
+    dist = round(step_data[0].get('totalDistance', 0) / 1000, 2) if step_data else ""
+    cals = (summary.get("activeCalories", 0) or 0) + (summary.get("bmrCalories", 0) or 0)
     
-    st = gar.get_stats(today_date) or {}
-    cals = st.get("calories", (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0)))
-    
-    daily_row = [today_date, steps, dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", 0)]
+    daily_row = [today_str, steps, dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
 except:
-    daily_row = [today_date, 0, 0, 0, 0, 0]
+    daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Тройной поиск Cadence) ---
+# --- 3. ACTIVITIES ---
 activities_to_log = []
 try:
-    acts = gar.get_activities_by_date(today_date, today_date)
+    acts = gar.get_activities_by_date(today_str, today_str)
     acts.sort(key=lambda x: x.get('startTimeLocal', ''))
     for a in acts:
-        # Ищем каденс везде: в базе, в вело-поле, в беговом
-        cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
-               a.get('averageRunCadence') or a.get('metadata', {}).get('avgCadence', ""))
-        
+        st_time = a.get('startTimeLocal', "")[11:16]
+        # Расширенный поиск каденса (вело датчики)
+        cad = a.get('averageBikingCadence') or a.get('averageCadence') or a.get('averageRunCadence') or ""
         avg_hr = a.get('averageHR', 0)
+        
         intensity = "N/A"
-        if avg_hr and r_hr > 0:
+        if avg_hr and r_hr:
             res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
             intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
 
         activities_to_log.append([
-            today_date, a.get('startTimeLocal', "")[11:16], a.get('activityType', {}).get('typeKey', ''),
+            today_str, st_time, a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
-            avg_hr, a.get('maxHR', 0), a.get('trainingLoad', 0),
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', 0),
+            avg_hr, a.get('maxHR', ""), a.get('trainingLoad', ""),
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
             a.get('avgPower', ""), cad, intensity
         ])
 except: pass
@@ -122,13 +115,15 @@ try:
     c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(c_obj).open("Garmin_Data")
     
-    update_or_append(ss.worksheet("Daily"), today_date, daily_row)
-    update_or_append(ss.worksheet("Morning"), today_date, morning_row)
+    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
+    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     
     act_sheet = ss.worksheet("Activities")
     existing = [f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2]
     for act in activities_to_log:
-        if f"{act[0]}_{act[1]}_{act[2]}" not in existing: act_sheet.append_row(act)
-
-    print(f"✔ Лист Morning: {morning_ts}, HRV: {hrv}, Ккал: {cals}")
-except Exception as e: print(f"❌ Error: {e}")
+        if f"{act[0]}_{act[1]}_{act[2]}" not in existing:
+            act_sheet.append_row(act)
+    
+    print(f"✔ Готово. Время Morning: {morning_ts}")
+except Exception as e:
+    print(f"❌ Ошибка: {e}")
