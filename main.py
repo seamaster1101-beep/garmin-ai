@@ -24,11 +24,10 @@ today_date = now.strftime("%Y-%m-%d")
 
 print(f"Fetching data for: {today_date}")
 
-# ---------- DAILY STATS (С защитой от пустых данных) ----------
+# ---------- DAILY STATS ----------
 stats = client.get_stats(today_date)
 steps = stats.get("totalSteps") or 0
 daily_calories = stats.get("totalKilocalories") or 0
-# Защита от None: если дистанции нет, ставим 0
 raw_dist = stats.get("totalDistanceMeters") or 0
 daily_distance_km = round(raw_dist / 1000, 2)
 resting_hr = stats.get("restingHeartRate") or 0
@@ -58,8 +57,8 @@ try:
 except:
     weight, hrv, sleep_score, sleep_min = "", "", "", ""
 
-# ---------- AI ANALYSIS BLOCK (Исправленный URL v1) ----------
-ai_advice = "Анализ не выполнен"
+# ---------- AI ANALYSIS BLOCK (АВТО-ПЕРЕБОР) ----------
+ai_advice = "Анализ не выполнен (Все эндпоинты вернули ошибку)"
 if gemini_key:
     api_key_clean = str(gemini_key).strip()
     workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
@@ -69,7 +68,7 @@ if gemini_key:
                    f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
                    f"Дай краткую оценку восстановления и совет на завтра (2 предложения).")
 
-    # Список вариантов URL (от самых новых к самым стабильным)
+    # Список вариантов для перебора
     endpoints = [
         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key_clean}",
         f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key_clean}",
@@ -85,18 +84,20 @@ if gemini_key:
 
     for url in endpoints:
         try:
-            print(f"Trying endpoint: {url.split('models/')[1].split(':')[0]}") # Лог в консоль GitHub
+            model_name = url.split('models/')[1].split(':')[0]
+            print(f"Trying endpoint: {model_name}...")
             response = requests.post(url, headers=headers, json=payload, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
                 ai_advice = result['candidates'][0]['content']['parts'][0]['text']
-                print("✅ Success with this endpoint!")
-                break # Выходим из цикла, если получилось
+                print(f"✅ Success with {model_name}!")
+                break
             else:
+                print(f"❌ {model_name} failed with status {response.status_code}")
                 ai_advice = f"API Error {response.status_code}: {response.reason}"
         except Exception as e:
-            ai_advice = f"Local Error: {str(e)[:50]}"
+            print(f"⚠️ Local error on {url}: {e}")
             continue
 
 # ---------- GOOGLE SHEETS ----------
@@ -138,4 +139,4 @@ morning_sheet.append_row([today_date, weight, resting_hr, hrv, body_battery, sle
 # 4. Лист AI_LOG
 spreadsheet.worksheet("AI_Log").append_row([now.strftime("%Y-%m-%d %H:%M"), "Sync Complete", ai_advice])
 
-print(f"✅ Sync Successful! AI Advice: {ai_advice[:50]}...")
+print(f"✅ Process finished. AI Log updated.")
