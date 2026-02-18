@@ -56,18 +56,27 @@ today_date = now.strftime("%Y-%m-%d")
 current_ts = now.strftime("%Y-%m-%d %H:%M")
 yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. DAILY (Суммирование калорий) ---
+# --- 1. DAILY (Сверхмощный поиск калорий) ---
 try:
     sm = gar.get_user_summary(today_date) or {}
     steps = sm.get("totalSteps") or sm.get("steps") or ""
+    
     raw_dist = sm.get("totalDistanceMeters") or sm.get("distance", 0)
     dist = round(float(raw_dist) / 1000, 2) if raw_dist else ""
     
-    # Калории
+    # Ищем калории везде, где можно
     total_cals = sm.get("totalCalories") or sm.get("calories")
     if not total_cals:
+        # Пробуем через ежедневную детальную статистику
+        try:
+            d_stats = gar.get_daily_stats(today_date)
+            total_cals = d_stats[0].get('calories', 0) if d_stats else 0
+        except: pass
+        
+    if not total_cals or total_cals == 0:
         total_cals = (sm.get("activeCalories", 0) or 0) + (sm.get("bmrCalories", 0) or 0)
-    cals = total_cals if total_cals > 0 else ""
+        
+    cals = total_cals if total_cals and total_cals > 0 else ""
     
     r_hr = sm.get("restingHeartRate") or ""
     bb = sm.get("bodyBatteryMostRecentValue") or ""
@@ -105,34 +114,4 @@ try:
             round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ''),
             a.get('avgPower', ''), a.get('averageCadence', ''), calculate_intensity(avg_hr, r_hr)
         ])
-except: pass
-
-# --- 4. SYNC ---
-try:
-    creds = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-    ss = gspread.authorize(c_obj).open("Garmin_Data")
-    
-    update_or_append(ss.worksheet("Daily"), today_date, daily_row)
-    update_or_append(ss.worksheet("Morning"), today_date, morning_row)
-    
-    act_sheet = ss.worksheet("Activities")
-    all_acts = act_sheet.get_all_values()
-    existing_keys = [f"{r[0]}_{r[1]}_{r[2]}" for r in all_acts if len(r) > 2]
-    for act in activities_to_log:
-        if f"{act[0]}_{act[1]}_{act[2]}" not in existing_keys: act_sheet.append_row(act)
-
-    # --- AI ---
-    advice = "AI analysis skipped"
-    if GEMINI_API_KEY:
-        try:
-            genai.configure(api_key=GEMINI_API_KEY.strip())
-            m_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            model = genai.GenerativeModel(m_list[0])
-            prompt = f"Данные: Шаги {steps}, Сон {slp_h}ч, Калории {cals}. Дай совет."
-            advice = model.generate_content(prompt).text.strip()
-        except: pass
-    
-    ss.worksheet("AI_Log").append_row([current_ts, "Success", advice])
-    print(f"✔ Завершено. Калории: {cals}")
-except Exception as e: print(f"❌ Ошибка: {e}")
+except
