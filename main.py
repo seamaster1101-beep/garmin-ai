@@ -11,23 +11,26 @@ GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
-# --- END CONFIG ---
 
 def safe_val(v):
     return v if v not in (None, "", 0) else ""
 
-def get_past(n=7):
-    base = datetime.now()
-    return [(base - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
-
-dates = get_past(7)
-debug = [f"Dates: {dates}"]
-
-def log_json(obj):
+# Функция обновления или добавления строки
+def update_or_append(sheet, date_str, row_data):
     try:
-        return json.dumps(obj, ensure_ascii=False)
-    except:
-        return str(obj)
+        col_values = sheet.col_values(1)
+        if date_str in col_values:
+            row_idx = col_values.index(date_str) + 1
+            # Обновляем со 2-го столбца
+            for i, val in enumerate(row_data[1:], start=2):
+                if val != "":
+                    sheet.update_cell(row_idx, i, val)
+            return "Updated"
+        else:
+            sheet.append_row(row_data)
+            return "Appended"
+    except Exception as e:
+        return f"Error: {e}"
 
 # --- LOGIN ---
 try:
@@ -37,125 +40,84 @@ except Exception as e:
     print("Garmin login fail:", e)
     exit(1)
 
-# --- STATS (today) ---
+now = datetime.now()
+today = now.strftime("%Y-%m-%d")
+yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+# --- DATA COLLECTION ---
+
+# 1. Основные статы (Пульс, Батарейка)
 try:
-    stats = gar.get_stats(dates[0]) or {}
+    stats = gar.get_stats(today) or {}
     resting_hr = safe_val(stats.get("restingHeartRate"))
     body_battery = safe_val(stats.get("bodyBatteryMostRecentValue"))
-    debug.append(f"Stats: HR {resting_hr}, BB {body_battery}")
-except Exception as e:
-    resting_hr = ""
-    body_battery = ""
-    debug.append(f"StatsErr: {e}")
+except: resting_hr = body_battery = ""
 
-# --- WEIGHT (7 days) ---
+# 2. Вес (Берем из саммари - самый надежный способ)
 weight = ""
-weight_raw_all = {}
-for d in dates:
-    try:
-        wr = gar.get_body_composition(d, d) or {}
-        weight_raw_all[d] = wr
-        if wr.get("uploads"):
-            w_val = wr["uploads"][-1].get("weight")
-            if w_val:
-                weight = safe_val(round(w_val/1000,1))
-                break
-    except Exception as e:
-        weight_raw_all[d] = {"error": str(e)}
+try:
+    summary = gar.get_user_summary(today)
+    w_raw = summary.get("weight")
+    if w_raw:
+        weight = round(w_raw / 1000, 1)
+except: weight = ""
 
-debug.append(f"Weight: {weight}")
-
-# --- HRV (7 days) ---
+# 3. HRV (Проверяем сегодня и вчера)
 hrv = ""
-hrv_raw_all = {}
-for d in dates:
-    try:
-        hr = gar.get_hrv_data(d) or {}
-        hrv_raw_all[d] = hr
-        if isinstance(hr, list) and hr and hr[0].get("lastNightAvg"):
-            hrv = safe_val(hr[0].get("lastNightAvg"))
-            break
-    except Exception as e:
-        hrv_raw_all[d] = {"error": str(e)}
+try:
+    hr_data = gar.get_hrv_data(today) or gar.get_hrv_data(yesterday)
+    if hr_data and isinstance(hr_data, list):
+        hrv = safe_val(hr_data[0].get("lastNightAvg"))
+except: hrv = ""
 
-debug.append(f"HRV: {hrv}")
-
-# --- SLEEP (7 days) ---
+# 4. Сон
 sleep_score = ""
 sleep_hours = ""
-sleep_raw_all = {}
-for d in dates:
-    try:
-        sr = gar.get_sleep_data(d) or {}
-        sleep_raw_all[d] = sr
-        dto = sr.get("dailySleepDTO", {})
-        sc = dto.get("sleepScore")
-        secs = dto.get("sleepTimeSeconds", 0)
-        if sc or secs > 0:
-            sleep_score = safe_val(sc)
-            sleep_hours = safe_val(round(secs/3600, 1)) if secs else ""
-            break
-    except Exception as e:
-        sleep_raw_all[d] = {"error": str(e)}
-
-debug.append(f"Sleep Score: {sleep_score}")
-debug.append(f"Sleep Hours: {sleep_hours}")
-
-# --- AI Advice ---
-ai_advice = "No advice"
 try:
-    if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY.strip())
-        models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-        model_name = "models/gemini-1.5-pro" if "models/gemini-1.5-pro" in models else models[0]
-        gen_model = genai.GenerativeModel(model_name)
+    sr = gar.get_sleep_data(today)
+    dto = sr.get("dailySleepDTO", {})
+    sc = dto.get("sleepScore")
+    secs = dto.get("sleepTimeSeconds", 0)
+    if sc or secs > 0:
+        sleep_score = safe_val(sc)
+        sleep_hours = safe_val(round(secs/3600, 1))
+except: sleep_score = sleep_hours = ""
 
+# --- AI ADVICE ---
+ai_advice = "No advice"
+if GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY.strip())
+        model = genai.GenerativeModel("gemini-1.5-flash")
         prompt = (
-            f"Сон {sleep_hours}ч (Score {sleep_score}), HRV {hrv}, "
-            f"RestHR {resting_hr}, BodyBattery {body_battery}, Вес {weight}."
-            "Совет на завтра (2 предложения)."
+            f"Анализ на {today}: Сон {sleep_hours}ч (Score {sleep_score}), HRV {hrv}, "
+            f"Пульс {resting_hr}, Батарейка {body_battery}, Вес {weight}. "
+            f"Дай краткий совет на завтра (2 предложения)."
         )
-        ai_advice = gen_model.generate_content(prompt).text.strip()
-        debug.append("AI:OK")
-except Exception as e:
-    debug.append(f"AIErr:{str(e)[:80]}")
-    ai_advice = f"AI Error: {str(e)[:100]}"
+        ai_advice = model.generate_content(prompt).text.strip()
+    except Exception as e:
+        ai_advice = f"AI Error: {e}"
 
 # --- WRITE TO SHEETS ---
 try:
     creds = json.loads(GOOGLE_CREDS_JSON)
-    cred_obj = Credentials.from_service_account_info(
-        creds,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-    )
+    cred_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     gs = gspread.authorize(cred_obj)
     ss = gs.open("Garmin_Data")
 
-    # Morning sheet
-    morning = ss.worksheet("Morning")
-    morning.append_row([
-        dates[0],
-        weight,
-        resting_hr,
-        hrv,
-        body_battery,
-        sleep_score,
-        sleep_hours
+    # Обновляем Morning (без дублей)
+    morning_sheet = ss.worksheet("Morning")
+    morning_row = [today, weight, resting_hr, hrv, body_battery, sleep_score, sleep_hours]
+    res_m = update_or_append(morning_sheet, today, morning_row)
+
+    # Обновляем AI_Log (чистый вид)
+    log_sheet = ss.worksheet("AI_Log")
+    log_sheet.append_row([
+        datetime.now().strftime("%Y-%m-%d %H:%M"),
+        f"Status: {res_m}",
+        ai_advice
     ])
 
-    # Log detailed
-    ai_log = ss.worksheet("AI_Log")
-    ai_log.append_row([
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ai_advice,
-        log_json(weight_raw_all),
-        log_json(hrv_raw_all),
-        log_json(sleep_raw_all)
-    ])
-
-    print("✔ Done!")
+    print(f"✔ Done! Morning: {res_m}, Weight: {weight}, HRV: {hrv}")
 except Exception as e:
     print("Sheets Err:", e)
