@@ -35,55 +35,63 @@ def update_or_append(sheet, date_str, row_data):
 try:
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
-except: print("Fail login"); exit(1)
+except Exception as e:
+    print(f"Login Fail: {e}")
+    exit(1)
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK (ГЛУБОКИЙ ПОИСК) ---
+# --- 1. MORNING BLOCK ---
 morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
 
 try:
-    # Ищем HRV (Пробуем 3 разных метода)
-    wellness = gar.get_stats(today_str) or {}
-    hrv = wellness.get("allDayAvgHrv") or wellness.get("lastNightAvgHrv")
-    if not hrv:
-        hrv_data = gar.get_hrv_data(today_str)
-        if hrv_data: hrv = hrv_data[0].get("lastNightAvg")
+    # Пробуем получить статистику здоровья
+    stats = gar.get_stats(today_str) or {}
+    # Варианты ключей для HRV
+    hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv")
     
-    # Ищем СОН (Смотрим и вчера, и сегодня)
-    for target_date in [today_str, yesterday_str]:
-        sleep_raw = gar.get_sleep_data(target_date)
-        s_dto = sleep_raw.get("dailySleepDTO") or {}
-        # Если нашли оценку сна и она относится к сегодняшнему утру
-        if s_dto.get("sleepScore") and (s_dto.get("sleepEndTimeLocal")[:10] == today_str):
-            slp_sc = s_dto.get("sleepScore")
-            slp_h = round(s_dto.get("sleepTimeSeconds", 0)/3600, 1)
-            morning_ts = s_dto.get("sleepEndTimeLocal").replace("T", " ")[:16]
-            break
+    # Если HRV всё еще нет, пробуем через прямой запрос (новые API)
+    if not hrv:
+        try:
+            hrv_data = gar.get_hrv_data(today_str)
+            if hrv_data and 'hrvSummary' in hrv_data:
+                hrv = hrv_data['hrvSummary'].get('lastNightAvg')
+        except: pass
 
-    # Вес
-    w_comp = gar.get_body_composition(yesterday_str, today_str)
-    if w_comp.get('uploads'): weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
+    # Сбор данных сна
+    for d in [today_str, yesterday_str]:
+        sleep_data = gar.get_sleep_data(d)
+        dto = sleep_data.get("dailySleepDTO", {})
+        if dto and dto.get("sleepScore"):
+            slp_sc = dto.get("sleepScore")
+            slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
+            morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
+            print(f"DEBUG: Нашел сон за {d}. Score: {slp_sc}")
+            break
 
     summary = gar.get_user_summary(today_str) or {}
     r_hr = summary.get("restingHeartRate", "")
     bb_morning = summary.get("bodyBatteryHighestValue", "")
 
+    w_comp = gar.get_body_composition(yesterday_str, today_str)
+    if w_comp.get('uploads'): 
+        weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
+
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 except Exception as e:
-    print(f"Morning Error: {e}")
+    print(f"Morning Block Error: {e}")
     morning_row = [morning_ts, "", "", "", "", "", ""]
 
 # --- 2. DAILY BLOCK ---
 try:
-    step_data = gar.get_daily_steps(today_str, today_str)
-    steps = step_data[0].get('totalSteps', 0) if step_data else 0
-    dist = round(step_data[0].get('totalDistance', 0) / 1000, 2) if step_data else 0
-    cals = wellness.get("calories") or (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0))
-    daily_row = [today_str, steps, dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
-except: daily_row = [today_str, "", "", "", "", ""]
+    steps_info = gar.get_daily_steps(today_str, today_str)
+    steps = steps_info[0].get('totalSteps', 0) if steps_info else 0
+    cals = stats.get("calories") or (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0))
+    daily_row = [today_str, steps, "", cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+except:
+    daily_row = [today_str, "", "", "", "", ""]
 
 # --- 3. SYNC & AI ---
 try:
@@ -94,17 +102,22 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
-    # AI Section (Снимаем ограничение slp_sc, чтобы он анализировал то, что есть)
-    advice = "AI Limit"
-    if GEMINI_API_KEY:
+    advice = "No data for AI"
+    # Пытаемся запустить AI, если есть хоть какие-то зацепки
+    if GEMINI_API_KEY and (slp_sc or hrv or r_hr):
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
+            # Исправленное имя модели
             model = genai.GenerativeModel('gemini-1.5-flash')
-            prompt = f"Данные {today_str}: HRV {hrv}, Сон {slp_h}ч (Score: {slp_sc}), Вес {weight}, Пульс {r_hr}, Body Battery {bb_morning}. Проанализируй и дай совет."
-            advice = model.generate_content(prompt).text.strip()
-        except Exception as e: advice = f"AI Error: {str(e)[:20]}"
+            prompt = f"Данные {today_str}: HRV {hrv}, Сон {slp_h}ч (Score: {slp_sc}), Пульс {r_hr}, Body Battery {bb_morning}. Вес {weight}. Дай короткий совет."
+            response = model.generate_content(prompt)
+            advice = response.text.strip()
+        except Exception as ai_err:
+            advice = f"AI Error: {str(ai_err)[:30]}"
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Готово. HRV: {hrv}, Score: {slp_sc}, AI: {advice[:30]}...")
+    print(f"--- РЕЗУЛЬТАТ ---")
+    print(f"HRV: {hrv}, Score: {slp_sc}, AI: {advice[:50]}")
 
-except Exception as e: print(f"❌ Error: {e}")
+except Exception as e:
+    print(f"Final Sync Error: {e}")
