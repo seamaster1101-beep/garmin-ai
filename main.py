@@ -124,24 +124,12 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- ACTIVITIES BLOCK (ПРОСТАЯ ВЕРСИЯ) ---
+# --- ACTIVITIES BLOCK (ИСПРАВЛЕНО) ---
 try:
     # Получаем активности за сегодня
     activities_today = gar.get_activities_by_date(today_str, today_str) or []
     print(f"Найдено активностей: {len(activities_today)}")
     
-    # Выводим сырые данные для отладки
-    for act in activities_today:
-        print(f"\nСырые данные:")
-        print(f"  startTimeLocal: {act.get('startTimeLocal')}")
-        print(f"  activityType: {act.get('activityType', {}).get('typeKey')}")
-        print(f"  duration: {act.get('duration')}")
-        print(f"  distance: {act.get('distance')}")
-        print(f"  trainingLoad: {act.get('trainingLoad')}")
-        print(f"  trainingEffect: {act.get('trainingEffect')}")
-        print(f"  calories: {act.get('calories')}")
-        print(f"  averagePower: {act.get('averagePower')}")
-        
 except Exception as e:
     print(f"Activities fetch error: {e}")
     activities_today = []
@@ -156,31 +144,42 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     
-    # --- ПРОСТАЯ ОБРАБОТКА ACTIVITIES ---
+    # --- ИСПРАВЛЕННАЯ ОБРАБОТКА ACTIVITIES ---
     try:
         activities_sheet = ss.worksheet("Activities")
         
-        # Получаем все строки
+        # Получаем все строки для проверки дубликатов
         all_rows = activities_sheet.get_all_values()
         
         # Для каждой новой активности
         for activity in activities_today:
-            # Получаем время старта
+            # ИСПРАВЛЕНО: Правильный парсинг времени
             start_time_full = activity.get('startTimeLocal', '')
+            print(f"\nОбработка: {start_time_full}")
+            
+            # Пробуем разные форматы даты
             if 'T' in start_time_full:
-                date_part, time_part = start_time_full.split('T')
-                time_part = time_part[:5]
+                # Формат: 2026-02-19T17:30:05
+                date_part = start_time_full.split('T')[0]
+                time_part = start_time_full.split('T')[1][:5]  # Берем HH:MM
+            elif ' ' in start_time_full:
+                # Формат: 2026-02-19 17:30:05
+                date_part = start_time_full.split(' ')[0]
+                time_part = start_time_full.split(' ')[1][:5]  # Берем HH:MM
             else:
                 date_part = today_str
                 time_part = ""
             
             sport = activity.get('activityType', {}).get('typeKey', 'unknown')
             
+            print(f"  Дата: {date_part}, Время: {time_part}, Спорт: {sport}")
+            
             # Проверяем, есть ли уже такая активность
             exists = False
             for row in all_rows[1:]:  # пропускаем заголовок
                 if len(row) >= 3 and row[0] == date_part and row[1] == time_part and row[2] == sport:
                     exists = True
+                    print(f"  ⚠ Уже существует, пропускаем")
                     break
             
             if not exists:
@@ -191,30 +190,34 @@ try:
                 distance_m = activity.get('distance', 0)
                 distance_km = round(distance_m / 1000, 2) if distance_m else 0
                 
-                training_load = activity.get('trainingLoad', '')
-                training_effect = activity.get('trainingEffect', '')
+                # ВАЖНО: Калории идут в колонку Calories!
                 calories = activity.get('calories', '')
-                avg_power = activity.get('averagePower', '')
                 
-                # Формируем строку
+                print(f"  Длительность: {duration_hr}ч")
+                print(f"  Дистанция: {distance_km}км")
+                print(f"  Калории: {calories} -> колонка Calories")
+                
+                # Формируем строку строго по колонкам:
+                # Date | Start_Time | Sport | Duration_hr | Distance_km | Avg_HR | Max_HR | 
+                # Training_Load | Training_Effec | Calories | Avg_Power | Cadence | HR_Intensity
                 new_row = [
-                    date_part,
-                    time_part,
-                    sport,
-                    str(duration_hr).replace('.', ',') if duration_hr else "",
-                    str(distance_km).replace('.', ',') if distance_km else "0",
-                    str(activity.get('averageHeartRate', '')),
-                    str(activity.get('maxHeartRate', '')),
-                    str(training_load).replace('.', ',') if training_load else "",
-                    str(training_effect).replace('.', ',') if training_effect else "",
-                    str(calories),
-                    str(avg_power),
-                    str(activity.get('averageCadence', '')),
-                    ""  # HR_Intensity - пока пусто
+                    date_part,                          # 1. Date
+                    time_part,                          # 2. Start_Time
+                    sport,                              # 3. Sport
+                    str(duration_hr).replace('.', ','), # 4. Duration_hr
+                    str(distance_km).replace('.', ','), # 5. Distance_km
+                    "",                                  # 6. Avg_HR (нет данных)
+                    "",                                  # 7. Max_HR (нет данных)
+                    "",                                  # 8. Training_Load (None)
+                    "",                                  # 9. Training_Effec (None)
+                    str(int(calories)) if calories else "",  # 10. Calories (244, 151, 188)
+                    "",                                  # 11. Avg_Power (None)
+                    "",                                  # 12. Cadence
+                    ""                                   # 13. HR_Intensity
                 ]
                 
                 activities_sheet.append_row(new_row)
-                print(f"Добавлена активность: {sport} в {time_part}")
+                print(f"  ✅ Добавлена новая строка")
         
     except Exception as e:
         print(f"Activities sheet error: {e}")
