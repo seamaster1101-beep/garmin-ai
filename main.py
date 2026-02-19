@@ -80,28 +80,23 @@ try:
     # 5. ЗАПИСЬ В ТАБЛИЦУ
     log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
 
-# 6. ТЕЛЕГРАМ
+# 6. ТЕЛЕГРАМ (ФИНАЛЬНЫЙ ТЕСТ)
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        # Убираем лишние символы, чтобы не ломать отправку
-        safe_advice = str(advice).replace("*", "").replace("_", "").replace("`", "")
-        msg = (
-            f"📊 HRV: {hrv}\n"
-            f"😴 Сон: {slp_h}ч (Score: {slp_sc})\n"
-            f"⚡ BB: {bb_morning}\n\n"
-            f"🤖 {safe_advice}"
-        )
+        # Убираем вообще всё форматирование, только голый текст
+        clean_advice = str(advice).replace("*", "").replace("_", "")
+        msg = f"HRV: {hrv}\nСон: {slp_h}\nBB: {bb_morning}\n\nСовет: {clean_advice}"
         
-        t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         try:
-            r = requests.post(t_url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
+            # Превращаем ID в число на случай, если GitHub передал его как строку с пробелом
+            chat_id_int = int(str(TELEGRAM_CHAT_ID).strip())
+            t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
+            
+            payload = {"chat_id": chat_id_int, "text": msg}
+            r = requests.post(t_url, json=payload, timeout=20) # Используем json= вместо data=
+            
             if r.status_code != 200:
-                print(f"❌ Telegram Error: {r.text}")
                 log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "TG Error", r.text])
             else:
-                print("✔ Telegram отправлен успешно")
+                log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "TG Success", "Sent!"])
         except Exception as t_e:
-            print(f"❌ Telegram Exception: {t_e}")
             log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "TG Exception", str(t_e)])
-
-except Exception as e:
-    print(f"❌ Global Error: {e}")
