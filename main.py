@@ -47,31 +47,25 @@ morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00",
 
 try:
     stats = gar.get_stats(today_str) or {}
-    # HRV
     hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv")
     
-    # Сон (проверка за 2 дня)
     for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
             dto = sleep_data.get("dailySleepDTO") or {}
             if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                # Пытаемся достать Score из разных полей API
                 slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or ""
                 slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
                 morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
-                print(f"DEBUG: Нашел данные сна за {d}. Score: {slp_sc}")
                 break
         except: continue
 
-    # Вес (проверка за последние 3 дня)
     for i in range(3):
         d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
             w_data = gar.get_body_composition(d_check, today_str)
             if w_data and w_data.get('uploads'):
                 weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-                print(f"DEBUG: Нашел вес за {d_check}: {weight}")
                 break
         except: continue
 
@@ -93,7 +87,7 @@ try:
 except:
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. SYNC & AI (Стабильная версия) ---
+# --- 3. SYNC & AI (АВТОМАТИЧЕСКИЙ ВЫБОР МОДЕЛИ) ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -106,25 +100,27 @@ try:
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
-            # Переключаемся на максимально совместимую модель gemini-pro
-            model = genai.GenerativeModel('gemini-pro')
             
-            prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                      f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
-            
-            res = model.generate_content(prompt)
-            advice = res.text.strip()
-        except Exception as ai_e:
-            # Если gemini-pro тоже не доступна, пробуем еще раз flash, но с общим именем
-            try:
-                model = genai.GenerativeModel('gemini-1.5-flash')
+            # Находим первую доступную модель для генерации контента
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            if available_models:
+                # Берем первую из списка (обычно это flash или pro)
+                model_name = available_models[0]
+                model = genai.GenerativeModel(model_name)
+                
+                prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
+                          f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
+                
                 res = model.generate_content(prompt)
                 advice = res.text.strip()
-            except:
-                advice = f"AI Error: {str(ai_e)[:25]}"
+                print(f"Использована модель: {model_name}")
+            else:
+                advice = "API Key жив, но доступных моделей нет."
+        except Exception as ai_e:
+            advice = f"AI Error: {str(ai_e)[:30]}"
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Готово! HRV: {hrv}, Score: {slp_sc}, AI: {advice[:40]}...")
+    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
 
 except Exception as e:
-    print(f"Final Sync Error: {e}")
+    print(f"Final Error: {e}")
