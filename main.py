@@ -42,50 +42,71 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK (HRV, Sleep Score, Weight) ---
+# --- 1. MORNING BLOCK ---
 morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
 
 try:
-    # 1.1 HRV (уже проверенный метод)
     stats = gar.get_stats(today_str) or {}
     hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv")
-    if not hrv:
-        try:
-            hrv_data = gar.get_hrv_data(today_str)
-            if hrv_data and 'hrvSummary' in hrv_data:
-                hrv = hrv_data['hrvSummary'].get('lastNightAvg')
-        except: pass
-
-    # 1.2 SLEEP SCORE (усиленный поиск)
+    
+    # Сон (проверка за 2 дня)
     for d in [today_str, yesterday_str]:
         sleep_raw = gar.get_sleep_data(d)
         dto = sleep_raw.get("dailySleepDTO", {})
-        if dto:
-            # Ищем score везде, где он может прятаться
+        if dto and dto.get("sleepTimeSeconds", 0) > 0:
             slp_sc = dto.get("sleepScore") or sleep_raw.get("sleepScore") or ""
             slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
-            if slp_h > 0:
-                morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
-                print(f"DEBUG: Нашел сон за {d}. Score: {slp_sc}, Hours: {slp_h}")
-                break
+            morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
+            break
 
-    # 1.3 WEIGHT (ищем за последние 3 дня)
-    for d_offset in range(3):
-        check_d = (now - timedelta(days=d_offset)).strftime("%Y-%m-%d")
-        w_comp = gar.get_body_composition(check_d, today_str)
-        if w_comp.get('uploads'):
-            weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
+    # Вес (проверка за 3 дня)
+    for i in range(3):
+        d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        w_data = gar.get_body_composition(d_check, today_str)
+        if w_data.get('uploads'):
+            weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
             break
 
     summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("restingHeartRate", "")
+    r_hr = summary.get("heartRateRestingValue") or summary.get("restingHeartRate", "")
     bb_morning = summary.get("bodyBatteryHighestValue", "")
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 except Exception as e:
-    print(f"Morning Block Error: {e}")
+    print(f"Morning Error: {e}")
     morning_row = [morning_ts, "", "", "", "", "", ""]
 
 # --- 2. DAILY BLOCK ---
 try:
-    steps_info = gar.
+    steps_data = gar.get_daily_steps(today_str, today_str)
+    steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
+    cals = stats.get("calories") or (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0))
+    daily_row = [today_str, steps, "", cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+except:
+    daily_row = [today_str, "", "", "", "", ""]
+
+# --- 3. SYNC & AI ---
+try:
+    creds = json.loads(GOOGLE_CREDS_JSON)
+    c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(c_obj).open("Garmin_Data")
+    
+    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
+    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+
+    advice = "AI Waiting for data..."
+    if GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY.strip())
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
+                      f"Сон {slp_h}ч (Score: {slp_sc}). Напиши ироничный короткий совет.")
+            res = model.generate_content(prompt)
+            advice = res.text.strip()
+        except Exception as ai_e:
+            advice = f"AI Error: {str(ai_e)[:20]}"
+    
+    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
+    print(f"✔ Готово! HRV: {hrv}, AI: {advice[:30]}...")
+except Exception as e:
+    print(f"Final Error: {e}")
