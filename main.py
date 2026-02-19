@@ -51,7 +51,7 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK ---
+# --- MORNING BLOCK ---
 morning_ts = f"{today_str} 08:00"
 weight = ""
 r_hr = ""
@@ -64,7 +64,6 @@ try:
     stats = gar.get_stats(today_str) or {}
     hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
     
-    # Получаем данные сна
     for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
@@ -77,7 +76,6 @@ try:
         except:
             continue
 
-    # Получаем вес
     for i in range(3):
         d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
@@ -93,13 +91,12 @@ try:
     bb_morning = summary.get("bodyBatteryHighestValue") or ""
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
-    print(f"Morning data: Вес={weight}, HRV={hrv}, Сон={slp_h}ч")
     
 except Exception as e:
     print(f"Morning Error: {e}")
     morning_row = [morning_ts, "", "", "", "", "", ""]
 
-# --- 2. DAILY BLOCK ---
+# --- DAILY BLOCK ---
 try:
     summary = gar.get_user_summary(today_str) or {}
     stats = gar.get_stats(today_str) or {}
@@ -127,31 +124,28 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES BLOCK ---
+# --- ACTIVITIES BLOCK (ПРОСТЕЙШАЯ ВЕРСИЯ) ---
 activities_today = []
 
 try:
-    # Получаем активности за сегодня
     activities_today = gar.get_activities_by_date(today_str, today_str) or []
     print(f"Найдено активностей: {len(activities_today)}")
     
-    # СОРТИРУЕМ ПО ВРЕМЕНИ (от ранних к поздним)
-    def get_activity_time(activity):
-        start_time = activity.get('startTimeLocal', '')
-        if 'T' in start_time:
-            return start_time.split('T')[1]
-        elif ' ' in start_time:
-            return start_time.split(' ')[1]
-        return start_time
-    
-    activities_today.sort(key=get_activity_time)
-    print("Активности отсортированы по времени")
+    # Выводим сырые данные для понимания
+    for act in activities_today:
+        start = act.get('startTimeLocal', '')
+        sport = act.get('activityType', {}).get('typeKey', 'unknown')
+        print(f"\n{start} - {sport}")
+        print(f"  duration: {act.get('duration')}")
+        print(f"  distance: {act.get('distance')}")
+        print(f"  calories: {act.get('calories')}")
+        print(f"  trainingLoad: {act.get('trainingLoad')}")
+        print(f"  trainingEffect: {act.get('trainingEffect')}")
     
 except Exception as e:
     print(f"Activities fetch error: {e}")
-    activities_today = []
 
-# --- 4. SYNC TO GOOGLE SHEETS ---
+# --- SYNC TO GOOGLE SHEETS ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -161,14 +155,14 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     
-    # --- ОБРАБОТКА ACTIVITIES ---
+    # --- ACTIVITIES - ТОЛЬКО ДОБАВЛЕНИЕ НОВЫХ ---
     try:
         activities_sheet = ss.worksheet("Activities")
         
-        # Получаем все строки
+        # Получаем все существующие строки
         all_rows = activities_sheet.get_all_values()
         
-        # Для каждой новой активности (в правильном порядке)
+        # Для каждой активности
         for activity in activities_today:
             # Парсим время
             start_time_full = activity.get('startTimeLocal', '')
@@ -185,114 +179,85 @@ try:
             
             sport = activity.get('activityType', {}).get('typeKey', 'unknown')
             
-            print(f"\nАктивность: {time_part} - {sport}")
-            
-            # Проверяем, есть ли уже
+            # Проверяем, есть ли уже такая активность
             exists = False
             for row in all_rows[1:]:
                 if len(row) >= 3 and row[0] == date_part and row[1] == time_part and row[2] == sport:
                     exists = True
-                    print(f"  Уже есть, пропускаем")
                     break
             
             if not exists:
-                # Формируем данные
+                # Конвертируем данные
                 duration_sec = activity.get('duration', 0)
                 duration_hr = round(duration_sec / 3600, 2) if duration_sec else ""
                 
                 distance_m = activity.get('distance', 0)
                 distance_km = round(distance_m / 1000, 2) if distance_m else 0
                 
+                avg_hr = activity.get('averageHeartRate', '')
+                max_hr = activity.get('maxHeartRate', '')
+                
+                # ВАЖНО: Правильное распределение!
+                training_load = activity.get('trainingLoad', '')
+                training_effect = activity.get('trainingEffect', '')
                 calories = activity.get('calories', '')
+                avg_power = activity.get('averagePower', '')
+                cadence = activity.get('averageCadence', '')
                 
-                # Форматируем числа с запятой и выравниванием
-                duration_str = f"{duration_hr:.2f}".replace('.', ',') if duration_hr else ""
-                distance_str = f"{distance_km:.2f}".replace('.', ',') if distance_km else "0"
-                calories_str = str(int(calories)) if calories else ""
+                # Форматируем
+                duration_str = str(duration_hr).replace('.', ',') if duration_hr else ""
+                distance_str = str(distance_km).replace('.', ',') if distance_km else "0"
                 
-                print(f"  Добавляем: {duration_str}ч, {distance_str}км, {calories_str}ккал")
-                
-                # ВАЖНО: Правильный порядок колонок согласно заголовкам:
-                # 1.Date | 2.Start_Time | 3.Sport | 4.Duration_hr | 5.Distance_km | 
-                # 6.Avg_HR | 7.Max_HR | 8.Training_Load | 9.Training_Effect | 
-                # 10.Calories | 11.Avg_Power | 12.Cadence | 13.HR_Intensity
-                
+                # Создаем строку с 13 колонками (как в заголовке)
                 new_row = [
                     date_part,                          # 1. Date
                     time_part,                          # 2. Start_Time
                     sport,                              # 3. Sport
                     duration_str,                       # 4. Duration_hr
-                    distance_str,                        # 5. Distance_km
-                    "",                                  # 6. Avg_HR
-                    "",                                  # 7. Max_HR
-                    "",                                  # 8. Training_Load
-                    "",                                  # 9. Training_Effect
-                    calories_str,                        # 10. Calories
-                    "",                                  # 11. Avg_Power
-                    "",                                  # 12. Cadence
-                    ""                                   # 13. HR_Intensity
+                    distance_str,                       # 5. Distance_km
+                    str(avg_hr) if avg_hr else "",     # 6. Avg_HR
+                    str(max_hr) if max_hr else "",     # 7. Max_HR
+                    str(training_load).replace('.', ',') if training_load else "",  # 8. Training_Load
+                    str(training_effect).replace('.', ',') if training_effect else "",  # 9. Training_Effect
+                    str(int(calories)) if calories else "",  # 10. Calories
+                    str(avg_power) if avg_power else "",     # 11. Avg_Power
+                    str(cadence) if cadence else "",         # 12. Cadence
+                    ""                                       # 13. HR_Intensity
                 ]
                 
                 activities_sheet.append_row(new_row)
-                print(f"  ✅ Добавлена новая строка")
+                print(f"✅ Добавлена: {time_part} {sport}")
         
     except Exception as e:
         print(f"Activities sheet error: {e}")
 
-    # --- 5. AI ADVICE ---
+    # --- AI ADVICE ---
     advice = "Нет данных для анализа"
-    ai_success = False
-    
     if GEMINI_API_KEY:
         try:
-            # Пробуем разные модели
-            model_names = ['gemini-1.5-pro', 'gemini-pro', 'gemini-1.0-pro']
-            
             genai.configure(api_key=GEMINI_API_KEY.strip())
+            model = genai.GenerativeModel('gemini-pro')
             
-            for model_name in model_names:
-                try:
-                    model = genai.GenerativeModel(model_name)
-                    
-                    # Формируем промпт с данными
-                    activities_summary = ""
-                    if activities_today:
-                        for act in activities_today:
-                            sport = act.get('activityType', {}).get('typeKey', 'unknown')
-                            duration = round(act.get('duration', 0) / 60, 0)
-                            activities_summary += f"{sport} ({duration}мин), "
-                    
-                    prompt = (f"Утренние показатели: HRV={hrv}, пульс={r_hr}, "
-                              f"body battery={bb_morning}, сон={slp_h}ч. "
-                              f"Сегодняшние тренировки: {activities_summary}. "
-                              f"Напиши короткий ироничный совет на день, связанный с этими данными. "
-                              f"Ответ должен быть на русском, 1-2 предложения.")
-                    
-                    response = model.generate_content(prompt)
-                    if response and response.text:
-                        advice = response.text.strip()
-                        ai_success = True
-                        print(f"AI успешно получен от {model_name}")
-                        break
-                except:
-                    continue
+            activities_summary = ""
+            if activities_today:
+                for act in activities_today:
+                    sport = act.get('activityType', {}).get('typeKey', 'unknown')
+                    duration = round(act.get('duration', 0) / 60, 0)
+                    activities_summary += f"{sport} ({duration}мин), "
             
-            if not ai_success:
-                advice = "AI временно недоступен"
-                
+            prompt = (f"Утренние показатели: HRV={hrv}, пульс={r_hr}, "
+                      f"body battery={bb_morning}, сон={slp_h}ч. "
+                      f"Тренировки: {activities_summary}. "
+                      f"Напиши короткий ироничный совет на день.")
+            
+            response = model.generate_content(prompt)
+            advice = response.text.strip() if response and response.text else "AI не ответил"
+            
         except Exception as ai_e:
             print(f"AI Error: {ai_e}")
-            advice = "Ошибка подключения к AI"
+            advice = "Ошибка AI"
     
-    # --- 6. LOG AI ADVICE ---
-    try:
-        ai_log = ss.worksheet("AI_Log")
-        status = "Success" if ai_success else "Failed"
-        ai_log.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), status, advice])
-    except:
-        print("AI_Log sheet not found")
-
-    # --- 7. TELEGRAM ---
+    # --- TELEGRAM ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         activities_text = ""
         if activities_today:
@@ -311,10 +276,9 @@ try:
                f"🤖 {advice}")
         
         tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-        response = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
-        print(f"Telegram отправлен, статус: {response.status_code}")
+        requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
 
-    print(f"\n✅ Готово! Активностей: {len(activities_today)}, AI: {ai_success}")
+    print(f"\n✅ Готово! Активностей: {len(activities_today)}")
 
 except Exception as e:
     print(f"❌ Final Error: {e}")
