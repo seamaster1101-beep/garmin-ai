@@ -41,78 +41,51 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK (Новые источники данных) ---
+# --- 1. MORNING BLOCK (ГЛУБОКИЙ ПОИСК) ---
 morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
 
 try:
-    # Запрашиваем расширенную статистику здоровья
+    # Ищем HRV (Пробуем 3 разных метода)
     wellness = gar.get_stats(today_str) or {}
+    hrv = wellness.get("allDayAvgHrv") or wellness.get("lastNightAvgHrv")
+    if not hrv:
+        hrv_data = gar.get_hrv_data(today_str)
+        if hrv_data: hrv = hrv_data[0].get("lastNightAvg")
     
-    # HRV из wellness
-    hrv = wellness.get("allDayAvgHrv") or wellness.get("lastNightAvgHrv", "")
-    
-    # Сон и Score через альтернативный вызов
-    sl = gar.get_sleep_data(today_str)
-    s_dto = sl.get("dailySleepDTO") or {}
-    slp_sc = s_dto.get("sleepScore") or sl.get("sleepScore", "") # Проверка в двух местах
-    slp_h = round(s_dto.get("sleepTimeSeconds", 0)/3600, 1) if s_dto.get("sleepTimeSeconds") else ""
-    if s_dto.get("sleepEndTimeLocal"):
-        morning_ts = s_dto.get("sleepEndTimeLocal").replace("T", " ")[:16]
+    # Ищем СОН (Смотрим и вчера, и сегодня)
+    for target_date in [today_str, yesterday_str]:
+        sleep_raw = gar.get_sleep_data(target_date)
+        s_dto = sleep_raw.get("dailySleepDTO") or {}
+        # Если нашли оценку сна и она относится к сегодняшнему утру
+        if s_dto.get("sleepScore") and (s_dto.get("sleepEndTimeLocal")[:10] == today_str):
+            slp_sc = s_dto.get("sleepScore")
+            slp_h = round(s_dto.get("sleepTimeSeconds", 0)/3600, 1)
+            morning_ts = s_dto.get("sleepEndTimeLocal").replace("T", " ")[:16]
+            break
 
     # Вес
     w_comp = gar.get_body_composition(yesterday_str, today_str)
-    if w_comp.get('uploads'):
-        weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
+    if w_comp.get('uploads'): weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
 
     summary = gar.get_user_summary(today_str) or {}
-    bb_morning = summary.get("bodyBatteryHighestValue", "")
     r_hr = summary.get("restingHeartRate", "")
+    bb_morning = summary.get("bodyBatteryHighestValue", "")
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
-except: morning_row = [morning_ts, "", "", "", "", "", ""]
+except Exception as e:
+    print(f"Morning Error: {e}")
+    morning_row = [morning_ts, "", "", "", "", "", ""]
 
-# --- 2. DAILY BLOCK (Улучшенные калории) ---
+# --- 2. DAILY BLOCK ---
 try:
     step_data = gar.get_daily_steps(today_str, today_str)
     steps = step_data[0].get('totalSteps', 0) if step_data else 0
     dist = round(step_data[0].get('totalDistance', 0) / 1000, 2) if step_data else 0
-    
-    # Пробуем достать калории из Wellness Stats (они там часто точнее)
-    cals = wellness.get("calories", "")
-    if not cals:
-        cals = (summary.get("activeCalories", 0) or 0) + (summary.get("bmrCalories", 0) or 0)
-    
+    cals = wellness.get("calories") or (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0))
     daily_row = [today_str, steps, dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
 except: daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Load & Cadence) ---
-activities_to_log = []
-try:
-    acts = gar.get_activities_by_date(today_str, today_str)
-    for a in acts:
-        # МАГИЯ КАДЕНСА: еще больше полей
-        cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
-               a.get('averageRunCadence') or a.get('averageFractionalCadence', ""))
-        
-        # НАГРУЗКА
-        t_load = a.get('trainingLoad') or a.get('metabolicCartTrainingLoad', "")
-        
-        avg_hr = a.get('averageHR', 0)
-        intensity = "N/A"
-        if avg_hr and r_hr and r_hr > 0:
-            res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
-            intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
-
-        activities_to_log.append([
-            today_str, a.get('startTimeLocal', "")[11:16], a.get('activityType', {}).get('typeKey', ''),
-            round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
-            avg_hr, a.get('maxHR', ""), t_load,
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
-            a.get('avgPower', ""), cad, intensity
-        ])
-except: pass
-
-# --- 4. SYNC ---
+# --- 3. SYNC & AI ---
 try:
     creds = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -120,12 +93,18 @@ try:
     
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
-    
-    act_sheet = ss.worksheet("Activities")
-    existing = [f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2]
-    for act in activities_to_log:
-        if f"{act[0]}_{act[1]}_{act[2]}" not in existing:
-            act_sheet.append_row(act)
 
-    print(f"✔ Проверка завершена. HRV: {hrv}, Score: {slp_sc}")
+    # AI Section (Снимаем ограничение slp_sc, чтобы он анализировал то, что есть)
+    advice = "AI Limit"
+    if GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY.strip())
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = f"Данные {today_str}: HRV {hrv}, Сон {slp_h}ч (Score: {slp_sc}), Вес {weight}, Пульс {r_hr}, Body Battery {bb_morning}. Проанализируй и дай совет."
+            advice = model.generate_content(prompt).text.strip()
+        except Exception as e: advice = f"AI Error: {str(e)[:20]}"
+    
+    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
+    print(f"✔ Готово. HRV: {hrv}, Score: {slp_sc}, AI: {advice[:30]}...")
+
 except Exception as e: print(f"❌ Error: {e}")
