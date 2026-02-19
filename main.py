@@ -6,49 +6,91 @@ from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
 
-# 1. СБОР СЕКРЕТОВ (сверх-проверка)
-raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TG_TOKEN = raw_token.strip()
-TG_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+def run_main():
+    # 1. ЗАГРУЗКА СЕКРЕТОВ (Имена в точности как в GitHub Secrets)
+    GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
+    GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
+    GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+    TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-print(f"DEBUG: Token Length: {len(TG_TOKEN)}") # Должно быть 46 символов
-print(f"DEBUG: ID: {TG_ID}")
+    # Технический лог в консоль GitHub (чтобы мы видели, что секреты подтянулись)
+    print(f"--- DEBUG INFO ---")
+    print(f"TG Token Length: {len(TELEGRAM_BOT_TOKEN)}")
+    print(f"TG Chat ID: {TELEGRAM_CHAT_ID}")
+    print(f"Gemini Key Length: {len(GEMINI_API_KEY)}")
+    print(f"------------------")
 
-try:
-    # 2. GARMIN
-    gar = Garmin(os.environ.get("GARMIN_EMAIL"), os.environ.get("GARMIN_PASSWORD"))
-    gar.login()
-    today = datetime.now().strftime("%Y-%m-%d")
-    stats = gar.get_stats(today) or {}
-    hrv = stats.get("lastNightAvgHrv") or "N/A"
-    
-    # 3. GEMINI (Прямой запрос без библиотек)
-    advice = "ИИ вредничает"
-    if GEMINI_KEY:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
-            payload = {"contents": [{"parts":[{"text": f"HRV {hrv}. Дай совет из 3 слов."}]}]}
-            res = requests.post(url, json=payload, timeout=10).json()
-            advice = res['candidates'][0]['content']['parts'][0]['text'].strip()
-        except: pass
+    hrv, slp_h, bb_morning, advice = "N/A", "N/A", "N/A", "ИИ не ответил"
 
-    # 4. GOOGLE SHEETS
-    creds_json = os.environ.get("GOOGLE_CREDS")
-    if creds_json:
-        creds_dict = json.loads(creds_json)
-        c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-        ss = gspread.authorize(c_obj).open("Garmin_Data")
-        ss.worksheet("AI_Log").append_row([datetime.now().strftime("%H:%M"), "Success", advice])
+    try:
+        # 2. GARMIN: Сбор данных
+        gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+        gar.login()
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # Получаем HRV и Body Battery
+        stats = gar.get_stats(today) or {}
+        hrv = stats.get("lastNightAvgHrv") or stats.get("allDayAvgHrv") or "N/A"
+        
+        summary = gar.get_user_summary(today) or {}
+        bb_morning = summary.get("bodyBatteryHighestValue") or "N/A"
 
-    # 5. ТЕЛЕГРАМ
-    if len(TG_TOKEN) > 10 and TG_ID:
-        msg = f"🚀 ОТЧЕТ\nHRV: {hrv}\n🤖 {advice}"
-        t_url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-        r = requests.post(t_url, json={"chat_id": TG_ID, "text": msg}, timeout=15)
-        print(f"DEBUG: TG Status: {r.status_code}, Response: {r.text}")
-    else:
-        print("CRITICAL: TG_TOKEN is EMPTY or TOO SHORT!")
+        # Получаем сон
+        slp = gar.get_sleep_data(today)
+        if slp and slp.get("dailySleepDTO"):
+            slp_h = round(slp["dailySleepDTO"].get("sleepTimeSeconds", 0) / 3600, 1)
+        
+        print(f"Garmin Data: HRV={hrv}, Sleep={slp_h}, BB={bb_morning}")
 
-except Exception as e:
-    print(f"ERROR: {e}")
+        # 3. GEMINI: Анализ (Прямой API запрос для надежности)
+        if GEMINI_API_KEY:
+            try:
+                ai_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+                ai_payload = {
+                    "contents": [{"parts": [{"text": f"Биометрия: HRV {hrv}, Сон {slp_h}ч, Body Battery {bb_morning}. Дай один очень короткий ироничный совет."}]}]
+                }
+                res = requests.post(ai_url, json=ai_payload, timeout=15).json()
+                advice = res['candidates'][0]['content']['parts'][0]['text'].strip()
+            except Exception as e:
+                advice = f"Ошибка ИИ: {str(e)[:30]}"
+                print(f"AI Error: {e}")
+
+        # 4. GOOGLE SHEETS: Логирование
+        if GOOGLE_CREDS_JSON:
+            creds_dict = json.loads(GOOGLE_CREDS_JSON)
+            c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+            ss = gspread.authorize(c_obj).open("Garmin_Data")
+            log_sheet = ss.worksheet("AI_Log")
+            log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
+            print("Google Sheets updated.")
+
+        # 5. TELEGRAM: Отправка отчета
+        if len(TELEGRAM_BOT_TOKEN) > 10 and TELEGRAM_CHAT_ID:
+            # Убираем символы, которые могут сломать сообщение
+            safe_advice = str(advice).replace("*", "").replace("_", "")
+            msg = (
+                f"🚀 GARMIN DAILY\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"📊 HRV: {hrv}\n"
+                f"😴 Сон: {slp_h}ч\n"
+                f"⚡ BB: {bb_morning}\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"🤖 {safe_advice}"
+            )
+            
+            tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            tg_res = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
+            
+            print(f"Telegram Status: {tg_res.status_code}")
+            if tg_res.status_code != 200:
+                print(f"Telegram Error Body: {tg_res.text}")
+        else:
+            print("Telegram credentials missing or invalid.")
+
+    except Exception as global_e:
+        print(f"CRITICAL ERROR: {global_e}")
+
+if __name__ == "__main__":
+    run_main()
