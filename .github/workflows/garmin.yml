@@ -3,7 +3,7 @@ name: Garmin Sync
 on:
   schedule:
     # Запуск в 09:00 и 20:00 по UTC (примерно 11:30 и 22:30 по Киеву/МСК)
-    - cron: '30 9,20 * * *'
+    - cron: '0 11,20 * * *'
   workflow_dispatch:
     # Позволяет нажимать кнопку "Run workflow" вручную
 
