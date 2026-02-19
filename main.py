@@ -205,30 +205,41 @@ try:
                 
                 calories = activity.get('calories', '')
                 
-                print(f"  Добавляем: {duration_hr}ч, {distance_km}км, {calories}ккал")
+                # Форматируем числа с запятой и выравниванием
+                duration_str = f"{duration_hr:.2f}".replace('.', ',') if duration_hr else ""
+                distance_str = f"{distance_km:.2f}".replace('.', ',') if distance_km else "0"
+                calories_str = str(int(calories)) if calories else ""
+                
+                print(f"  Добавляем: {duration_str}ч, {distance_str}км, {calories_str}ккал")
+                
+                # ВАЖНО: Правильный порядок колонок согласно заголовкам:
+                # 1.Date | 2.Start_Time | 3.Sport | 4.Duration_hr | 5.Distance_km | 
+                # 6.Avg_HR | 7.Max_HR | 8.Training_Load | 9.Training_Effect | 
+                # 10.Calories | 11.Avg_Power | 12.Cadence | 13.HR_Intensity
                 
                 new_row = [
-                    date_part,
-                    time_part,
-                    sport,
-                    str(duration_hr).replace('.', ',') if duration_hr else "",
-                    str(distance_km).replace('.', ',') if distance_km else "0",
-                    "",
-                    "",
-                    "",
-                    "",
-                    str(int(calories)) if calories else "",
-                    "",
-                    "",
-                    ""
+                    date_part,                          # 1. Date
+                    time_part,                          # 2. Start_Time
+                    sport,                              # 3. Sport
+                    duration_str,                       # 4. Duration_hr
+                    distance_str,                        # 5. Distance_km
+                    "",                                  # 6. Avg_HR
+                    "",                                  # 7. Max_HR
+                    "",                                  # 8. Training_Load
+                    "",                                  # 9. Training_Effect
+                    calories_str,                        # 10. Calories
+                    "",                                  # 11. Avg_Power
+                    "",                                  # 12. Cadence
+                    ""                                   # 13. HR_Intensity
                 ]
                 
                 activities_sheet.append_row(new_row)
+                print(f"  ✅ Добавлена новая строка")
         
     except Exception as e:
         print(f"Activities sheet error: {e}")
 
-    # --- 5. AI ADVICE (ИСПРАВЛЕНО) ---
+    # --- 5. AI ADVICE ---
     advice = "Нет данных для анализа"
     ai_success = False
     
