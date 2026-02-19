@@ -80,12 +80,26 @@ try:
     # 5. ЗАПИСЬ В ТАБЛИЦУ
     log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
 
-    # 6. ТЕЛЕГРАМ
+# 6. ТЕЛЕГРАМ (Улучшенная версия с отловом ошибок)
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        msg = f"📊 *HRV:* {hrv}\n😴 *Сон:* {slp_h}\n⚡ *BB:* {bb_morning}\n\n🤖 {advice}"
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-        print("✔ Telegram отправлен")
-
-except Exception as e:
-    print(f"❌ Global Error: {e}")
+        # Упрощаем текст, чтобы Markdown не "ломался"
+        safe_advice = advice.replace("*", "").replace("_", "").replace("`", "")
+        msg = (
+            f"📊 HRV: {hrv}\n"
+            f"😴 Сон: {slp_h} (Score: {slp_sc})\n"
+            f"⚡ BB: {bb_morning}\n\n"
+            f"🤖 {safe_advice}"
+        )
+        
+        t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        try:
+            r = requests.post(t_url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
+            if r.status_code != 200:
+                # Если Телеграм вернул ошибку, пишем её в таблицу
+                log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "TG Error", r.text])
+                print(f"❌ Telegram Fail: {r.text}")
+            else:
+                print("✔ Telegram отправлен")
+        except Exception as t_e:
+            log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "TG Exception", str(t_e)])
+            print(f"❌ Telegram Exception: {t_e}")
