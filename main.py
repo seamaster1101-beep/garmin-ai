@@ -12,7 +12,7 @@ GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
-# Добавляем новые секреты
+# Новые секреты для Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -121,24 +121,19 @@ try:
     print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
 
 except Exception as e:
-    print(f"Final Sync Error: {e}")
+    print(f"Final Error: {e}")
 
-# --- 4. TELEGRAM BLOCK (Добавлено) ---
+# --- 4. TELEGRAM (ДОБАВЛЕНО В САМЫЙ КОНЕЦ БЕЗ ИЗМЕНЕНИЯ СТАРОГО) ---
 if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
     try:
-        # Очищаем совет от Markdown-звездочек, чтобы Telegram не ругался
-        clean_advice = advice.replace("**", "").replace("__", "")
         report = (
-            f"🚀 *ОТЧЕТ ГАРМИН*\n"
-            f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
-            f"📊 HRV: {hrv or 'N/A'}\n"
-            f"😴 Сон: {slp_h or 'N/A'}ч (Score: {slp_sc or 'N/A'})\n"
-            f"❤️ Пульс: {r_hr or 'N/A'}\n"
-            f"⚡ Батарейка: {bb_morning or 'N/A'}\n"
-            f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
-            f"🤖 {clean_advice}"
+            f"🚀 ОТЧЕТ ГАРМИН\n"
+            f"📊 HRV: {hrv}\n"
+            f"😴 Сон: {slp_h}ч\n"
+            f"⚡ BB: {bb_morning}\n\n"
+            f"🤖 {advice.replace('*', '')}"
         )
-        tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-        requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": report, "parse_mode": "Markdown"}, timeout=15)
-    except Exception as t_e:
-        print(f"Telegram Send Error: {t_e}")
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": report}, timeout=15)
+    except:
+        pass
