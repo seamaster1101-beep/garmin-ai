@@ -1,5 +1,6 @@
 import os
 import json
+import requests
 from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
@@ -11,6 +12,8 @@ GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def update_or_append(sheet, date_str, row_data):
     try:
@@ -43,18 +46,18 @@ today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
 # --- 1. MORNING BLOCK ---
-morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
+morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"
 
 try:
     stats = gar.get_stats(today_str) or {}
-    hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv")
+    hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv") or "N/A"
     
     for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
             dto = sleep_data.get("dailySleepDTO") or {}
             if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or ""
+                slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or "N/A"
                 slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
                 morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
                 break
@@ -70,8 +73,8 @@ try:
         except: continue
 
     summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
-    bb_morning = summary.get("bodyBatteryHighestValue") or ""
+    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or "N/A"
+    bb_morning = summary.get("bodyBatteryHighestValue") or "N/A"
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 except Exception as e:
@@ -87,40 +90,4 @@ try:
 except:
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. SYNC & AI (АВТОМАТИЧЕСКИЙ ВЫБОР МОДЕЛИ) ---
-try:
-    creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-    ss = gspread.authorize(c_obj).open("Garmin_Data")
-    
-    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
-    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
-
-    advice = "Нет данных для анализа"
-    if GEMINI_API_KEY:
-        try:
-            genai.configure(api_key=GEMINI_API_KEY.strip())
-            
-            # Находим первую доступную модель для генерации контента
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            if available_models:
-                # Берем первую из списка (обычно это flash или pro)
-                model_name = available_models[0]
-                model = genai.GenerativeModel(model_name)
-                
-                prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                          f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
-                
-                res = model.generate_content(prompt)
-                advice = res.text.strip()
-                print(f"Использована модель: {model_name}")
-            else:
-                advice = "API Key жив, но доступных моделей нет."
-        except Exception as ai_e:
-            advice = f"AI Error: {str(ai_e)[:30]}"
-    
-    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
-
-except Exception as e:
-    print(f"Final Error: {e}")
+# --- 3. SYNC, AI & TELEGRAM
