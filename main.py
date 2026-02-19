@@ -96,30 +96,26 @@ try:
         + summary.get("bmrKilocalories", 0)
     ) or stats.get("calories") or 0
 
-    # Дистанция (в км)
-    distance_m = summary.get("totalKilometers", 0)
-    if not distance_m:
-        distance_m = summary.get("totalDistanceMeters", 0)
+    # Дистанция ТОЛЬКО от шагов (в км, 0.762м/шаг - стандарт)
+    steps_distance_km = round(steps * 0.000762, 2)
 
-    distance_km = round(distance_m / 1000, 2) if distance_m else 0
-
-    # Активности за сегодня
+    # Активности за сегодня (завершённые)
     activities = gar.get_activities_by_date(today_str, today_str) or []
     activity_count = len(activities)
 
     daily_row = [
         today_str,
         steps,
-        distance_km,
+        steps_distance_km,  # Только шаги!
         cals,
         r_hr,
-        summary.get("bodyBatteryMostRecentValue", ""),
-        activity_count
+        summary.get("bodyBatteryMostRecentValue", "")
+        # activity_count убран отсюда, чтобы не было лишней колонки
     ]
 
 except Exception as e:
     print(f"Daily Error: {e}")
-    daily_row = [today_str, "", "", "", "", "", ""]
+    daily_row = [today_str, "", "", "", "", ""]
 
 # --- 3. SYNC, AI & TELEGRAM ---
 try:
@@ -129,6 +125,13 @@ try:
     
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    
+    # Activities в отдельный лист (если есть)
+    try:
+        activities_sheet = ss.worksheet("Activities")
+        update_or_append(activities_sheet, today_str, [today_str, activity_count, len(gar.get_activities_by_date(yesterday_str, yesterday_str))])
+    except gspread.WorksheetNotFound:
+        print("Лист 'Activities' не найден — создайте его с колонками Date, Today_Count, Yesterday_Count")
 
     advice = "Нет данных для анализа"
     if GEMINI_API_KEY:
@@ -148,11 +151,11 @@ try:
             advice = f"AI Error: {str(ai_e)[:30]}"
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
+    print(f"✔ Финиш! Шаги: {steps}, Дист(шаги): {steps_distance_km}км, Активностей: {activity_count}, AI: {advice[:40]}")
 
     # --- ОТПРАВКА В ТЕЛЕГРАМ ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        msg = f"🚀 Отчет:\nHRV: {hrv}\nСон: {slp_h}ч\nПульс: {r_hr}\n\n🤖 {advice.replace('*', '')}"
+        msg = f"🚀 Отчет:\\nHRV: {hrv}\\nСон: {slp_h}ч\\nПульс: {r_hr}\\nШаги: {steps}\\n\\n🤖 {advice.replace('*', '')}"
         tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
         resp = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
         print(f"Telegram Response: {resp.status_code} {resp.text}")
