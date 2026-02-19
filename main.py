@@ -47,14 +47,15 @@ morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00",
 
 try:
     stats = gar.get_stats(today_str) or {}
+    # HRV
     hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv")
     
     # Сон (проверка за 2 дня)
     for d in [today_str, yesterday_str]:
-        sleep_raw = gar.get_sleep_data(d)
-        dto = sleep_raw.get("dailySleepDTO", {})
+        sleep_data = gar.get_sleep_data(d)
+        dto = sleep_data.get("dailySleepDTO", {})
         if dto and dto.get("sleepTimeSeconds", 0) > 0:
-            slp_sc = dto.get("sleepScore") or sleep_raw.get("sleepScore") or ""
+            slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore", "")
             slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
             morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
             break
@@ -62,13 +63,15 @@ try:
     # Вес (проверка за 3 дня)
     for i in range(3):
         d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
-        w_data = gar.get_body_composition(d_check, today_str)
-        if w_data.get('uploads'):
-            weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-            break
+        try:
+            w_data = gar.get_body_composition(d_check, today_str)
+            if w_data.get('uploads'):
+                weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
+                break
+        except: continue
 
     summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("heartRateRestingValue") or summary.get("restingHeartRate", "")
+    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue", "")
     bb_morning = summary.get("bodyBatteryHighestValue", "")
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
@@ -94,19 +97,20 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
-    advice = "AI Waiting for data..."
+    advice = "Нет данных для ИИ"
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
+            # Стабильное название модели без лишних версий
             model = genai.GenerativeModel('gemini-1.5-flash')
-            prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                      f"Сон {slp_h}ч (Score: {slp_sc}). Напиши ироничный короткий совет.")
+            prompt = (f"Данные: HRV {hrv}, Пульс {r_hr}, Body Battery {bb_morning}, "
+                      f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один короткий, ироничный и полезный совет.")
             res = model.generate_content(prompt)
             advice = res.text.strip()
-        except Exception as ai_e:
-            advice = f"AI Error: {str(ai_e)[:20]}"
+        except Exception as ai_err:
+            advice = f"AI Error: {str(ai_err)[:30]}"
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Готово! HRV: {hrv}, AI: {advice[:30]}...")
+    print(f"✔ Завершено. HRV: {hrv}, AI: {advice[:40]}...")
 except Exception as e:
     print(f"Final Error: {e}")
