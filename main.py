@@ -12,7 +12,6 @@ GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
-# Новые секреты для Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -91,8 +90,7 @@ try:
 except:
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. SYNC & AI ---
-advice = "Нет данных для анализа"
+# --- 3. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -101,6 +99,7 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
+    advice = "Нет данных для анализа"
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
@@ -120,20 +119,14 @@ try:
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
     print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
 
+    # --- ОТПРАВКА В ТЕЛЕГРАМ ---
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        msg = f"🚀 Отчет:\nHRV: {hrv}\nСон: {slp_h}ч\nПульс: {r_hr}\n\n🤖 {advice.replace('*', '')}"
+        tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
+        resp = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
+        print(f"Telegram Response: {resp.status_code} {resp.text}")
+    else:
+        print("Telegram Token or ID is missing in Secrets!")
+
 except Exception as e:
     print(f"Final Error: {e}")
-
-# --- 4. TELEGRAM (ДОБАВЛЕНО В САМЫЙ КОНЕЦ БЕЗ ИЗМЕНЕНИЯ СТАРОГО) ---
-if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-    try:
-        report = (
-            f"🚀 ОТЧЕТ ГАРМИН\n"
-            f"📊 HRV: {hrv}\n"
-            f"😴 Сон: {slp_h}ч\n"
-            f"⚡ BB: {bb_morning}\n\n"
-            f"🤖 {advice.replace('*', '')}"
-        )
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": report}, timeout=15)
-    except:
-        pass
