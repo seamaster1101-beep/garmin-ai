@@ -96,6 +96,7 @@ try:
     c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(c_obj).open("Garmin_Data")
     
+    # Обновляем таблицы
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
@@ -107,8 +108,10 @@ try:
             if available_models:
                 model_name = available_models[0]
                 model = genai.GenerativeModel(model_name)
+                # Добавляем Score в промпт, чтобы ИИ видел качество сна
                 prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                          f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
+                          f"Сон {slp_h}ч, Оценка сна (Sleep Score): {slp_sc}/100. "
+                          f"Напиши один ироничный и мудрый совет на день.")
                 res = model.generate_content(prompt)
                 advice = res.text.strip()
             else:
@@ -117,14 +120,22 @@ try:
             advice = f"AI Error: {str(ai_e)[:30]}"
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
+    print(f"✔ Финиш! HRV: {hrv}, Score: {slp_sc}, AI: {advice[:40]}")
 
     # --- ОТПРАВКА В ТЕЛЕГРАМ ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        msg = f"🚀 Отчет:\nHRV: {hrv}\nСон: {slp_h}ч\nПульс: {r_hr}\n\n🤖 {advice.replace('*', '')}"
+        # Добавляем Sleep Score в текст сообщения
+        msg = (
+            f"🚀 *ОТЧЕТ ГАРМИН*\n"
+            f"📊 HRV: {hrv}\n"
+            f"😴 Сон: {slp_h}ч (Score: {slp_sc}/100)\n"
+            f"❤️ Пульс: {r_hr}\n"
+            f"⚡ BB: {bb_morning}\n\n"
+            f"🤖 {advice.replace('*', '')}"
+        )
         tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-        resp = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
-        print(f"Telegram Response: {resp.status_code} {resp.text}")
+        resp = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg, "parse_mode": "Markdown"}, timeout=15)
+        print(f"Telegram Response: {resp.status_code}")
     else:
         print("Telegram Token or ID is missing in Secrets!")
 
