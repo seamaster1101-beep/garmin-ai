@@ -1,11 +1,9 @@
-import os
-import json
+import os, json, requests
 from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
-import requests
 
 # --- CONFIG ---
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
@@ -43,54 +41,54 @@ except Exception as e:
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
-yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK ---
-morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
+# --- DATA COLLECTION ---
+# 1. Основная сводка
+stats = gar.get_stats(today_str) or {}
+summary = gar.get_user_summary(today_str) or {}
 
+# 2. Метрики здоровья
+hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or "N/A"
+r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or "N/A"
+bb_now = summary.get("bodyBatteryMostRecentValue") or "N/A"
+bb_max = summary.get("bodyBatteryHighestValue") or "N/A"
+
+# 3. Сон
+slp_sc, slp_h = "N/A", "N/A"
 try:
-    stats = gar.get_stats(today_str) or {}
-    hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv")
-    
-    for d in [today_str, yesterday_str]:
-        try:
-            sleep_data = gar.get_sleep_data(d)
-            dto = sleep_data.get("dailySleepDTO") or {}
-            if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or ""
-                slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
-                morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
-                break
-        except: continue
+    sleep_data = gar.get_sleep_data(today_str)
+    slp_sc = sleep_data.get("dailySleepDTO", {}).get("sleepScore") or "N/A"
+    sec = sleep_data.get("dailySleepDTO", {}).get("sleepTimeSeconds", 0)
+    if sec > 0: slp_h = round(sec / 3600, 1)
+except: pass
 
-    for i in range(3):
-        d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
-        try:
-            w_data = gar.get_body_composition(d_check, today_str)
-            if w_data and w_data.get('uploads'):
-                weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-                break
-        except: continue
+# 4. Активность за день
+steps = summary.get("totalSteps", 0)
+daily_dist = round((summary.get("totalDistanceMeters", 0) / 1000), 2)
+cals = (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0)) or stats.get("calories", "N/A")
 
-    summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
-    bb_morning = summary.get("bodyBatteryHighestValue") or ""
-
-    morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+# 5. Детализация тренировок (Activities)
+activity_info = ""
+try:
+    activities = gar.get_activities(0, 5) # Проверяем последние 5
+    for act in activities:
+        act_date = act.get('startTimeLocal', '')[:10]
+        if act_date == today_str:
+            name = act.get('activityName', 'Тренировка')
+            a_dist = act.get('distance', 0)
+            if a_dist > 0:
+                activity_info += f"🏃 {name}: {round(a_dist/1000, 2)} км\n"
+            else:
+                dur = round(act.get('duration', 0) / 60)
+                activity_info += f"💪 {name}: {dur} мин\n"
 except Exception as e:
-    print(f"Morning Error: {e}")
-    morning_row = [morning_ts, "", "", "", "", "", ""]
+    print(f"Activities Error: {e}")
 
-# --- 2. DAILY BLOCK ---
-try:
-    steps_data = gar.get_daily_steps(today_str, today_str)
-    steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
-    cals = stats.get("calories") or (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0))
-    daily_row = [today_str, steps, "", cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
-except:
-    daily_row = [today_str, "", "", "", "", ""]
+# --- SYNC TO GOOGLE ---
+morning_row = [f"{today_str} 08:00", "", r_hr, hrv, bb_max, slp_sc, slp_h]
+daily_row = [today_str, steps, daily_dist, cals, r_hr, bb_now]
 
-# --- 3. SYNC, AI & TELEGRAM ---
+advice = "Нет данных для ИИ"
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -99,34 +97,32 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
-    advice = "Нет данных для анализа"
+    # --- AI ADVICE ---
     if GEMINI_API_KEY:
-        try:
-            genai.configure(api_key=GEMINI_API_KEY.strip())
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            if available_models:
-                model_name = available_models[0]
-                model = genai.GenerativeModel(model_name)
-                prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                          f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
-                res = model.generate_content(prompt)
-                advice = res.text.strip()
-            else:
-                advice = "API Key жив, но доступных моделей нет."
-        except Exception as ai_e:
-            advice = f"AI Error: {str(ai_e)[:30]}"
-    
-    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
-
-    # --- ОТПРАВКА В ТЕЛЕГРАМ ---
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        msg = f"🚀 Отчет:\nHRV: {hrv}\nСон: {slp_h}ч\nПульс: {r_hr}\n\n🤖 {advice.replace('*', '')}"
-        tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-        resp = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
-        print(f"Telegram Response: {resp.status_code} {resp.text}")
-    else:
-        print("Telegram Token or ID is missing in Secrets!")
-
+        genai.configure(api_key=GEMINI_API_KEY.strip())
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_now}, Калории {cals}, "
+                  f"Шаги {steps}, Дистанция {daily_dist}км, Сон {slp_h}ч (Score: {slp_sc}). "
+                  f"Напиши один ироничный и мудрый совет на день.")
+        res = model.generate_content(prompt)
+        advice = res.text.strip()
 except Exception as e:
-    print(f"Final Error: {e}")
+    print(f"Sync/AI Error: {e}")
+
+# --- TELEGRAM ---
+if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+    train_section = f"\n🏋️ *ТРЕНИРОВКИ:*\n{activity_info}" if activity_info else ""
+    msg = (
+        f"🚀 *ОТЧЕТ ГАРМИН*\n"
+        f"📊 HRV: {hrv}\n"
+        f"😴 Сон: {slp_h}ч (Score: {slp_sc})\n"
+        f"🔥 Калории: {cals}\n"
+        f"👟 Шаги: {steps} ({daily_dist} км)\n"
+        f"❤️ Пульс: {r_hr}\n"
+        f"⚡ BB: {bb_now}\n"
+        f"{train_section}\n"
+        f"🤖 {advice.replace('*', '')}"
+    )
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
+    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg, "parse_mode": "Markdown"})
+    print("Done! Message sent to Telegram.")
