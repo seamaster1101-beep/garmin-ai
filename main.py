@@ -12,158 +12,120 @@ GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
-def safe(v): 
-    return v if v not in (None, "", 0, "0") else ""
+def update_or_append(sheet, date_str, row_data):
+    try:
+        col_values = sheet.col_values(1)
+        search_date = date_str.split(' ')[0]
+        found_idx = -1
+        for i, val in enumerate(col_values):
+            if search_date in val:
+                found_idx = i + 1
+                break
+        if found_idx != -1:
+            for i, val in enumerate(row_data[1:], start=2):
+                if val not in (None, "", 0, "0", 0.0, "N/A"): 
+                    sheet.update_cell(found_idx, i, val)
+            return "Updated"
+        else:
+            sheet.append_row(row_data)
+            return "Appended"
+    except Exception as e: return f"Err: {str(e)[:15]}"
 
-def get_dates(n=7):
-    base = datetime.now()
-    return [(base - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
-
-dates = get_dates(7)
-today = dates[0]
-debug = []
-
-# --- LOGIN GARMIN ---
+# --- LOGIN ---
 try:
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
-    debug.append("Garmin login OK")
-except Exception as e:
-    print("Login failed:", e)
-    exit(1)
+except: print("Fail login"); exit(1)
 
-# --- MORNING DATA ---
-rest_hr = ""
-body_batt = ""
-hrv = ""
-sleep_score = ""
-sleep_hrs = ""
-weight = ""
+now = datetime.now()
+today_str = now.strftime("%Y-%m-%d")
+yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+# --- 1. MORNING BLOCK (Новые источники данных) ---
+morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
 
 try:
-    # RESTING + BODY BATTERY
-    stats = gar.get_stats(today) or {}
-    rest_hr = safe(stats.get("restingHeartRate"))
-    body_batt = safe(stats.get("bodyBatteryMostRecentValue"))
-    debug.append(f"Stats fetched: HR {rest_hr}, BB {body_batt}")
+    # Запрашиваем расширенную статистику здоровья
+    wellness = gar.get_stats(today_str) or {}
+    
+    # HRV из wellness
+    hrv = wellness.get("allDayAvgHrv") or wellness.get("lastNightAvgHrv", "")
+    
+    # Сон и Score через альтернативный вызов
+    sl = gar.get_sleep_data(today_str)
+    s_dto = sl.get("dailySleepDTO") or {}
+    slp_sc = s_dto.get("sleepScore") or sl.get("sleepScore", "") # Проверка в двух местах
+    slp_h = round(s_dto.get("sleepTimeSeconds", 0)/3600, 1) if s_dto.get("sleepTimeSeconds") else ""
+    if s_dto.get("sleepEndTimeLocal"):
+        morning_ts = s_dto.get("sleepEndTimeLocal").replace("T", " ")[:16]
 
-    # SLEEP + HRV
-    for d in dates:
-        s = gar.get_sleep_data(d) or {}
-        dto = s.get("dailySleepDTO", {})
-        if dto:
-            sleep_score = safe(dto.get("sleepScore"))
-            sleep_hrs = round(dto.get("sleepTimeSeconds",0)/3600,1) if dto.get("sleepTimeSeconds") else ""
-            # HRV из сна
-            hrv = safe(dto.get("hrvAvg")) or safe(s.get("hrv")) or safe(s.get("averageHrv"))
-            if sleep_hrs:
-                debug.append(f"Sleep found {d} => Score {sleep_score}, hrs {sleep_hrs}, HRV {hrv}")
-                break
+    # Вес
+    w_comp = gar.get_body_composition(yesterday_str, today_str)
+    if w_comp.get('uploads'):
+        weight = round(w_comp['uploads'][-1].get('weight', 0) / 1000, 1)
 
-    # WEIGHT from Index
-    # Garmin specific endpoint
-    try:
-        w_data = gar.get_weight_data(today) or {}
-        if w_data and w_data.get("weight"):
-            weight = round(w_data["weight"]/1000,1)
-            debug.append(f"Weight Index {weight}")
-    except:
-        debug.append("Weight Index not found")
-except Exception as e:
-    debug.append(f"Morning parse error: {e}")
+    summary = gar.get_user_summary(today_str) or {}
+    bb_morning = summary.get("bodyBatteryHighestValue", "")
+    r_hr = summary.get("restingHeartRate", "")
 
-# --- DAILY STATS ---
-steps = 0
-dist_km = 0
-daily_cals = ""
+    morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+except: morning_row = [morning_ts, "", "", "", "", "", ""]
 
+# --- 2. DAILY BLOCK (Улучшенные калории) ---
 try:
-    st = gar.get_daily_steps(today, today) or []
-    if st:
-        steps = st[0].get("totalSteps",0)
-        dist_km = round(st[0].get("totalDistance",0)/1000,2)
+    step_data = gar.get_daily_steps(today_str, today_str)
+    steps = step_data[0].get('totalSteps', 0) if step_data else 0
+    dist = round(step_data[0].get('totalDistance', 0) / 1000, 2) if step_data else 0
+    
+    # Пробуем достать калории из Wellness Stats (они там часто точнее)
+    cals = wellness.get("calories", "")
+    if not cals:
+        cals = (summary.get("activeCalories", 0) or 0) + (summary.get("bmrCalories", 0) or 0)
+    
+    daily_row = [today_str, steps, dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+except: daily_row = [today_str, "", "", "", "", ""]
 
-    # Try to get daily total calories
-    try:
-        cal_stats = gar.get_stats_calories_breakdown(today) or {}
-        daily_cals = safe(cal_stats.get("totalCalories"))
-        debug.append(f"Calories breakdown {daily_cals}")
-    except:
-        # fallback
-        summary = gar.get_user_summary(today) or {}
-        daily_cals = safe(summary.get("activeCalories") or summary.get("calories"))
-        debug.append(f"Calories summary {daily_cals}")
-except Exception as e:
-    debug.append(f"Daily parse error: {e}")
-
-# --- ACTIVITIES (with details) ---
-activities = []
+# --- 3. ACTIVITIES (Load & Cadence) ---
+activities_to_log = []
 try:
-    raw_acts = gar.get_activities_by_date(today, today) or []
-    for a in raw_acts:
-        act_id = a.get("activityId")
-        detail = {}
-        try:
-            detail = gar.get_activity_details(act_id) or {}
-        except:
-            detail = {}
+    acts = gar.get_activities_by_date(today_str, today_str)
+    for a in acts:
+        # МАГИЯ КАДЕНСА: еще больше полей
+        cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
+               a.get('averageRunCadence') or a.get('averageFractionalCadence', ""))
+        
+        # НАГРУЗКА
+        t_load = a.get('trainingLoad') or a.get('metabolicCartTrainingLoad', "")
+        
+        avg_hr = a.get('averageHR', 0)
+        intensity = "N/A"
+        if avg_hr and r_hr and r_hr > 0:
+            res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
+            intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
 
-        # Cadence
-        cadence = safe(
-            detail.get("averageBikingCadence") or
-            detail.get("averageRunCadence") or
-            detail.get("averageCadence") or
-            detail.get("averageFractionalCadence")
-        )
-
-        # Training Load
-        t_load = safe(detail.get("trainingLoad") or detail.get("trainingLoadVO2Max") or detail.get("metabolicCartTrainingLoad"))
-
-        activities.append([
-            today,
-            a.get("startTimeLocal","")[11:16],
-            a.get("activityType",{}).get("typeKey",""),
-            round(a.get("duration",0)/3600,2),
-            round(a.get("distance",0)/1000,2),
-            a.get("averageHR",""),
-            a.get("maxHR",""),
-            t_load,
-            safe(detail.get("aerobicTrainingEffect")),
-            a.get("calories",""),
-            safe(detail.get("avgPower")),
-            cadence
+        activities_to_log.append([
+            today_str, a.get('startTimeLocal', "")[11:16], a.get('activityType', {}).get('typeKey', ''),
+            round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
+            avg_hr, a.get('maxHR', ""), t_load,
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
+            a.get('avgPower', ""), cad, intensity
         ])
-    debug.append(f"Activities fetched {len(activities)}")
-except Exception as e:
-    debug.append(f"Activities error: {e}")
+except: pass
 
-# --- WRITE TO GOOGLE SHEETS ---
+# --- 4. SYNC ---
 try:
     creds = json.loads(GOOGLE_CREDS_JSON)
-    creds_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"])
-    gs = gspread.authorize(creds_obj)
-    ss = gs.open("Garmin_Data")
-
-    # Morning
-    msheet = ss.worksheet("Morning")
-    msheet.append_row([today, weight, rest_hr, hrv, body_batt, sleep_score, sleep_hrs])
-
-    # Daily
-    ds = ss.worksheet("Daily")
-    ds.append_row([today, steps, dist_km, daily_cals, rest_hr, body_batt])
-
-    # Activities
+    c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(c_obj).open("Garmin_Data")
+    
+    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
+    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    
     act_sheet = ss.worksheet("Activities")
-    existing = {f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r)>2}
-    for act in activities:
-        key = f"{act[0]}_{act[1]}_{act[2]}"
-        if key not in existing:
+    existing = [f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2]
+    for act in activities_to_log:
+        if f"{act[0]}_{act[1]}_{act[2]}" not in existing:
             act_sheet.append_row(act)
 
-    # Log
-    log_sheet = ss.worksheet("AI_Log")
-    log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "OK", json.dumps(debug)])
-
-    print("✔ DONE")
-except Exception as e:
-    print("Sheets Error:", e)
+    print(f"✔ Проверка завершена. HRV: {hrv}, Score: {slp_sc}")
+except Exception as e: print(f"❌ Error: {e}")
