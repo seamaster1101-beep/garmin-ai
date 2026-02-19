@@ -144,7 +144,7 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES BLOCK (ФИНАЛЬНАЯ ВЕРСИЯ) ---
+# --- 3. ACTIVITIES BLOCK (МАКСИМАЛЬНО ТОЧНАЯ ВЕРСИЯ) ---
 activities_today = []
 
 try:
@@ -165,53 +165,50 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     
-    # --- ТОЧНОЕ ВЫРАВНИВАНИЕ ACTIVITIES ---
+    # --- АБСОЛЮТНО ТОЧНОЕ ЗАПОЛНЕНИЕ ACTIVITIES ---
     try:
         activities_sheet = ss.worksheet("Activities")
         
-        # Получаем все существующие строки для проверки
+        # Получаем все существующие строки
         all_rows = activities_sheet.get_all_values()
-        existing_by_key = {}  # для поиска дубликатов
+        existing_by_key = {}
         
-        # Заголовки для отладки
-        if len(all_rows) > 0:
-            print("Структура таблицы:")
-            for i, header in enumerate(all_rows[0], 1):
-                print(f"  Колонка {i}: {header}")
-        
-        # Индексируем существующие строки (кроме заголовка)
+        # Индексируем существующие строки
         for i, row in enumerate(all_rows[1:], start=2):
             if len(row) >= 3:
-                # Ключ: дата + время + спорт
                 key = f"{row[0]}_{row[1]}_{row[2]}"
                 existing_by_key[key] = i
         
         # Обрабатываем каждую активность
         for activity in activities_today:
-            # --- ИЗВЛЕКАЕМ ДАННЫЕ С ТОЧНЫМ ФОРМАТИРОВАНИЕМ ---
+            # --- ТОЧНОЕ ИЗВЛЕЧЕНИЕ ДАННЫХ ---
             
-            # 1. DATE и START_TIME
+            # 1. DATE
             start_time_full = activity.get('startTimeLocal', '')
             if 'T' in start_time_full:
-                date_part, time_part = start_time_full.split('T')
-                time_part = time_part[:5]  # HH:MM
+                date_part = start_time_full.split('T')[0]
             else:
                 date_part = today_str
-                time_part = "00:00"
             
-            # 2. SPORT
+            # 2. START_TIME
+            if 'T' in start_time_full:
+                time_part = start_time_full.split('T')[1][:5]
+            else:
+                time_part = ""
+            
+            # 3. SPORT
             sport = activity.get('activityType', {}).get('typeKey', 'unknown')
             
-            # 3. DURATION_HR (часы, с одним знаком после запятой)
+            # 4. DURATION_HR
             duration_sec = activity.get('duration', 0)
             if duration_sec:
                 duration_hr = round(duration_sec / 3600, 2)
-                # Форматируем как в примере: 0,76 или 0,56
+                # Важно: используем точку, как в оригинале
                 duration_str = f"{duration_hr:.2f}".replace('.', ',')
             else:
                 duration_str = ""
             
-            # 4. DISTANCE_KM
+            # 5. DISTANCE_KM
             distance_m = activity.get('distance', 0)
             if distance_m:
                 distance_km = round(distance_m / 1000, 2)
@@ -219,18 +216,17 @@ try:
             else:
                 distance_str = "0"
             
-            # 5. AVG_HR
+            # 6. AVG_HR
             avg_hr = activity.get('averageHeartRate', '')
             avg_hr_str = str(avg_hr) if avg_hr else ""
             
-            # 6. MAX_HR
+            # 7. MAX_HR
             max_hr = activity.get('maxHeartRate', '')
             max_hr_str = str(max_hr) if max_hr else ""
             
-            # 7. TRAINING_LOAD
+            # 8. TRAINING_LOAD - ВАЖНО: это колонка 8!
             training_load = activity.get('trainingLoad', '')
             if training_load and training_load != 0:
-                # Форматируем как в примере: 2 или 2,9
                 if isinstance(training_load, float):
                     if training_load.is_integer():
                         training_load_str = str(int(training_load))
@@ -241,7 +237,7 @@ try:
             else:
                 training_load_str = ""
             
-            # 8. TRAINING_EFFEC
+            # 9. TRAINING_EFFEC - ВАЖНО: это колонка 9!
             training_effect = activity.get('trainingEffect', '')
             if training_effect and training_effect != 0:
                 if isinstance(training_effect, float):
@@ -254,19 +250,19 @@ try:
             else:
                 training_effect_str = ""
             
-            # 9. CALORIES
+            # 10. CALORIES - ВАЖНО: это колонка 10!
             calories = activity.get('calories', '')
             calories_str = str(calories) if calories else ""
             
-            # 10. AVG_POWER
+            # 11. AVG_POWER
             avg_power = activity.get('averagePower', '')
             avg_power_str = str(avg_power) if avg_power else ""
             
-            # 11. CADENCE
+            # 12. CADENCE
             cadence = activity.get('averageCadence', '')
             cadence_str = str(cadence) if cadence else ""
             
-            # 12. HR_INTENSITY
+            # 13. HR_INTENSITY
             hr_intensity = ""
             if avg_hr and r_hr and r_hr != "":
                 try:
@@ -280,46 +276,47 @@ try:
                 except:
                     hr_intensity = ""
             
-            # 13. SESSION (оставляем пустым)
-            session = ""
+            # --- ФОРМИРУЕМ СТРОКУ С ЧЕТКИМИ ПОЗИЦИЯМИ ---
+            # Колонки: 
+            # 1.Date | 2.Start_Time | 3.Sport | 4.Duration_hr | 5.Distance_km | 
+            # 6.Avg_HR | 7.Max_HR | 8.Training_Load | 9.Training_Effec | 
+            # 10.Calories | 11.Avg_Power | 12.Cadence | 13.HR_Intensity
             
-            # --- ФОРМИРУЕМ СТРОКУ ТОЧНО ПО КОЛОНКАМ ---
             activity_row = [
-                date_part,           # 1. Date
-                time_part,           # 2. Start_Time
-                sport,               # 3. Sport
-                duration_str,        # 4. Duration_hr
-                distance_str,        # 5. Distance_km
-                avg_hr_str,          # 6. Avg_HR
-                max_hr_str,          # 7. Max_HR
-                training_load_str,   # 8. Training_Load
-                training_effect_str, # 9. Training_Effec
-                calories_str,        # 10. Calories
-                avg_power_str,       # 11. Avg_Power
-                cadence_str,         # 12. Cadence
-                hr_intensity,        # 13. HR_Intensity
-                session              # 14. Session
+                date_part,           # 1
+                time_part,           # 2
+                sport,               # 3
+                duration_str,        # 4
+                distance_str,        # 5
+                avg_hr_str,          # 6
+                max_hr_str,          # 7
+                training_load_str,   # 8  - сюда trainingLoad
+                training_effect_str, # 9  - сюда trainingEffect
+                calories_str,        # 10 - сюда calories
+                avg_power_str,       # 11
+                cadence_str,         # 12
+                hr_intensity         # 13
             ]
             
-            # Отладка - что записываем
-            print(f"\n--- Активность: {sport} в {time_part} ---")
-            print(f"  Duration_hr: {duration_str}")
-            print(f"  Distance_km: {distance_str}")
-            print(f"  Training_Load: {training_load_str}")
-            print(f"  Training_Effec: {training_effect_str}")
-            print(f"  Calories: {calories_str}")
-            print(f"  Avg_Power: {avg_power_str}")
-            print(f"  HR_Intensity: {hr_intensity}")
+            # Подробная отладка
+            print(f"\n=== АКТИВНОСТЬ: {sport} ===")
+            print(f"  Дата: {date_part}, Время: {time_part}")
+            print(f"  Длительность: {duration_str}")
+            print(f"  Дистанция: {distance_str}")
+            print(f"  Training_Load (колонка 8): {training_load_str}")
+            print(f"  Training_Effec (колонка 9): {training_effect_str}")
+            print(f"  Calories (колонка 10): {calories_str}")
+            print(f"  Avg_Power (колонка 11): {avg_power_str}")
             
             # Проверяем существование
             key = f"{date_part}_{time_part}_{sport}"
             
             if key in existing_by_key:
-                # ОБНОВЛЯЕМ существующую строку
+                # Обновляем существующую строку
                 row_num = existing_by_key[key]
-                print(f"  Обновление строки {row_num}")
+                print(f"  → Обновление строки {row_num}")
                 
-                # Обновляем только заполненные колонки (начиная с 4)
+                # Обновляем каждую колонку по отдельности
                 updates = [
                     (4, duration_str),
                     (5, distance_str),
@@ -330,16 +327,16 @@ try:
                     (10, calories_str),
                     (11, avg_power_str),
                     (12, cadence_str),
-                    (13, hr_intensity),
-                    (14, session)
+                    (13, hr_intensity)
                 ]
                 
-                for col_num, value in updates:
-                    if value not in (None, "", "0", "0,00", "0.0"):
-                        activities_sheet.update_cell(row_num, col_num, value)
+                for col, val in updates:
+                    if val and val not in ("", "0", "0,00", "0.0"):
+                        activities_sheet.update_cell(row_num, col, val)
+                        print(f"    Колонка {col}: {val}")
             else:
-                # ДОБАВЛЯЕМ новую строку
-                print(f"  Добавление новой строки")
+                # Добавляем новую строку
+                print(f"  → Добавление новой строки")
                 activities_sheet.append_row(activity_row)
         
         print(f"\n✅ Обработано активностей: {len(activities_today)}")
@@ -359,7 +356,7 @@ try:
                 model_name = available_models[0]
                 model = genai.GenerativeModel(model_name)
                 
-                # Формируем промпт с данными о сегодняшних активностях
+                # Формируем промпт
                 activities_summary = ""
                 if activities_today:
                     for act in activities_today:
@@ -390,7 +387,7 @@ try:
 
     # --- ОТПРАВКА В ТЕЛЕГРАМ ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        # Формируем детальное сообщение
+        # Формируем сообщение
         activities_text = ""
         if activities_today:
             for act in activities_today:
