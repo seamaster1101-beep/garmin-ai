@@ -31,4 +31,7 @@ jobs:
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # ДОБАВЬТЕ ЭТИ ДВЕ СТРОЧКИ НИЖЕ:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
