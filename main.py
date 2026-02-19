@@ -6,6 +6,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 import requests
+import time
 
 # --- CONFIG ---
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
@@ -15,270 +16,370 @@ GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-def update_or_append(sheet, date_str, row_data):
-    """Упрощенная функция для обновления или добавления строки"""
-    try:
-        col_values = sheet.col_values(1)
-        search_date = date_str.split(' ')[0]
-        
-        found_idx = -1
-        for i, val in enumerate(col_values):
-            if search_date in str(val):
-                found_idx = i + 1
-                break
-        
-        if found_idx != -1:
-            for i, val in enumerate(row_data[1:], start=2):
-                if val not in (None, "", 0, "0", "0,0", "0.0"):
-                    sheet.update_cell(found_idx, i, str(val).replace('.', ','))
-            return "Updated"
-        else:
-            formatted_row = [str(val).replace('.', ',') if isinstance(val, float) else val for val in row_data]
-            sheet.append_row(formatted_row)
-            return "Appended"
-    except Exception as e:
-        return f"Err: {str(e)[:15]}"
-
 # --- LOGIN ---
 try:
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
+    print("✅ Успешный вход в Garmin")
 except Exception as e:
-    print(f"Login Fail: {e}")
+    print(f"❌ Ошибка входа: {e}")
     exit(1)
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- MORNING BLOCK ---
-morning_ts = f"{today_str} 08:00"
-weight = ""
-r_hr = ""
-hrv = ""
-bb_morning = ""
-slp_sc = ""
-slp_h = ""
+print(f"\n📅 Дата: {today_str}")
+
+# --- MORNING DATA ---
+morning_data = {
+    'time': f"{today_str} 08:00",
+    'weight': '',
+    'resting_hr': '',
+    'hrv': '',
+    'body_battery': '',
+    'sleep_score': '',
+    'sleep_hours': ''
+}
 
 try:
+    # HRV
     stats = gar.get_stats(today_str) or {}
-    hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
+    morning_data['hrv'] = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ''
     
+    # Sleep
     for d in [today_str, yesterday_str]:
         try:
-            sleep_data = gar.get_sleep_data(d)
-            dto = sleep_data.get("dailySleepDTO") or {}
+            sleep = gar.get_sleep_data(d)
+            dto = sleep.get("dailySleepDTO") or {}
             if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                slp_sc = dto.get("sleepScore") or ""
-                slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
-                morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
+                morning_data['sleep_score'] = dto.get("sleepScore") or ''
+                morning_data['sleep_hours'] = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
+                morning_data['time'] = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_data['time']
                 break
         except:
             continue
-
+    
+    # Weight
     for i in range(3):
         d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
-            w_data = gar.get_body_composition(d_check, today_str)
-            if w_data and w_data.get('uploads'):
-                weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
+            weight_data = gar.get_body_composition(d_check, today_str)
+            if weight_data and weight_data.get('uploads'):
+                morning_data['weight'] = round(weight_data['uploads'][-1].get('weight', 0) / 1000, 1)
                 break
         except:
             continue
-
+    
+    # Resting HR & Body Battery
     summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
-    bb_morning = summary.get("bodyBatteryHighestValue") or ""
-
-    morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+    morning_data['resting_hr'] = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ''
+    morning_data['body_battery'] = summary.get("bodyBatteryHighestValue") or ''
+    
+    print("✅ Morning data получены")
     
 except Exception as e:
-    print(f"Morning Error: {e}")
-    morning_row = [morning_ts, "", "", "", "", "", ""]
+    print(f"⚠️ Ошибка Morning: {e}")
 
-# --- DAILY BLOCK ---
+# --- DAILY DATA ---
+daily_data = {
+    'date': today_str,
+    'steps': 0,
+    'steps_distance': 0,
+    'calories': 0,
+    'resting_hr': morning_data['resting_hr'],
+    'body_battery': ''
+}
+
 try:
     summary = gar.get_user_summary(today_str) or {}
     stats = gar.get_stats(today_str) or {}
-
+    
+    # Steps
     steps_data = gar.get_daily_steps(today_str, today_str)
-    steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
-
-    cals = (
-        summary.get("activeKilocalories", 0)
-        + summary.get("bmrKilocalories", 0)
+    daily_data['steps'] = steps_data[0].get('totalSteps', 0) if steps_data else 0
+    
+    # Calories
+    daily_data['calories'] = (
+        summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0)
     ) or stats.get("calories") or 0
-
-    steps_distance_km = round(steps * 0.000762, 2)
-
-    daily_row = [
-        today_str,
-        steps,
-        steps_distance_km,
-        cals,
-        r_hr,
-        summary.get("bodyBatteryMostRecentValue", "")
-    ]
-
+    
+    # Steps distance
+    daily_data['steps_distance'] = round(daily_data['steps'] * 0.000762, 2)
+    
+    # Body Battery
+    daily_data['body_battery'] = summary.get("bodyBatteryMostRecentValue", "")
+    
+    print("✅ Daily data получены")
+    
 except Exception as e:
-    print(f"Daily Error: {e}")
-    daily_row = [today_str, "", "", "", "", ""]
+    print(f"⚠️ Ошибка Daily: {e}")
 
-# --- ACTIVITIES BLOCK (ПРОСТЕЙШАЯ ВЕРСИЯ) ---
-activities_today = []
+# --- ACTIVITIES ---
+activities = []
 
 try:
-    activities_today = gar.get_activities_by_date(today_str, today_str) or []
-    print(f"Найдено активностей: {len(activities_today)}")
+    # Получаем активности и сразу сортируем по времени
+    raw_activities = gar.get_activities_by_date(today_str, today_str) or []
     
-    # Выводим сырые данные для понимания
-    for act in activities_today:
+    # Сортируем по времени (от ранних к поздним)
+    def get_time(act):
+        start = act.get('startTimeLocal', '')
+        if 'T' in start:
+            return start.split('T')[1]
+        elif ' ' in start:
+            return start.split(' ')[1]
+        return start
+    
+    activities = sorted(raw_activities, key=get_time)
+    
+    print(f"✅ Найдено активностей: {len(activities)}")
+    for i, act in enumerate(activities, 1):
         start = act.get('startTimeLocal', '')
         sport = act.get('activityType', {}).get('typeKey', 'unknown')
-        print(f"\n{start} - {sport}")
-        print(f"  duration: {act.get('duration')}")
-        print(f"  distance: {act.get('distance')}")
-        print(f"  calories: {act.get('calories')}")
-        print(f"  trainingLoad: {act.get('trainingLoad')}")
-        print(f"  trainingEffect: {act.get('trainingEffect')}")
+        print(f"  {i}. {start} - {sport}")
     
 except Exception as e:
-    print(f"Activities fetch error: {e}")
+    print(f"⚠️ Ошибка получения активностей: {e}")
 
-# --- SYNC TO GOOGLE SHEETS ---
+# --- GOOGLE SHEETS ---
 try:
+    # Подключение к Google Sheets
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-    ss = gspread.authorize(c_obj).open("Garmin_Data")
+    creds = Credentials.from_service_account_info(
+        creds_dict, 
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    )
+    client = gspread.authorize(creds)
+    ss = client.open("Garmin_Data")
+    print("✅ Подключение к Google Sheets")
     
-    # Обновляем основные листы
-    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
-    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    # --- MORNING SHEET ---
+    try:
+        morning_sheet = ss.worksheet("Morning")
+        
+        # Ищем строку с сегодняшней датой
+        all_morning = morning_sheet.get_all_values()
+        morning_row_idx = None
+        
+        for i, row in enumerate(all_morning, 1):
+            if row and today_str in str(row[0]):
+                morning_row_idx = i
+                break
+        
+        morning_row = [
+            morning_data['time'],
+            morning_data['weight'],
+            morning_data['resting_hr'],
+            morning_data['hrv'],
+            morning_data['body_battery'],
+            morning_data['sleep_score'],
+            str(morning_data['sleep_hours']).replace('.', ',') if morning_data['sleep_hours'] else ''
+        ]
+        
+        if morning_row_idx:
+            # Обновляем существующую строку
+            for col, val in enumerate(morning_row, 1):
+                if val:
+                    morning_sheet.update_cell(morning_row_idx, col, val)
+            print("✅ Morning sheet обновлен")
+        else:
+            # Добавляем новую строку
+            morning_sheet.append_row(morning_row)
+            print("✅ Morning sheet дополнен")
+            
+    except Exception as e:
+        print(f"⚠️ Ошибка Morning sheet: {e}")
     
-    # --- ACTIVITIES - ТОЛЬКО ДОБАВЛЕНИЕ НОВЫХ ---
+    # --- DAILY SHEET ---
+    try:
+        daily_sheet = ss.worksheet("Daily")
+        
+        # Ищем строку с сегодняшней датой
+        all_daily = daily_sheet.get_all_values()
+        daily_row_idx = None
+        
+        for i, row in enumerate(all_daily, 1):
+            if row and row[0] == today_str:
+                daily_row_idx = i
+                break
+        
+        daily_row = [
+            daily_data['date'],
+            str(daily_data['steps']),
+            str(daily_data['steps_distance']).replace('.', ','),
+            str(daily_data['calories']),
+            str(daily_data['resting_hr']),
+            str(daily_data['body_battery'])
+        ]
+        
+        if daily_row_idx:
+            for col, val in enumerate(daily_row, 1):
+                if val:
+                    daily_sheet.update_cell(daily_row_idx, col, val)
+            print("✅ Daily sheet обновлен")
+        else:
+            daily_sheet.append_row(daily_row)
+            print("✅ Daily sheet дополнен")
+            
+    except Exception as e:
+        print(f"⚠️ Ошибка Daily sheet: {e}")
+    
+    # --- ACTIVITIES SHEET ---
     try:
         activities_sheet = ss.worksheet("Activities")
         
-        # Получаем все существующие строки
-        all_rows = activities_sheet.get_all_values()
+        # Получаем все существующие строки для проверки дубликатов
+        all_activities = activities_sheet.get_all_values()
+        existing = set()
         
-        # Для каждой активности
-        for activity in activities_today:
-            # Парсим время
-            start_time_full = activity.get('startTimeLocal', '')
+        for row in all_activities[1:]:  # пропускаем заголовок
+            if len(row) >= 3:
+                key = f"{row[0]}_{row[1]}_{row[2]}"
+                existing.add(key)
+        
+        # Добавляем новые активности
+        added = 0
+        for activity in activities:
+            # Парсим дату и время
+            start = activity.get('startTimeLocal', '')
             
-            if 'T' in start_time_full:
-                date_part = start_time_full.split('T')[0]
-                time_part = start_time_full.split('T')[1][:5]
-            elif ' ' in start_time_full:
-                date_part = start_time_full.split(' ')[0]
-                time_part = start_time_full.split(' ')[1][:5]
+            if 'T' in start:
+                date_part = start.split('T')[0]
+                time_part = start.split('T')[1][:5]
+            elif ' ' in start:
+                date_part = start.split(' ')[0]
+                time_part = start.split(' ')[1][:5]
             else:
                 date_part = today_str
-                time_part = ""
+                time_part = ''
             
             sport = activity.get('activityType', {}).get('typeKey', 'unknown')
             
-            # Проверяем, есть ли уже такая активность
-            exists = False
-            for row in all_rows[1:]:
-                if len(row) >= 3 and row[0] == date_part and row[1] == time_part and row[2] == sport:
-                    exists = True
-                    break
+            # Проверяем, есть ли уже
+            key = f"{date_part}_{time_part}_{sport}"
             
-            if not exists:
-                # Конвертируем данные
-                duration_sec = activity.get('duration', 0)
-                duration_hr = round(duration_sec / 3600, 2) if duration_sec else ""
+            if key not in existing:
+                # Получаем данные
+                duration = activity.get('duration', 0)
+                duration_hr = round(duration / 3600, 2) if duration else ''
                 
-                distance_m = activity.get('distance', 0)
-                distance_km = round(distance_m / 1000, 2) if distance_m else 0
+                distance = activity.get('distance', 0)
+                distance_km = round(distance / 1000, 2) if distance else 0
                 
-                avg_hr = activity.get('averageHeartRate', '')
-                max_hr = activity.get('maxHeartRate', '')
-                
-                # ВАЖНО: Правильное распределение!
+                # ВАЖНО: правильное распределение!
                 training_load = activity.get('trainingLoad', '')
                 training_effect = activity.get('trainingEffect', '')
                 calories = activity.get('calories', '')
                 avg_power = activity.get('averagePower', '')
                 cadence = activity.get('averageCadence', '')
                 
-                # Форматируем
-                duration_str = str(duration_hr).replace('.', ',') if duration_hr else ""
-                distance_str = str(distance_km).replace('.', ',') if distance_km else "0"
-                
-                # Создаем строку с 13 колонками (как в заголовке)
+                # Создаем строку
                 new_row = [
                     date_part,                          # 1. Date
                     time_part,                          # 2. Start_Time
                     sport,                              # 3. Sport
-                    duration_str,                       # 4. Duration_hr
-                    distance_str,                       # 5. Distance_km
-                    str(avg_hr) if avg_hr else "",     # 6. Avg_HR
-                    str(max_hr) if max_hr else "",     # 7. Max_HR
-                    str(training_load).replace('.', ',') if training_load else "",  # 8. Training_Load
-                    str(training_effect).replace('.', ',') if training_effect else "",  # 9. Training_Effect
-                    str(int(calories)) if calories else "",  # 10. Calories
-                    str(avg_power) if avg_power else "",     # 11. Avg_Power
-                    str(cadence) if cadence else "",         # 12. Cadence
-                    ""                                       # 13. HR_Intensity
+                    str(duration_hr).replace('.', ',') if duration_hr else '',  # 4. Duration_hr
+                    str(distance_km).replace('.', ',') if distance_km else '0', # 5. Distance_km
+                    str(activity.get('averageHeartRate', '')),  # 6. Avg_HR
+                    str(activity.get('maxHeartRate', '')),      # 7. Max_HR
+                    str(training_load).replace('.', ',') if training_load else '',  # 8. Training_Load
+                    str(training_effect).replace('.', ',') if training_effect else '',  # 9. Training_Effect
+                    str(int(calories)) if calories else '',     # 10. Calories
+                    str(avg_power) if avg_power else '',        # 11. Avg_Power
+                    str(cadence) if cadence else '',            # 12. Cadence
+                    ''                                           # 13. HR_Intensity
                 ]
                 
                 activities_sheet.append_row(new_row)
-                print(f"✅ Добавлена: {time_part} {sport}")
+                added += 1
+                existing.add(key)  # добавляем в множество, чтобы избежать дублей в этой сессии
+                print(f"  ✅ Добавлена: {time_part} {sport}")
+        
+        print(f"✅ Activities sheet: добавлено {added} новых")
         
     except Exception as e:
-        print(f"Activities sheet error: {e}")
-
-    # --- AI ADVICE ---
-    advice = "Нет данных для анализа"
+        print(f"⚠️ Ошибка Activities sheet: {e}")
+    
+    # --- AI ADVICE (с обработкой ошибки квоты) ---
+    advice = "🤖 Совет: Слушай свое тело, оно умнее любых алгоритмов!"
+    
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
             model = genai.GenerativeModel('gemini-pro')
             
-            activities_summary = ""
-            if activities_today:
-                for act in activities_today:
-                    sport = act.get('activityType', {}).get('typeKey', 'unknown')
-                    duration = round(act.get('duration', 0) / 60, 0)
-                    activities_summary += f"{sport} ({duration}мин), "
+            # Формируем промпт
+            acts = []
+            for a in activities:
+                sport = a.get('activityType', {}).get('typeKey', 'unknown')
+                duration = round(a.get('duration', 0) / 60, 0)
+                acts.append(f"{sport} {duration}мин")
             
-            prompt = (f"Утренние показатели: HRV={hrv}, пульс={r_hr}, "
-                      f"body battery={bb_morning}, сон={slp_h}ч. "
-                      f"Тренировки: {activities_summary}. "
-                      f"Напиши короткий ироничный совет на день.")
+            acts_text = ', '.join(acts) if acts else 'нет тренировок'
+            
+            prompt = (f"Утро: HRV={morning_data['hrv']}, пульс={morning_data['resting_hr']}, "
+                      f"сон={morning_data['sleep_hours']}ч. Тренировки: {acts_text}. "
+                      f"Дай короткий ироничный совет на русском, 1 предложение.")
             
             response = model.generate_content(prompt)
-            advice = response.text.strip() if response and response.text else "AI не ответил"
-            
+            if response and response.text:
+                advice = f"🤖 {response.text.strip()}"
+                print("✅ AI совет получен")
+            else:
+                print("⚠️ AI вернул пустой ответ")
+                
         except Exception as ai_e:
-            print(f"AI Error: {ai_e}")
-            advice = "Ошибка AI"
+            error_msg = str(ai_e)
+            if "429" in error_msg:
+                advice = "🤖 Квота AI исчерпана на сегодня, но ты и так молодец!"
+            else:
+                advice = "🤖 Совет: Главное - регулярность, а не цифры!"
+            print(f"⚠️ AI Error: {error_msg[:50]}")
+    
+    # --- LOG AI ADVICE ---
+    try:
+        ai_log = ss.worksheet("AI_Log")
+        ai_log.append_row([
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "Success" if "квота" not in advice and "ошибка" not in advice.lower() else "Failed",
+            advice
+        ])
+    except:
+        print("⚠️ AI_Log sheet not found")
     
     # --- TELEGRAM ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        activities_text = ""
-        if activities_today:
-            for act in activities_today:
-                sport = act.get('activityType', {}).get('typeKey', 'unknown')
-                duration = round(act.get('duration', 0) / 60, 0)
-                activities_text += f"\n• {sport}: {duration}мин"
+        # Формируем сообщение
+        acts_list = []
+        for a in activities:
+            sport = a.get('activityType', {}).get('typeKey', 'unknown')
+            duration = round(a.get('duration', 0) / 60, 0)
+            acts_list.append(f"• {sport}: {duration}мин")
         
-        msg = (f"🚀 Отчет за {today_str}:\n"
-               f"HRV: {hrv}\n"
-               f"Сон: {slp_h}ч\n"
-               f"Пульс: {r_hr}\n"
-               f"Вес: {weight}кг\n"
-               f"Шаги: {steps}\n"
-               f"Активности: {len(activities_today)}{activities_text}\n\n"
-               f"🤖 {advice}")
+        acts_text = '\n'.join(acts_list) if acts_list else 'нет тренировок'
         
-        tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-        requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
-
-    print(f"\n✅ Готово! Активностей: {len(activities_today)}")
+        msg = (
+            f"📊 **Отчет {today_str}**\n\n"
+            f"😴 Сон: {morning_data['sleep_hours']}ч | HRV: {morning_data['hrv']}\n"
+            f"❤️ Пульс: {morning_data['resting_hr']} | ⚖️ Вес: {morning_data['weight']}кг\n"
+            f"👣 Шаги: {daily_data['steps']}\n\n"
+            f"🏋️ **Тренировки:**\n{acts_text}\n\n"
+            f"{advice}"
+        )
+        
+        try:
+            tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
+            response = requests.post(
+                tg_url, 
+                json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg, "parse_mode": "Markdown"},
+                timeout=15
+            )
+            print(f"✅ Telegram отправлен, статус: {response.status_code}")
+        except Exception as tg_e:
+            print(f"⚠️ Ошибка Telegram: {tg_e}")
+    
+    print("\n🎉 Все операции завершены!")
 
 except Exception as e:
-    print(f"❌ Final Error: {e}")
+    print(f"❌ Критическая ошибка: {e}")
