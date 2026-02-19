@@ -107,4 +107,66 @@ except:
 # --- GOOGLE SHEETS SYNC ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["
+    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(c_obj).open("Garmin_Data")
+    
+    # Запись в Daily и Morning
+    update_or_append(ss.worksheet("Daily"), today_str, [today_str, steps, dist, cals, r_hr, bb_now])
+    update_or_append(ss.worksheet("Morning"), today_str, [today_str, weight, r_hr, hrv, bb_morning, slp_sc, slp_h])
+    
+    # Работа с тренировками
+    activities = gar.get_activities_by_date(today_str, today_str) or []
+    act_sheet = ss.worksheet("Activities")
+    all_rows = act_sheet.get_all_values()
+    
+    for a in activities:
+        start = a.get('startTimeLocal', '')
+        t = start.split('T')[1][:5] if 'T' in start else ""
+        sp = a.get('activityType', {}).get('typeKey', 'unknown')
+        
+        # Проверка дубликатов по дате, времени и типу спорта
+        if any(r[0] == today_str and r[1] == t and r[2] == sp for r in all_rows): continue
+        
+        a_hr = a.get('averageHeartRate') or a.get('averageHR') or ""
+        m_hr = a.get('maxHeartRate') or a.get('maxHR') or ""
+        
+        inte = ""
+        if a_hr:
+            p = (float(a_hr) / HR_MAX) * 100
+            inte = "Low" if p < 60 else "Moderate" if p < 85 else "High"
+
+        row = [
+            today_str, t, sp.capitalize(), 
+            round((a.get('duration') or 0)/3600, 2), 
+            round((a.get('distance') or 0)/1000, 2), 
+            a_hr, m_hr, 
+            a.get('trainingLoad', ''), a.get('trainingEffect', ''), 
+            a.get('calories', ''), a.get('averagePower', ''), 
+            a.get('averageCadence', ''), inte
+        ]
+        act_sheet.append_row([format_num(v) if i > 0 else v for i, v in enumerate(row)])
+
+    # AI Advice
+    advice = "Данные обновлены."
+    if GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY.strip())
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = f"Биометрия: HRV {hrv}, HR {r_hr}, BB {bb_morning}, Sleep {slp_h}ч. Дай короткий ироничный совет на день."
+            res = model.generate_content(prompt)
+            advice = res.text.strip()
+        except: pass
+
+    # Telegram Notification
+    if TELEGRAM_BOT_TOKEN:
+        tg_msg = (f"📊 *Отчет {today_str}*\n\n"
+                  f"👣 Шаги: {steps}\n"
+                  f"💓 HRV: {hrv} | RHR: {r_hr}\n"
+                  f"😴 Сон: {slp_h}ч (Score: {slp_sc})\n"
+                  f"🔋 Батарейка: {bb_morning}\n\n"
+                  f"🤖 {advice}")
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": tg_msg, "parse_mode": "Markdown"})
+
+except Exception as e:
+    print(f"Final Error: {e}")
