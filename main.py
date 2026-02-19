@@ -52,27 +52,32 @@ try:
     
     # Сон (проверка за 2 дня)
     for d in [today_str, yesterday_str]:
-        sleep_data = gar.get_sleep_data(d)
-        dto = sleep_data.get("dailySleepDTO", {})
-        if dto and dto.get("sleepTimeSeconds", 0) > 0:
-            slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore", "")
-            slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
-            morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
-            break
+        try:
+            sleep_data = gar.get_sleep_data(d)
+            dto = sleep_data.get("dailySleepDTO") or {}
+            if dto and dto.get("sleepTimeSeconds", 0) > 0:
+                # Пытаемся достать Score из разных полей API
+                slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or ""
+                slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
+                morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
+                print(f"DEBUG: Нашел данные сна за {d}. Score: {slp_sc}")
+                break
+        except: continue
 
-    # Вес (проверка за 3 дня)
+    # Вес (проверка за последние 3 дня)
     for i in range(3):
         d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
             w_data = gar.get_body_composition(d_check, today_str)
-            if w_data.get('uploads'):
+            if w_data and w_data.get('uploads'):
                 weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
+                print(f"DEBUG: Нашел вес за {d_check}: {weight}")
                 break
         except: continue
 
     summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue", "")
-    bb_morning = summary.get("bodyBatteryHighestValue", "")
+    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
+    bb_morning = summary.get("bodyBatteryHighestValue") or ""
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 except Exception as e:
@@ -88,29 +93,38 @@ try:
 except:
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. SYNC & AI ---
+# --- 3. SYNC & AI (Стабильная версия) ---
 try:
-    creds = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(c_obj).open("Garmin_Data")
     
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
-    advice = "Нет данных для ИИ"
+    advice = "Нет данных для анализа"
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
-            # Стабильное название модели без лишних версий
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            prompt = (f"Данные: HRV {hrv}, Пульс {r_hr}, Body Battery {bb_morning}, "
-                      f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один короткий, ироничный и полезный совет.")
+            # Переключаемся на максимально совместимую модель gemini-pro
+            model = genai.GenerativeModel('gemini-pro')
+            
+            prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
+                      f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
+            
             res = model.generate_content(prompt)
             advice = res.text.strip()
-        except Exception as ai_err:
-            advice = f"AI Error: {str(ai_err)[:30]}"
+        except Exception as ai_e:
+            # Если gemini-pro тоже не доступна, пробуем еще раз flash, но с общим именем
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                res = model.generate_content(prompt)
+                advice = res.text.strip()
+            except:
+                advice = f"AI Error: {str(ai_e)[:25]}"
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Завершено. HRV: {hrv}, AI: {advice[:40]}...")
+    print(f"✔ Готово! HRV: {hrv}, Score: {slp_sc}, AI: {advice[:40]}...")
+
 except Exception as e:
-    print(f"Final Error: {e}")
+    print(f"Final Sync Error: {e}")
