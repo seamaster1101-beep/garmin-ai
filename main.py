@@ -124,7 +124,7 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES BLOCK (ИСПРАВЛЕНО) ---
+# --- 3. ACTIVITIES BLOCK ---
 activities_today = []
 
 try:
@@ -161,7 +161,7 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     
-    # --- ACTIVITIES SHEET (ПРАВИЛЬНАЯ ЗАПИСЬ) ---
+    # --- ACTIVITIES SHEET ---
     try:
         activities_sheet = ss.worksheet("Activities")
         all_rows = activities_sheet.get_all_values()
@@ -239,31 +239,54 @@ try:
     except Exception as e:
         print(f"Activities sheet error: {e}")
 
-    # --- 5. AI ADVICE ---
+    # --- 5. AI ADVICE (ИСПРАВЛЕНО) ---
     advice = "🤖 Хорошего дня!"
+    ai_works = False
     
     if GEMINI_API_KEY:
         try:
+            # Пробуем разные названия модели
+            model_names = [
+                'models/gemini-1.5-pro',
+                'gemini-1.5-pro',
+                'gemini-pro',
+                'models/gemini-pro'
+            ]
+            
             genai.configure(api_key=GEMINI_API_KEY.strip())
-            model = genai.GenerativeModel('gemini-1.5-pro')
             
-            acts = []
-            for a in activities_today:
-                sport = a.get('activityType', {}).get('typeKey', 'unknown')
-                duration = round(a.get('duration', 0) / 60, 0)
-                acts.append(f"{sport} {duration}мин")
+            for model_name in model_names:
+                try:
+                    print(f"Пробуем модель: {model_name}")
+                    model = genai.GenerativeModel(model_name)
+                    
+                    acts = []
+                    for a in activities_today:
+                        sport = a.get('activityType', {}).get('typeKey', 'unknown')
+                        duration = round(a.get('duration', 0) / 60, 0)
+                        acts.append(f"{sport} {duration}мин")
+                    
+                    acts_text = ', '.join(acts) if acts else 'нет тренировок'
+                    
+                    prompt = (f"Утро: HRV={hrv}, пульс={r_hr}, сон={slp_h}ч. "
+                              f"Тренировки: {acts_text}. Напиши короткий совет на русском, 1 предложение.")
+                    
+                    response = model.generate_content(prompt)
+                    if response and response.text:
+                        advice = f"🤖 {response.text.strip()}"
+                        ai_works = True
+                        print(f"✅ AI совет получен от {model_name}")
+                        break
+                except Exception as model_e:
+                    print(f"  Модель {model_name} не работает: {str(model_e)[:50]}")
+                    continue
             
-            acts_text = ', '.join(acts) if acts else 'нет тренировок'
-            
-            prompt = (f"Утро: HRV={hrv}, пульс={r_hr}, сон={slp_h}ч. "
-                      f"Тренировки: {acts_text}. Дай короткий совет на русском.")
-            
-            response = model.generate_content(prompt)
-            if response and response.text:
-                advice = f"🤖 {response.text.strip()}"
-                print("✅ AI совет получен")
+            if not ai_works:
+                advice = "🤖 AI временно недоступен, но ты и так молодец!"
+                
         except Exception as ai_e:
             print(f"AI Error: {ai_e}")
+            advice = "🤖 AI недоступен"
     
     # --- 6. TELEGRAM ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
