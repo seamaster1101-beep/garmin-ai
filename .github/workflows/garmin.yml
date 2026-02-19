@@ -2,10 +2,9 @@ name: Garmin Sync
 
 on:
   schedule:
-    # Запуск в 08:30, 13:30, 17:30, 20:30 и 22:30 по UTC+1 (Мальта зима)
+    # Запуск в 08:30, 13:30, 17:30, 20:30 и 22:30 по Мальте (UTC+1)
     - cron: '30 7,12,16,19,21 * * *'
   workflow_dispatch:
-    # Позволяет нажимать кнопку "Run workflow" вручную
 
 jobs:
   sync:
@@ -31,7 +30,6 @@ jobs:
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # ДОБАВЬТЕ ЭТИ ДВЕ СТРОЧКИ НИЖЕ:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
