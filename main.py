@@ -119,81 +119,113 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES via internal API (all wrist-recorded) ---
+import requests
+
+# --- 3. ACTIVITIES (полный Internal API + авторизация) ---
 activities_to_log = []
 
 try:
-    # Запрашиваем все активности через internal API
-    import requests
+    # ————————————————————————————————
+    # 1) LOG IN WEB GARMIN CONNECT
+    # ————————————————————————————————
 
-    # Собираем cookies из текущей сессии gar
-    session_cookies = gar.session.cookies.get_dict()
-    headers = {
-        "User-Agent": "Garmin/Connect",
-        "Accept": "application/json, text/plain, */*"
+    login_url = "https://sso.garmin.com/sso/login"
+    auth_params = {
+        "service": "https://connect.garmin.com/modern/",
+        "webhost": "connect.garmin.com",
+        "username": GARMIN_EMAIL,
+        "password": GARMIN_PASSWORD,
+        "rememberme": "true"
     }
 
-    # Формируем URL (последний internal API)
-    url = f"https://connect.garmin.com/modern/proxy/activity-service/activities?startDate={yesterday_str}&endDate={today_str}"
+    with requests.Session() as s:
+        # Login page to get initial cookies
+        s.get(login_url)
+        # Post credentials
+        r = s.post(login_url, params=auth_params)
+        if "CASTGC" not in s.cookies:
+            raise Exception("Login failed: no CASTGC cookie")
 
-    resp = requests.get(url, headers=headers, cookies=session_cookies)
-    raw_acts = resp.json() if resp.status_code == 200 else []
-    print("RAW_ACTIVITIES:", raw_acts)
+        # ————————————————————————————————
+        # 2) EXCHANGE TICKET
+        # ————————————————————————————————
+        tgt = s.cookies.get("CASTGC")
+        service = "https://connect.garmin.com/modern/"
+        st_url = f"https://sso.garmin.com/sso/ticket?service={service}&CASTGC={tgt}"
+        s.get(st_url)  # now we have session cookies set for connect
 
-    for a in raw_acts:
-        activity_id = str(a.get("activityId"))
-        act_date = a.get("startTimeLocal", "")[:10]
-        act_time = a.get("startTimeLocal", "")[11:16]
-        sport = a.get("activityType", {}).get("typeKey", "")
-
-        # Cadence
-        cad = (
-            a.get("averageBikingCadenceInRevPerMinute")
-            or a.get("averageBikingCadence")
-            or a.get("averageRunCadence")
-            or a.get("averageCadence")
-            or a.get("averageFractionalCadence")
-            or ""
+        # ————————————————————————————————
+        # 3) REQUEST INTERNAL ACTIVITIES API
+        # ————————————————————————————————
+        act_url = (
+            f"https://connect.garmin.com/modern/proxy/activity-service/activities"
+            f"?startDate={yesterday_str}&endDate={today_str}"
         )
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json, text/plain, */*"
+        }
+        resp = s.get(act_url, headers=headers)
+        raw_acts = resp.json() if resp.status_code == 200 else []
+        print("RAW_ACTIVITIES:", raw_acts)
 
-        # Training Load rounded to .1
-        raw_load = (
-            a.get("activityTrainingLoad")
-            or a.get("trainingLoad")
-            or a.get("metabolicCartTrainingLoad")
-            or 0
-        )
-        t_load = round(float(raw_load), 1)
+        # ————————————————————————————————
+        # 4) PARSE ACTIVITIES INTO LIST
+        # ————————————————————————————————
+        for a in raw_acts:
+            activity_id = str(a.get("activityId"))
+            act_date = a.get("startTimeLocal", "")[:10]
+            act_time = a.get("startTimeLocal", "")[11:16]
+            sport = a.get("activityType", {}).get("typeKey", "")
 
-        avg_hr = a.get("averageHR", "")
-        max_hr = a.get("maxHR", "")
+            # Cadence
+            cad = (
+                a.get("averageBikingCadenceInRevPerMinute")
+                or a.get("averageBikingCadence")
+                or a.get("averageRunCadence")
+                or a.get("averageCadence")
+                or a.get("averageFractionalCadence")
+                or ""
+            )
 
-        # HR Intensity
-        intensity_val = ""
-        try:
-            if avg_hr and r_hr and float(r_hr) > 0:
-                intensity_val = round(
-                    ((float(avg_hr) - float(r_rh)) / (185 - float(r_hr))) * 100, 1
-                )
-        except:
+            # Training Load .1
+            raw_load = (
+                a.get("activityTrainingLoad")
+                or a.get("trainingLoad")
+                or a.get("metabolicCartTrainingLoad")
+                or 0
+            )
+            t_load = round(float(raw_load), 1)
+
+            avg_hr = a.get("averageHR", "")
+            max_hr = a.get("maxHR", "")
+
+            # HR Intensity
             intensity_val = ""
+            try:
+                if avg_hr and r_hr and float(r_hr) > 0:
+                    intensity_val = round(
+                        ((float(avg_hr) - float(r_hr)) / (185 - float(r_hr))) * 100, 1
+                    )
+            except:
+                intensity_val = ""
 
-        activities_to_log.append([
-            act_date,
-            act_time,
-            sport,
-            round(a.get("duration", 0) / 3600, 2),
-            round(a.get("distance", 0) / 1000, 2),
-            avg_hr,
-            max_hr,
-            intensity_val,
-            t_load,
-            round(float(a.get("aerobicTrainingEffect", 0)), 1),
-            a.get("calories", ""),
-            a.get("avgPower", ""),
-            cad,
-            activity_id
-        ])
+            activities_to_log.append([
+                act_date,
+                act_time,
+                sport,
+                round(a.get("duration", 0) / 3600, 2),
+                round(a.get("distance", 0) / 1000, 2),
+                avg_hr,
+                max_hr,
+                intensity_val,
+                t_load,
+                round(float(a.get("aerobicTrainingEffect", 0)), 1),
+                a.get("calories", ""),
+                a.get("avgPower", ""),
+                cad,
+                activity_id
+            ])
 
     print("ACTIVITIES_TO_LOG COUNT:", len(activities_to_log))
 
@@ -206,31 +238,26 @@ try:
     creds = json.loads(GOOGLE_CREDS_JSON)
     credentials = Credentials.from_service_account_info(
         creds,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
+        scopes=["https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"]
     )
     ss = gspread.authorize(credentials).open("Garmin_Data")
     act_sheet = ss.worksheet("Activities")
 
-    # Сбор уже существующих activityId в листе
+    # Existing activityIds
     existing_ids = set()
     for r in act_sheet.get_all_values():
         if len(r) > 13 and r[13].strip():
             existing_ids.add(r[13].strip())
 
-    # Добавляем старые строки без activityId в существующие
+    # Also block old rows without ID by old date_time_sport
     for r in act_sheet.get_all_values():
         if len(r) > 12 and not r[13].strip():
-            # собираем ключ по дате+времени+тип
-            key_old = f"{r[0]}_{r[1]}_{r[2]}"
-            existing_ids.add(key_old)
+            existing_ids.add(f"{r[0]}_{r[1]}_{r[2]}")
 
-    # Сортировка по дате и времени
+    # Sort
     activities_to_log.sort(key=lambda x: (x[0], x[1]))
 
-    # Добавляем только новые
     for act in activities_to_log:
         act_id = act[-1]
         if act_id not in existing_ids:
