@@ -27,10 +27,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4️⃣ Создаём временный JSON файл из секрета (исправлено!)
+      # 4️⃣ Создаём валидный JSON файл из секрета
       - name: Create Google creds file
         run: |
-          printf "%s" "${{ secrets.GOOGLE_CREDS }}" > google-creds.json
+          echo "${{ secrets.GOOGLE_CREDS }}" > google-creds.json
+          # Проверяем, что файл не пустой
+          ls -l google-creds.json
+          head -n 5 google-creds.json
 
       # 5️⃣ Запуск скрипта
       - name: Run Garmin MORNING BLOCK
