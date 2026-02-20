@@ -5,15 +5,12 @@ from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
-import requests
 
 # --- CONFIG ---
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def update_or_append(sheet, date_str, row_data):
     try:
@@ -83,41 +80,14 @@ except Exception as e:
 
 # --- 2. DAILY BLOCK ---
 try:
-    summary = gar.get_user_summary(today_str) or {}
-    stats = gar.get_stats(today_str) or {}
-
-    # Шаги
     steps_data = gar.get_daily_steps(today_str, today_str)
     steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
-
-    # Калории
-    cals = (
-        summary.get("activeKilocalories", 0)
-        + summary.get("bmrKilocalories", 0)
-    ) or stats.get("calories") or 0
-
-    # Дистанция ТОЛЬКО от шагов (в км, 0.762м/шаг - стандарт)
-    steps_distance_km = round(steps * 0.000762, 2)
-
-    # Активности за сегодня (завершённые)
-    activities = gar.get_activities_by_date(today_str, today_str) or []
-    activity_count = len(activities)
-
-    daily_row = [
-        today_str,
-        steps,
-        steps_distance_km,  # Только шаги!
-        cals,
-        r_hr,
-        summary.get("bodyBatteryMostRecentValue", "")
-        # activity_count убран отсюда, чтобы не было лишней колонки
-    ]
-
-except Exception as e:
-    print(f"Daily Error: {e}")
+    cals = stats.get("calories") or (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0))
+    daily_row = [today_str, steps, "", cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+except:
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. SYNC, AI & TELEGRAM ---
+# --- 3. SYNC & AI (АВТОМАТИЧЕСКИЙ ВЫБОР МОДЕЛИ) ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -130,14 +100,20 @@ try:
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY.strip())
+            
+            # Находим первую доступную модель для генерации контента
             available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             if available_models:
+                # Берем первую из списка (обычно это flash или pro)
                 model_name = available_models[0]
                 model = genai.GenerativeModel(model_name)
+                
                 prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
                           f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
+                
                 res = model.generate_content(prompt)
                 advice = res.text.strip()
+                print(f"Использована модель: {model_name}")
             else:
                 advice = "API Key жив, но доступных моделей нет."
         except Exception as ai_e:
@@ -145,15 +121,6 @@ try:
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
     print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
-
-    # --- ОТПРАВКА В ТЕЛЕГРАМ ---
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        msg = f"🚀 Отчет:\nHRV: {hrv}\nСон: {slp_h}ч\nПульс: {r_hr}\n\n🤖 {advice.replace('*', '')}"
-        tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-        resp = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
-        print(f"Telegram Response: {resp.status_code} {resp.text}")
-    else:
-        print("Telegram Token or ID is missing in Secrets!")
 
 except Exception as e:
     print(f"Final Error: {e}")
