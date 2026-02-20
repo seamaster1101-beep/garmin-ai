@@ -121,64 +121,78 @@ except Exception as e:
 
 import requests
 
-# --- 3. ACTIVITIES (полный Internal API + авторизация) ---
+import requests
+
+# --- 3. ACTIVITIES (полный SSO + internal API) ---
 activities_to_log = []
 
 try:
-    # ————————————————————————————————
-    # 1) LOG IN WEB GARMIN CONNECT
-    # ————————————————————————————————
-
-    login_url = "https://sso.garmin.com/sso/login"
-    auth_params = {
-        "service": "https://connect.garmin.com/modern/",
-        "webhost": "connect.garmin.com",
+    # ——————————————————————————————————
+    # 1) LOG IN через Garmin Web SSO
+    # ——————————————————————————————————
+    login_page_url = "https://sso.garmin.com/sso/login"
+    service_url = "https://connect.garmin.com/modern/"
+    auth_payload = {
         "username": GARMIN_EMAIL,
         "password": GARMIN_PASSWORD,
-        "rememberme": "true"
+        "embed": "false",
+        "lt": "",
+        "execution": "",
+        "_eventId": "submit"
     }
 
     with requests.Session() as s:
-        # Login page to get initial cookies
-        s.get(login_url)
-        # Post credentials
-        r = s.post(login_url, params=auth_params)
+        # Получаем страницу входа, чтобы достать form-поля из HTML
+        r0 = s.get(login_page_url, params={"service": service_url})
+        if r0.status_code != 200:
+            raise Exception("Login page fetch failed")
+
+        # Извлекаем hidden поля lt и execution
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(r0.text, "html.parser")
+        auth_payload["lt"] = soup.find("input", {"name": "lt"})["value"]
+        auth_payload["execution"] = soup.find("input", {"name": "execution"})["value"]
+
+        # POST авторизация
+        r1 = s.post(login_page_url, params={"service": service_url},
+                    data=auth_payload, allow_redirects=True)
+        
+        # Проверяем наличие CASTGC
         if "CASTGC" not in s.cookies:
             raise Exception("Login failed: no CASTGC cookie")
 
-        # ————————————————————————————————
-        # 2) EXCHANGE TICKET
-        # ————————————————————————————————
+        # Получаем тикет и обмениваем его на сессионные cookies
         tgt = s.cookies.get("CASTGC")
-        service = "https://connect.garmin.com/modern/"
-        st_url = f"https://sso.garmin.com/sso/ticket?service={service}&CASTGC={tgt}"
-        s.get(st_url)  # now we have session cookies set for connect
+        st_url = f"https://sso.garmin.com/sso/ticket?service={service_url}&CASTGC={tgt}"
+        s.get(st_url)
 
-        # ————————————————————————————————
-        # 3) REQUEST INTERNAL ACTIVITIES API
-        # ————————————————————————————————
+        # ——————————————————————————————————
+        # 2) Запрашиваем Internal Activities API
+        # ——————————————————————————————————
         act_url = (
-            f"https://connect.garmin.com/modern/proxy/activity-service/activities"
+            "https://connect.garmin.com/modern/proxy/activity-service/activities"
             f"?startDate={yesterday_str}&endDate={today_str}"
         )
         headers = {
             "User-Agent": "Mozilla/5.0",
             "Accept": "application/json, text/plain, */*"
         }
-        resp = s.get(act_url, headers=headers)
-        raw_acts = resp.json() if resp.status_code == 200 else []
+        r2 = s.get(act_url, headers=headers)
+        if r2.status_code != 200:
+            raise Exception(f"Internal API failed: {r2.status_code}")
+
+        raw_acts = r2.json()
         print("RAW_ACTIVITIES:", raw_acts)
 
-        # ————————————————————————————————
-        # 4) PARSE ACTIVITIES INTO LIST
-        # ————————————————————————————————
+        # ——————————————————————————————————
+        # 3) Формируем список activities_to_log
+        # ——————————————————————————————————
         for a in raw_acts:
             activity_id = str(a.get("activityId"))
             act_date = a.get("startTimeLocal", "")[:10]
             act_time = a.get("startTimeLocal", "")[11:16]
             sport = a.get("activityType", {}).get("typeKey", "")
 
-            # Cadence
             cad = (
                 a.get("averageBikingCadenceInRevPerMinute")
                 or a.get("averageBikingCadence")
@@ -188,7 +202,6 @@ try:
                 or ""
             )
 
-            # Training Load .1
             raw_load = (
                 a.get("activityTrainingLoad")
                 or a.get("trainingLoad")
@@ -200,7 +213,6 @@ try:
             avg_hr = a.get("averageHR", "")
             max_hr = a.get("maxHR", "")
 
-            # HR Intensity
             intensity_val = ""
             try:
                 if avg_hr and r_hr and float(r_hr) > 0:
@@ -227,10 +239,45 @@ try:
                 activity_id
             ])
 
-    print("ACTIVITIES_TO_LOG COUNT:", len(activities_to_log))
+        print("ACTIVITIES_TO_LOG COUNT:", len(activities_to_log))
 
 except Exception as e:
     print("Activities error:", e)
+
+
+# --- Write only NEW activities ---
+try:
+    creds = json.loads(GOOGLE_CREDS_JSON)
+    credentials = Credentials.from_service_account_info(
+        creds,
+        scopes=["https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"]
+    )
+    ss = gspread.authorize(credentials).open("Garmin_Data")
+    act_sheet = ss.worksheet("Activities")
+
+    existing_ids = set()
+    for r in act_sheet.get_all_values():
+        if len(r) > 13 and r[13].strip():
+            existing_ids.add(r[13].strip())
+
+    # Add keys for old rows without ID
+    for r in act_sheet.get_all_values():
+        if len(r) > 12 and not r[13].strip():
+            existing_ids.add(f"{r[0]}_{r[1]}_{r[2]}")
+
+    activities_to_log.sort(key=lambda x: (x[0], x[1]))
+
+    for act in activities_to_log:
+        act_id = act[-1]
+        if act_id not in existing_ids:
+            act_sheet.append_row(act)
+            print("Appended activity:", act_id)
+        else:
+            print("Already exists activity:", act_id)
+
+except Exception as e:
+    print("Sheets Activities write error:", e)
 
 
 # --- Write only NEW activities ---
