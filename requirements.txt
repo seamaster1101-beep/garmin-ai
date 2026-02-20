@@ -13,8 +13,8 @@ google-api-python-client
 # Telegram
 python-telegram-bot
 
-# AI (если используешь Gemini)
+# Gemini AI
 google-genai
 
-# Общие утилиты (на всякий случай)
+# Общие утилиты
 pytz
