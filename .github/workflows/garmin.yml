@@ -24,10 +24,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Check JSON
-        run: cat google-creds.json
+        run: cat google_creds.json
       - name: Create Google creds file
         run: |
-          printf "%s" "${{ secrets.GOOGLE_CREDS }}" > google-creds.json
+          printf "%s" "${{ secrets.GOOGLE_CREDS }}" > google_creds.json
 
       - name: Run Garmin MORNING BLOCK
         env:
