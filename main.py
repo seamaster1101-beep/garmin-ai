@@ -121,35 +121,59 @@ except Exception as e:
 activities_to_log = []
 try:
     raw_acts = gar.get_activities_by_date("2026-02-18", "2026-02-19")
-    print("RAW_ACTIVITIES:", raw_acts)    # ❗ вот эта строка
+    print("RAW_ACTIVITIES:", raw_acts)
 
-    acts = raw_acts  # чтобы дальше использовать тот же список
-    
-    for a in acts:
-        # МАГИЯ КАДЕНСА: еще больше полей
-        cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
-               a.get('averageRunCadence') or a.get('averageFractionalCadence', ""))
-        
-        # НАГРУЗКА
-        t_load = a.get('trainingLoad') or a.get('metabolicCartTrainingLoad', "")
-        
+    for a in raw_acts:
+        # Получаем реальную дату активности (YYYY-MM-DD)
+        act_date = a.get("startTimeLocal", "")[:10]
+
+        # Cadence (выбираем первое заполненное)
+        cad = (
+            a.get('averageBikingCadenceInRevPerMinute') or
+            a.get('averageBikingCadence') or
+            a.get('averageRunCadence') or
+            a.get('averageCadence') or
+            a.get('averageFractionalCadence', "")
+        )
+
+        # Training Load (разные поля)
+        t_load = (
+            a.get('activityTrainingLoad') or
+            a.get('trainingLoad') or
+            a.get('metabolicCartTrainingLoad') or
+            ""
+        )
+
         avg_hr = a.get('averageHR', 0)
         intensity = "N/A"
-        if avg_hr and r_hr and r_hr > 0:
+        if avg_hr and r_hr and float(r_hr) > 0:
             res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
-            intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
+            if res < 0.5:
+                intensity = "Low"
+            elif res < 0.75:
+                intensity = "Moderate"
+            else:
+                intensity = "High"
 
         activities_to_log.append([
-            today_str, a.get('startTimeLocal', "")[11:16], a.get('activityType', {}).get('typeKey', ''),
-            round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
-            avg_hr, a.get('maxHR', ""), t_load,
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
-            a.get('avgPower', ""), cad, intensity
+            act_date,
+            a.get('startTimeLocal', "")[11:16],
+            a.get('activityType', {}).get('typeKey', ''),
+            round(a.get('duration', 0) / 3600, 2),
+            round(a.get('distance', 0) / 1000, 2),
+            avg_hr,
+            a.get('maxHR', ""),
+            t_load,
+            round(float(a.get('aerobicTrainingEffect', 0)), 1),
+            a.get('calories', ""),
+            a.get('avgPower', ""),
+            cad,
+            intensity
         ])
-except: pass
 
-
-
+except Exception as e:
+    print("Activities error:", e)
+    
 # --- 4. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
