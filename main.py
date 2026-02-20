@@ -83,11 +83,38 @@ except Exception as e:
 
 # --- 2. DAILY BLOCK ---
 try:
+    summary = gar.get_user_summary(today_str) or {}
+    stats = gar.get_stats(today_str) or {}
+
+    # Шаги
     steps_data = gar.get_daily_steps(today_str, today_str)
     steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
-    cals = stats.get("calories") or (summary.get("activeCalories", 0) + summary.get("bmrCalories", 0))
-    daily_row = [today_str, steps, "", cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
-except:
+
+    # Калории
+    cals = (
+        summary.get("activeKilocalories", 0)
+        + summary.get("bmrKilocalories", 0)
+    ) or stats.get("calories") or 0
+
+    # Дистанция ТОЛЬКО от шагов (в км, 0.762м/шаг - стандарт)
+    steps_distance_km = round(steps * 0.000762, 2)
+
+    # Активности за сегодня (завершённые)
+    activities = gar.get_activities_by_date(today_str, today_str) or []
+    activity_count = len(activities)
+
+    daily_row = [
+        today_str,
+        steps,
+        steps_distance_km,  # Только шаги!
+        cals,
+        r_hr,
+        summary.get("bodyBatteryMostRecentValue", "")
+        # activity_count убран отсюда, чтобы не было лишней колонки
+    ]
+
+except Exception as e:
+    print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
 # --- 3. SYNC, AI & TELEGRAM ---
