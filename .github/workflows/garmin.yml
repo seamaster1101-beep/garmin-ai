@@ -30,7 +30,7 @@ jobs:
       # 4️⃣ Создаём временный JSON файл из секрета
       - name: Create Google creds file
         run: |
-          echo "${{ secrets.GOOGLE_CREDS }}" > google-creds.json
+          printf "%s" "${{ secrets.GOOGLE_CREDS }}" > google-creds.json
 
       # 5️⃣ Запуск скрипта
       - name: Run Garmin MORNING BLOCK
