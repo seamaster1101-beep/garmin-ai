@@ -117,8 +117,32 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
+# --- 3. ACTIVITIES ---
+activities_to_log = []
+try:
+    acts = gar.get_activities_by_date(today_str, today_str)
+    acts.sort(key=lambda x: x.get('startTimeLocal', ''))
+    for a in acts:
+        st_time = a.get('startTimeLocal', "")[11:16]
+        cad = a.get('averageBikingCadence') or a.get('averageCadence') or ""
+        avg_hr = a.get('averageHR', 0)
+        
+        intensity = "N/A"
+        if avg_hr and r_hr > 0:
+            res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
+            intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
 
-# --- 3. SYNC, AI & TELEGRAM ---
+        activities_to_log.append([
+            today_str, st_time, a.get('activityType', {}).get('typeKey', ''),
+            round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
+            avg_hr, a.get('maxHR', ""), a.get('trainingLoad', ""),
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
+            a.get('avgPower', ""), cad, intensity
+        ])
+except: pass
+
+
+# --- 4. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
