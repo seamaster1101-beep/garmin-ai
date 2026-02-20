@@ -117,56 +117,45 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Load & Cadence) ---
+# --- 2. ACTIVITIES (Версия, которая работала + твои правки) ---
 activities_to_log = []
 try:
-    # Запрашиваем активности за сегодня
+    # Запрашиваем активности именно за СЕГОДНЯ
     acts = gar.get_activities_by_date(today_str, today_str)
     if acts:
         for a in acts:
-            # МАГИЯ КАДЕНСА: проверяем все типы (вело, бег, плавание)
-            cad = (a.get('averageBikingCadence') or 
-                   a.get('averageCadence') or  
-                   a.get('averageRunCadence') or 
-                   a.get('averageStepCadence') or
-                   a.get('averageFractionalCadence', ""))
+            # Пульс (стандартные ключи)
+            a_hr = a.get('averageHeartRate') or a.get('averageHR') or 0
+            m_hr = a.get('maxHeartRate') or a.get('maxHR') or ""
             
-            # НАГРУЗКА И ТРЕНИРОВОЧНЫЙ ЭФФЕКТ
+            # Каденс (все варианты)
+            cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
+                   a.get('averageRunCadence') or a.get('averageStepCadence') or "")
+            
+            # Нагрузка и Эффект
             t_load = a.get('trainingLoad') or a.get('metabolicCartTrainingLoad', "")
-            a_effect = a.get('aerobicTrainingEffect') or a.get('trainingEffect') or 0
-            
-            # ПУЛЬС (проверяем разные ключи API)
-            avg_hr = a.get('averageHR') or a.get('averageHeartRate') or 0
-            max_hr = a.get('maxHR') or a.get('maxHeartRate') or ""
+            te = a.get('aerobicTrainingEffect') or a.get('trainingEffect') or ""
 
-            # ИНТЕНСИВНОСТЬ (с защитой от пустых значений)
+            # Интенсивность (Формула Карвонена)
             intensity = "N/A"
-            try:
-                if avg_hr and r_hr and str(r_hr).isdigit() and int(r_hr) > 0:
-                    # Используем формулу Карвонена или упрощенный % от макс (185)
-                    res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
+            if a_hr and r_hr and str(r_hr).isdigit():
+                try:
+                    res = (float(a_hr) - float(r_hr)) / (185 - float(r_hr))
                     intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
-            except:
-                intensity = "Calculating..."
+                except: pass
 
+            # Формируем строку как 18-го числа
             activities_to_log.append([
-                today_str, 
-                a.get('startTimeLocal', "T00:00:00")[11:16], # Время ЧЧ:ММ
-                a.get('activityType', {}).get('typeKey', 'unknown').replace('_', ' ').capitalize(),
-                round(float(a.get('duration', 0)) / 3600, 2), 
-                round(float(a.get('distance', 0)) / 1000, 2),
-                avg_hr, 
-                max_hr, 
-                t_load,
-                round(float(a_effect), 1), 
-                a.get('calories', ""),
-                a.get('avgPower') or a.get('averagePower', ""), 
-                cad, 
-                intensity
+                today_str,
+                a.get('startTimeLocal', "")[11:16],
+                a.get('activityType', {}).get('typeKey', '').capitalize(),
+                clean(round(a.get('duration', 0) / 3600, 2)),
+                clean(round(a.get('distance', 0) / 1000, 2)),
+                a_hr, m_hr, t_load, clean(te),
+                a.get('calories', ""), a.get('averagePower', ""), 
+                cad, intensity
             ])
-        print(f"✅ Обработано активностей: {len(activities_to_log)}")
-except Exception as e:
-    print(f"❌ Ошибка в блоке активностей: {e}")
+except: pass
     
 # --- 5. SYNC, AI & TELEGRAM ---
 try:
