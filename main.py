@@ -122,7 +122,7 @@ activities_to_log = []
 try:
     # raw list
     raw_acts = gar.get_activities_by_date("2026-02-18", "2026-02-19")
-    'print("RAW_ACTIVITIES:", raw_acts)
+    print("RAW_ACTIVITIES:", raw_acts)
 
     for a in raw_acts:
         act_date = a.get("startTimeLocal", "")[:10]
@@ -151,14 +151,28 @@ try:
         max_hr = a.get('maxHR', "")
 
         # HR Intensity (relative to resting HR)
-        intensity_val = ""
+        raw_load = a.get('activityTrainingLoad') or a.get('trainingLoad') or a.get('metabolicCartTrainingLoad') or 0
+        t_load = round(float(raw_load), 1)
+
+        avg_hr = a.get('averageHR') or a.get('averageHeartRate') or ""
+        max_hr = a.get('maxHR') or a.get('maxHeartRate', "")
+
+        # --- HR Intensity (Low / Moderate / High) ---
+        intensity_text = "N/A"
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
-                intensity_val = round(
-                    ((float(avg_hr) - float(r_hr)) / (185 - float(r_hr))) * 100, 1
-                )  # % intensity
+                # Считаем коэффициент по твоей формуле
+                res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
+                
+                # Классификация
+                if res < 0.5:
+                    intensity_text = "Low"
+                elif res < 0.75:
+                    intensity_text = "Moderate"
+                else:
+                    intensity_text = "High"
         except:
-            intensity_val = ""
+            intensity_text = "N/A"
 
             activities_to_log.append([
             act_date,
