@@ -117,23 +117,24 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Load & Cadence) ---
+# --- ACTIVITIES (Range: yesterday_str → yesterday_str) ---
 activities_to_log = []
 try:
-    raw_acts = gar.get_activities_by_date("2026-02-18", "2026-02-19")
+    raw_acts = gar.get_activities_by_date(yesterday_str, yesterday_str)
     print("RAW_ACTIVITIES:", raw_acts)
 
     for a in raw_acts:
-        # Получаем реальную дату активности (YYYY-MM-DD)
         act_date = a.get("startTimeLocal", "")[:10]
+        act_time = a.get("startTimeLocal", "")[11:16]
 
-        # Cadence (выбираем первое заполненное)
+        # Cadence (возможные поля)
         cad = (
             a.get('averageBikingCadenceInRevPerMinute') or
             a.get('averageBikingCadence') or
             a.get('averageRunCadence') or
             a.get('averageCadence') or
-            a.get('averageFractionalCadence', "")
+            a.get('averageFractionalCadence') or
+            ""
         )
 
         # Training Load (разные поля)
@@ -144,35 +145,43 @@ try:
             ""
         )
 
-        avg_hr = a.get('averageHR', 0)
-        intensity = "N/A"
-        if avg_hr and r_hr and float(r_hr) > 0:
-            res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
-            if res < 0.5:
-                intensity = "Low"
-            elif res < 0.75:
-                intensity = "Moderate"
-            else:
-                intensity = "High"
+        avg_hr = a.get('averageHR', "")
+        max_hr = a.get('maxHR', "")
 
         activities_to_log.append([
             act_date,
-            a.get('startTimeLocal', "")[11:16],
+            act_time,
             a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
             avg_hr,
-            a.get('maxHR', ""),
+            max_hr,
             t_load,
             round(float(a.get('aerobicTrainingEffect', 0)), 1),
             a.get('calories', ""),
             a.get('avgPower', ""),
-            cad,
-            intensity
+            cad
         ])
+
+    print("ACTIVITIES_TO_LOG COUNT:", len(activities_to_log))
 
 except Exception as e:
     print("Activities error:", e)
+try:
+    act_sheet = ss.worksheet("Activities")
+    existing_keys = {f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2}
+
+    for act in activities_to_log:
+        key = f"{act[0]}_{act[1]}_{act[2]}"
+        if key not in existing_keys:
+            act_sheet.append_row(act)
+            print("Appended:", key)
+        else:
+            print("Already exists:", key)
+
+except Exception as e:
+    print("Sheets Activities write error:", e)
+
     
 # --- 4. SYNC, AI & TELEGRAM ---
 try:
