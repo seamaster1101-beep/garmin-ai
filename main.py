@@ -117,66 +117,87 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Range: yesterday_str -> yesterday_str) ---
+# --- 3. ACTIVITIES (Только новые тренировки за сегодня) ---
 activities_to_log = []
 try:
-    # raw list
-    raw_acts = gar.get_activities_by_date("2026-02-18", "2026-02-19")
-    print("RAW_ACTIVITIES:", raw_acts)
+    # 1. Получаем список всех активностей за сегодня
+    raw_acts = gar.get_activities_by_date(today_str, today_str)
+    
+    # 2. Читаем уже существующие записи в таблице, чтобы не дублировать
+    act_sheet = ss.worksheet("Activities")
+    existing_rows = act_sheet.get_all_values()
 
     for a in raw_acts:
         act_date = a.get("startTimeLocal", "")[:10]
         act_time = a.get("startTimeLocal", "")[11:16]
+        sport = a.get('activityType', {}).get('typeKey', '').capitalize()
 
-        # Cadence
+        # Проверка на дубликат (Дата + Время + Спорт)
+        if any(r[0] == act_date and r[1] == act_time and r[2] == sport for r in existing_rows):
+            continue
+
+        # Cadence (твоя расширенная логика)
         cad = (
             a.get('averageBikingCadenceInRevPerMinute') or
             a.get('averageBikingCadence') or
             a.get('averageRunCadence') or
             a.get('averageCadence') or
-            a.get('averageFractionalCadence') or
-            ""
+            a.get('averageFractionalCadence') or ""
         )
 
-        # Training Load rounded to tenths
-        raw_load = (
-            a.get('activityTrainingLoad') or
-            a.get('trainingLoad') or
-            a.get('metabolicCartTrainingLoad') or
-            0
-        )
+        # Training Load (округление до десятых)
+        raw_load = a.get('activityTrainingLoad') or a.get('trainingLoad') or a.get('metabolicCartTrainingLoad') or 0
         t_load = round(float(raw_load), 1)
 
-        avg_hr = a.get('averageHR', "")
-        max_hr = a.get('maxHR', "")
+        avg_hr = a.get('averageHR') or a.get('averageHeartRate') or ""
+        max_hr = a.get('maxHR') or a.get('maxHeartRate', "")
 
-        # HR Intensity (relative to resting HR)
-        intensity_val = ""
+        # --- HR Intensity (Low / Moderate / High) ---
+        intensity_text = "N/A"
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
-                intensity_val = round(
-                    ((float(avg_hr) - float(r_hr)) / (185 - float(r_hr))) * 100, 1
-                )  # % intensity
+                # Считаем коэффициент по твоей формуле
+                res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
+                
+                # Классификация
+                if res < 0.5:
+                    intensity_text = "Low"
+                elif res < 0.75:
+                    intensity_text = "Moderate"
+                else:
+                    intensity_text = "High"
         except:
-            intensity_val = ""
+            intensity_text = "N/A"
 
-        activities_to_log.append([
+        # Собираем строку (важно соблюдать порядок столбцов твоей таблицы)
+        new_row = [
             act_date,
             act_time,
-            a.get('activityType', {}).get('typeKey', ''),
+            sport,
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
             avg_hr,
             max_hr,
-            intensity_val,      # HR_Intensity in %
-            t_load,             # Training Load rounded
+            intensity_text,      # Возвращаем текстовую интенсивность
+            t_load,             
             round(float(a.get('aerobicTrainingEffect', 0)), 1),
             a.get('calories', ""),
             a.get('avgPower', ""),
             cad
-        ])
+        ]
+        
+        # Применяем clean() ко всем числовым полям (замена . на ,)
+        # i > 2 означает, что мы не трогаем Дату, Время и Спорт
+        formatted_row = [clean(val) if i > 2 else val for i, val in enumerate(new_row)]
+        activities_to_log.append(formatted_row)
 
-    print("ACTIVITIES_TO_LOG COUNT:", len(activities_to_log))
+    # 3. Записываем новые строки
+    if activities_to_log:
+        for row in activities_to_log:
+            act_sheet.append_row(row)
+        print(f"✅ Добавлено новых тренировок: {len(activities_to_log)}")
+    else:
+        print("ℹ️ Новых тренировок не обнаружено.")
 
 except Exception as e:
     print("Activities error:", e)
