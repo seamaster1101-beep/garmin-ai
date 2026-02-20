@@ -117,7 +117,81 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. SYNC, AI & TELEGRAM ---
+# ------------------3. ACTIVITIES (Load + Cadence) -------------------
+
+activities_log = []
+try:
+    act_list = gar.get_activities_by_date(today, today) or []
+    for a in act_list:
+        # Cadence
+        cad_keys = [
+            "averageBikingCadence", "averageCadence",
+            "averageRunCadence", "averageFractionalCadence"
+        ]
+        cadence = ""
+        for k in cad_keys:
+            if a.get(k):
+                cadence = a[k]
+                break
+
+        # Training Load
+        load_keys = [
+            "trainingLoad",
+            "metabolicCartTrainingLoad",
+            "trainingLoadVO2Max",
+            "trainingLoadPeakImpact"
+        ]
+        t_load = ""
+        for lk in load_keys:
+            if a.get(lk):
+                t_load = a[lk]
+                break
+
+        activities_log.append([
+            today,
+            a.get("startTimeLocal", "")[11:16],
+            a.get("activityType", {}).get("typeKey", ""),
+            round(a.get("duration",0)/3600,2),
+            round(a.get("distance",0)/1000,2),
+            a.get("averageHR",""),
+            a.get("maxHR",""),
+            t_load,
+            safe(a.get("aerobicTrainingEffect")),
+            a.get("calories",""),
+            a.get("avgPower",""),
+            cadence
+        ])
+except:
+    pass
+
+debug.append(f"Activities count: {len(activities_log)}")
+
+# -----------------4. SYNC TO SHEETS -------------------
+
+try:
+    creds = json.loads(GOOGLE_CREDS_JSON)
+    creds_obj = Credentials.from_service_account_info(
+        creds,
+        scopes=["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
+    )
+    gs = gspread.authorize(creds_obj)
+    ss = gs.open("Garmin_Data")
+
+    # Morning sheet
+    update_or_append(ss.worksheet("Morning"), today, morning_row)
+
+    # Daily sheet
+    update_or_append(ss.worksheet("Daily"), today, daily_row)
+
+    # Activities sheet
+    act_sheet = ss.worksheet("Activities")
+    existing_keys = {f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r)>2}
+    for al in activities_log:
+        key = f"{al[0]}_{al[1]}_{al[2]}"
+        if key not in existing_keys:
+            act_sheet.append_row(al)
+
+# --- 5. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
