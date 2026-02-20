@@ -41,7 +41,7 @@ try:
 except Exception as e:
     print(f"Login Fail: {e}"); exit(1)
 
-now = datetime.now()
+now = datetime.now()- timedelta(days=1)
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -117,45 +117,53 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 2. ACTIVITIES (Версия, которая работала + твои правки) ---
+# --- ACTIVITIES (Твой блок с моими правками) ---
 activities_to_log = []
 try:
-    # Запрашиваем активности именно за СЕГОДНЯ
     acts = gar.get_activities_by_date(today_str, today_str)
     if acts:
         for a in acts:
-            # Пульс (стандартные ключи)
-            a_hr = a.get('averageHeartRate') or a.get('averageHR') or 0
-            m_hr = a.get('maxHeartRate') or a.get('maxHR') or ""
-            
-            # Каденс (все варианты)
+            # Магия каденса и пульса (ищем во всех полях)
             cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
                    a.get('averageRunCadence') or a.get('averageStepCadence') or "")
+            avg_hr = a.get('averageHR') or a.get('averageHeartRate') or 0
             
-            # Нагрузка и Эффект
             t_load = a.get('trainingLoad') or a.get('metabolicCartTrainingLoad', "")
-            te = a.get('aerobicTrainingEffect') or a.get('trainingEffect') or ""
-
-            # Интенсивность (Формула Карвонена)
+            
+            # Интенсивность (расчет только если есть пульс)
             intensity = "N/A"
-            if a_hr and r_hr and str(r_hr).isdigit():
-                try:
-                    res = (float(a_hr) - float(r_hr)) / (185 - float(r_hr))
-                    intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
-                except: pass
+            if avg_hr and r_hr and str(r_hr).isdigit():
+                res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
+                intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
 
-            # Формируем строку как 18-го числа
             activities_to_log.append([
-                today_str,
-                a.get('startTimeLocal', "")[11:16],
+                today_str, 
+                a.get('startTimeLocal', "T00:00:00")[11:16], 
                 a.get('activityType', {}).get('typeKey', '').capitalize(),
-                clean(round(a.get('duration', 0) / 3600, 2)),
+                clean(round(a.get('duration', 0) / 3600, 2)), 
                 clean(round(a.get('distance', 0) / 1000, 2)),
-                a_hr, m_hr, t_load, clean(te),
-                a.get('calories', ""), a.get('averagePower', ""), 
-                cad, intensity
+                avg_hr, a.get('maxHR') or a.get('maxHeartRate', ""), 
+                t_load, clean(round(float(a.get('aerobicTrainingEffect', 0)), 1)), 
+                a.get('calories', ""), a.get('averagePower', ""), cad, intensity
             ])
 except: pass
+
+# --- Запись в Таблицу ---
+try:
+    creds = json.loads(GOOGLE_CREDS_JSON)
+    c_obj = Credentials.from_service_account_info(creds, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(c_obj).open("Garmin_Data")
+
+    # Пишем по старой схеме (просто добавляем строки)
+    ss.worksheet("Daily").append_row([today_str, steps, "", "", r_hr, ""])
+    ss.worksheet("Morning").append_row([today_str, clean(weight), r_hr, hrv, bb_m, "", clean(slp_h)])
+    
+    act_sheet = ss.worksheet("Activities")
+    for row in activities_to_log:
+        act_sheet.append_row(row)
+    print("✅ Таблица обновлена")
+except Exception as e:
+    print(f"Sheets Sync Error: {e}")
     
 # --- 5. SYNC, AI & TELEGRAM ---
 try:
