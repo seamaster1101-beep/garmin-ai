@@ -119,18 +119,22 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Range: yesterday → today) ---
+# --- 3. ACTIVITIES (Range: yesterday_str -> yesterday_str) ---
 activities_to_log = []
 
 try:
-    raw_acts = gar.get_activities_by_date("2026-02-18", "2026-02-19")
+    raw_acts = gar.get_activities_by_date(yesterday_str, yesterday_str)
     print("RAW_ACTIVITIES:", raw_acts)
 
     for a in raw_acts:
         act_date = a.get("startTimeLocal", "")[:10]
         act_time = a.get("startTimeLocal", "")[11:16]
+        activity_id = str(a.get("activityId"))
 
-        # Cadence
+        # Sports/Type
+        sport = a.get('activityType', {}).get('typeKey', '')
+
+        # Cadence (если есть)
         cad = (
             a.get('averageBikingCadenceInRevPerMinute') or
             a.get('averageBikingCadence') or
@@ -152,7 +156,7 @@ try:
         avg_hr = a.get('averageHR', "")
         max_hr = a.get('maxHR', "")
 
-        # HR Intensity (relative to resting HR)
+        # HR Intensity
         intensity_val = ""
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
@@ -165,17 +169,18 @@ try:
         activities_to_log.append([
             act_date,
             act_time,
-            a.get('activityType', {}).get('typeKey', ''),
+            sport,            # Sports column
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
             avg_hr,
             max_hr,
-            intensity_val,      # HR_Intensity %
-            t_load,             # Training Load .1
+            intensity_val,
+            t_load,
             round(float(a.get('aerobicTrainingEffect', 0)), 1),
             a.get('calories', ""),
             a.get('avgPower', ""),
-            cad
+            cad,
+            activity_id       # добавляем activityId в конец
         ])
 
     print("ACTIVITIES_TO_LOG COUNT:", len(activities_to_log))
@@ -184,7 +189,7 @@ except Exception as e:
     print("Activities error:", e)
 
 
-# --- Write ONLY NEW Activities to Google Sheets ---
+# --- Write only NEW activities ---
 try:
     creds = json.loads(GOOGLE_CREDS_JSON)
     credentials = Credentials.from_service_account_info(
@@ -195,23 +200,22 @@ try:
     ss = gspread.authorize(credentials).open("Garmin_Data")
     act_sheet = ss.worksheet("Activities")
 
-    # Собираем все ключи, которые уже есть в таблице
-    existing_keys = {
-        f"{r[0]}_{r[1]}_{r[2]}"
-        for r in act_sheet.get_all_values() if len(r) > 2
+    # Собираем уже записанные activityId в листе
+    existing_ids = {
+        r[13] for r in act_sheet.get_all_values() if len(r) > 13
     }
 
-    # Сортируем по дате и времени (от более ранних к более поздним)
+    # Сортируем по дате + времени
     activities_to_log.sort(key=lambda x: (x[0], x[1]))
 
-    # Добавляем только те, которых ещё нет
+    # Добавляем только новые
     for act in activities_to_log:
-        key = f"{act[0]}_{act[1]}_{act[2]}"
-        if key not in existing_keys:
+        act_id = act[-1]  # последний элемент
+        if act_id not in existing_ids:
             act_sheet.append_row(act)
-            print("Appended activity:", key)
+            print("Appended activity:", act_id)
         else:
-            print("Already exists:", key)
+            print("Already exists activity:", act_id)
 
 except Exception as e:
     print("Sheets Activities write error:", e)
