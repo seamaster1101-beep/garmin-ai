@@ -1,9 +1,9 @@
 name: Garmin Sync
 
 on:
-  schedule:
+  #schedule:
     # Запуск в 07:30, 13:30, 16:30, 19:30 и 22:30 по Мальте (UTC+1)
-    - cron: '30 6,12,15,18,21 * * *'
+    #- cron: '30 6,12,15,18,21 * * *'
   workflow_dispatch:
 
 jobs:
