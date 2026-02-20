@@ -27,7 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4️⃣ Создаём временный JSON файл из секрета
+      # 4️⃣ Создаём временный JSON файл из секрета (исправлено!)
       - name: Create Google creds file
         run: |
           printf "%s" "${{ secrets.GOOGLE_CREDS }}" > google-creds.json
