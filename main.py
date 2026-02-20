@@ -117,7 +117,7 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES  ---
+# --- 3. ACTIVITIES (Range: yesterday_str -> yesterday_str) ---
 activities_to_log = []
 try:
     # raw list
@@ -151,13 +151,6 @@ try:
         max_hr = a.get('maxHR', "")
 
         # HR Intensity (relative to resting HR)
-        raw_load = a.get('activityTrainingLoad') or a.get('trainingLoad') or a.get('metabolicCartTrainingLoad') or 0
-        t_load = round(float(raw_load), 1)
-
-        avg_hr = a.get('averageHR') or a.get('averageHeartRate') or ""
-        max_hr = a.get('maxHR') or a.get('maxHeartRate', "")
-
-        # --- HR Intensity (Low / Moderate / High) ---
         intensity_val = ""
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
@@ -167,7 +160,7 @@ try:
         except:
             intensity_val = ""
 
-            activities_to_log.append([
+        activities_to_log.append([
             act_date,
             act_time,
             a.get('activityType', {}).get('typeKey', ''),
