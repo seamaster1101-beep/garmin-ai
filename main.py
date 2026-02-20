@@ -117,17 +117,16 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- ACTIVITIES (Range: yesterday_str → yesterday_str) ---
+# --- ACTIVITIES (Range: yesterday_str → 19/02/2026) ---
 activities_to_log = []
 try:
-    raw_acts = gar.get_activities_by_date(yesterday_str, yesterday_str)
+    raw_acts = gar.get_activities_by_date("2026-02-18", "2026-02-19")
     print("RAW_ACTIVITIES:", raw_acts)
 
     for a in raw_acts:
         act_date = a.get("startTimeLocal", "")[:10]
         act_time = a.get("startTimeLocal", "")[11:16]
 
-        # Cadence (возможные поля)
         cad = (
             a.get('averageBikingCadenceInRevPerMinute') or
             a.get('averageBikingCadence') or
@@ -137,7 +136,6 @@ try:
             ""
         )
 
-        # Training Load (разные поля)
         t_load = (
             a.get('activityTrainingLoad') or
             a.get('trainingLoad') or
@@ -167,15 +165,28 @@ try:
 
 except Exception as e:
     print("Activities error:", e)
+
+# --- Write to Google Sheets ---
 try:
+    creds = json.loads(GOOGLE_CREDS_JSON)
+    credentials = Credentials.from_service_account_info(
+        creds,
+        scopes=["https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"]
+    )
+    ss = gspread.authorize(credentials).open("Garmin_Data")
     act_sheet = ss.worksheet("Activities")
-    existing_keys = {f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2}
+
+    existing_keys = {
+        f"{r[0]}_{r[1]}_{r[2]}"
+        for r in act_sheet.get_all_values() if len(r) > 2
+    }
 
     for act in activities_to_log:
         key = f"{act[0]}_{act[1]}_{act[2]}"
         if key not in existing_keys:
             act_sheet.append_row(act)
-            print("Appended:", key)
+            print("Appended activity:", key)
         else:
             print("Already exists:", key)
 
