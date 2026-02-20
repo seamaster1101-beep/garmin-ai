@@ -151,23 +151,16 @@ try:
         max_hr = a.get('maxHR', "")
 
         # HR Intensity (relative to resting HR)
-        intensity_text = "N/A"
+        intensity_val = ""
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
-                # Считаем коэффициент по твоей формуле
-                res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
-                
-                # Классификация
-                if res < 0.5:
-                    intensity_text = "Low"
-                elif res < 0.75:
-                    intensity_text = "Moderate"
-                else:
-                    intensity_text = "High"
+                intensity_val = round(
+                    ((float(avg_hr) - float(r_hr)) / (185 - float(r_hr))) * 100, 1
+                )  # % intensity
         except:
-            intensity_text = "N/A"
+            intensity_val = ""
 
-        activities_to_log.append([
+            activities_to_log.append([
             act_date,
             act_time,
             a.get('activityType', {}).get('typeKey', ''),
