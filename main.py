@@ -120,7 +120,7 @@ except Exception as e:
 # --- 3. ACTIVITIES (Load & Cadence) ---
 activities_to_log = []
 try:
-    acts = gar.get_activities_by_date(today_str, today_str)
+    acts = gar.get_activities_by_date(yesterday_str, yesterday_str)
     for a in acts:
         # МАГИЯ КАДЕНСА: еще больше полей
         cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
