@@ -1,11 +1,20 @@
+# Garmin
 garminconnect
-gspread
-google-auth
-requests
-google-generativeai
 beautifulsoup4
 lxml
-google-api-python-client
+requests
+
+# Google Sheets / API
+gspread
 google-auth
 google-auth-oauthlib
+google-api-python-client
+
+# Telegram
 python-telegram-bot
+
+# AI (если используешь Gemini)
+google-genai
+
+# Общие утилиты (на всякий случай)
+pytz
