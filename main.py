@@ -120,30 +120,54 @@ except Exception as e:
 # --- 3. ACTIVITIES (Load & Cadence) ---
 activities_to_log = []
 try:
+    # Запрашиваем активности за сегодня
     acts = gar.get_activities_by_date(today_str, today_str)
-    for a in acts:
-        # МАГИЯ КАДЕНСА: еще больше полей
-        cad = (a.get('averageBikingCadence') or a.get('averageCadence') or 
-               a.get('averageRunCadence') or a.get('averageFractionalCadence', ""))
-        
-        # НАГРУЗКА
-        t_load = a.get('trainingLoad') or a.get('metabolicCartTrainingLoad', "")
-        
-        avg_hr = a.get('averageHR', 0)
-        intensity = "N/A"
-        if avg_hr and r_hr and r_hr > 0:
-            res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
-            intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
+    if acts:
+        for a in acts:
+            # МАГИЯ КАДЕНСА: проверяем все типы (вело, бег, плавание)
+            cad = (a.get('averageBikingCadence') or 
+                   a.get('averageCadence') or  
+                   a.get('averageRunCadence') or 
+                   a.get('averageStepCadence') or
+                   a.get('averageFractionalCadence', ""))
+            
+            # НАГРУЗКА И ТРЕНИРОВОЧНЫЙ ЭФФЕКТ
+            t_load = a.get('trainingLoad') or a.get('metabolicCartTrainingLoad', "")
+            a_effect = a.get('aerobicTrainingEffect') or a.get('trainingEffect') or 0
+            
+            # ПУЛЬС (проверяем разные ключи API)
+            avg_hr = a.get('averageHR') or a.get('averageHeartRate') or 0
+            max_hr = a.get('maxHR') or a.get('maxHeartRate') or ""
 
-        activities_to_log.append([
-            today_str, a.get('startTimeLocal', "")[11:16], a.get('activityType', {}).get('typeKey', ''),
-            round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
-            avg_hr, a.get('maxHR', ""), t_load,
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
-            a.get('avgPower', ""), cad, intensity
-        ])
-except: pass
+            # ИНТЕНСИВНОСТЬ (с защитой от пустых значений)
+            intensity = "N/A"
+            try:
+                if avg_hr and r_hr and str(r_hr).isdigit() and int(r_hr) > 0:
+                    # Используем формулу Карвонена или упрощенный % от макс (185)
+                    res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
+                    intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
+            except:
+                intensity = "Calculating..."
 
+            activities_to_log.append([
+                today_str, 
+                a.get('startTimeLocal', "T00:00:00")[11:16], # Время ЧЧ:ММ
+                a.get('activityType', {}).get('typeKey', 'unknown').replace('_', ' ').capitalize(),
+                round(float(a.get('duration', 0)) / 3600, 2), 
+                round(float(a.get('distance', 0)) / 1000, 2),
+                avg_hr, 
+                max_hr, 
+                t_load,
+                round(float(a_effect), 1), 
+                a.get('calories', ""),
+                a.get('avgPower') or a.get('averagePower', ""), 
+                cad, 
+                intensity
+            ])
+        print(f"✅ Обработано активностей: {len(activities_to_log)}")
+except Exception as e:
+    print(f"❌ Ошибка в блоке активностей: {e}")
+    
 # --- 5. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
