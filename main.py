@@ -117,9 +117,10 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- ACTIVITIES (Range: yesterday_str → 19/02/2026) ---
+# --- 3. ACTIVITIES (Range: yesterday_str -> yesterday_str) ---
 activities_to_log = []
 try:
+    # raw list
     raw_acts = gar.get_activities_by_date("2026-02-18", "2026-02-19")
     print("RAW_ACTIVITIES:", raw_acts)
 
@@ -127,6 +128,7 @@ try:
         act_date = a.get("startTimeLocal", "")[:10]
         act_time = a.get("startTimeLocal", "")[11:16]
 
+        # Cadence
         cad = (
             a.get('averageBikingCadenceInRevPerMinute') or
             a.get('averageBikingCadence') or
@@ -136,15 +138,27 @@ try:
             ""
         )
 
-        t_load = (
+        # Training Load rounded to tenths
+        raw_load = (
             a.get('activityTrainingLoad') or
             a.get('trainingLoad') or
             a.get('metabolicCartTrainingLoad') or
-            ""
+            0
         )
+        t_load = round(float(raw_load), 1)
 
         avg_hr = a.get('averageHR', "")
         max_hr = a.get('maxHR', "")
+
+        # HR Intensity (relative to resting HR)
+        intensity_val = ""
+        try:
+            if avg_hr and r_hr and float(r_hr) > 0:
+                intensity_val = round(
+                    ((float(avg_hr) - float(r_hr)) / (185 - float(r_hr))) * 100, 1
+                )  # % intensity
+        except:
+            intensity_val = ""
 
         activities_to_log.append([
             act_date,
@@ -154,7 +168,8 @@ try:
             round(a.get('distance', 0) / 1000, 2),
             avg_hr,
             max_hr,
-            t_load,
+            intensity_val,      # HR_Intensity in %
+            t_load,             # Training Load rounded
             round(float(a.get('aerobicTrainingEffect', 0)), 1),
             a.get('calories', ""),
             a.get('avgPower', ""),
@@ -177,10 +192,14 @@ try:
     ss = gspread.authorize(credentials).open("Garmin_Data")
     act_sheet = ss.worksheet("Activities")
 
+    # читает существующие строки
     existing_keys = {
         f"{r[0]}_{r[1]}_{r[2]}"
         for r in act_sheet.get_all_values() if len(r) > 2
     }
+
+    # сортировка по дате и времени
+    activities_to_log.sort(key=lambda x: (x[0], x[1]))
 
     for act in activities_to_log:
         key = f"{act[0]}_{act[1]}_{act[2]}"
@@ -193,7 +212,7 @@ try:
 except Exception as e:
     print("Sheets Activities write error:", e)
 
-    
+
 # --- 4. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
