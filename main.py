@@ -150,13 +150,16 @@ try:
         avg_hr = a.get('averageHR', "")
         max_hr = a.get('maxHR', "")
 
-        # HR Intensity (relative to resting HR)
-        avg_hr = a.get('averageHR', 0)
-        intensity = "N/A"
-        if avg_hr and r_hr and r_hr > 0:
-            res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
-            intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
-
+       # HR Intensity (relative to resting HR)
+        intensity_val = ""
+        try:
+            if avg_hr and r_hr and float(r_hr) > 0:
+                intensity_val = round(
+                    ((float(avg_hr) - float(r_hr)) / (185 - float(r_hr))) * 100, 1
+                )  # % intensity
+        except:
+            intensity_val = ""
+            
         activities_to_log.append([
             act_date,
             act_time,
