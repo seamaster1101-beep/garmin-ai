@@ -150,8 +150,8 @@ try:
         avg_hr = a.get('averageHR', "")
         max_hr = a.get('maxHR', "")
 
-       # HR Intensity (relative to resting HR)
-       intensity_val = ""
+        # HR Intensity (relative to resting HR)
+        intensity_val = ""
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
                 intensity_val = round(
@@ -159,7 +159,7 @@ try:
                 )  # % intensity
         except:
             intensity_val = ""
-              
+
         activities_to_log.append([
             act_date,
             act_time,
