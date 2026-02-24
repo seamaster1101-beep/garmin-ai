@@ -2,8 +2,8 @@ name: Garmin Sync
 
 on:
   schedule:
-    - cron: '0 6 * * *' # Запуск каждый день в 6 утра
-  workflow_dispatch: # Позволяет запускать вручную кнопкой
+    - cron: '0 6 * * *' # запуск каждый день в 6 утра
+  workflow_dispatch: # возможность запуска вручную
 
 jobs:
   build:
@@ -32,15 +32,15 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # создаём JSON, если его нет
+          # создаём JSON истории, если нет
           if [ ! -f activity_history.json ]; then
             echo "[]" > activity_history.json
           fi
 
-          # запускаем скрипт
+          # запускаем main.py
           python main.py
 
-          # если JSON обновился, коммитим обратно в репозиторий
+          # коммитим обновлённый JSON в репозиторий
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
           git add activity_history.json
