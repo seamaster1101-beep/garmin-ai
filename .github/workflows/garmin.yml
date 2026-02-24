@@ -1,13 +1,14 @@
-name: Garmin Local Test
+name: Garmin Full Local Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  run_local_main:
+  run_main:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Setup Python
@@ -28,7 +29,14 @@ jobs:
           fi
 
       - name: Run main.py
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
 
-      - name: Finish message
-        run: echo "✅ main.py executed, JSON обновлён локально. Пуш не выполняется."
+      - name: Finish
+        run: echo "✅ main.py executed, локальный JSON обновлён. Пуш не выполняется."
