@@ -119,7 +119,7 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Date+Time в первой колонке, без лишней колонки) ---
+# --- 3. ACTIVITIES (только сегодняшние, без дубликатов) ---
 import json
 import os
 
@@ -133,18 +133,27 @@ else:
     history = {"processed_activity_ids": []}
 
 processed_ids = set(history.get("processed_activity_ids", []))
+
 activities_to_log = []
 
 try:
-    latest_activities = gar.get_activities(0, 10)  # последние 10
+    latest_activities = gar.get_activities(0, 10)  # берём последние 10
+    today_str = datetime.now().strftime("%Y-%m-%d")
 
     for a in latest_activities:
+
         activity_id = str(a.get("activityId"))
+
+        # если уже обработана — пропускаем
         if activity_id in processed_ids:
             continue
 
-        start_dt_full = a.get("startTimeLocal", "").replace("T", " ")  # YYYY-MM-DD HH:MM:SS
-        act_date_for_sheet = start_dt_full[:16]  # YYYY-MM-DD HH:MM -> первая колонка таблицы
+        # фильтр только на сегодняшние активности
+        start_local = a.get("startTimeLocal", "")
+        if not start_local.startswith(today_str):
+            continue
+
+        act_date_time = start_local.replace("T", " ")[:16]  # YYYY-MM-DD HH:MM
 
         # Cadence
         cad = (
@@ -156,7 +165,7 @@ try:
             ""
         )
 
-        # Training Load rounded to tenths
+        # Training Load
         raw_load = (
             a.get('activityTrainingLoad') or
             a.get('trainingLoad') or
@@ -178,9 +187,8 @@ try:
         except:
             intensity_val = ""
 
-        # --- запись для таблицы (Date+Time в первой колонке, ID в последней)
         activities_to_log.append([
-            act_date_for_sheet,                   # первая колонка: дата + время
+            act_date_time,          # первая колонка: дата + время
             a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
@@ -192,15 +200,12 @@ try:
             a.get('calories', ""),
             a.get('avgPower', ""),
             cad,
-            activity_id                            # последняя колонка: ID
+            activity_id            # последний столбец: ID
         ])
 
         processed_ids.add(activity_id)
 
-    # сортировка по полной дате+времени
-    activities_to_log.sort(key=lambda x: x[0])  # x[0] теперь YYYY-MM-DD HH:MM
-
-    # сохраняем историю JSON локально без пуша в Git
+    # сохраняем историю
     history["processed_activity_ids"] = list(processed_ids)
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2)
