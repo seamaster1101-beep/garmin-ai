@@ -101,20 +101,25 @@ try:
     # Дистанция ТОЛЬКО от шагов (в км, 0.762м/шаг - стандарт)
     steps_distance_km = round(steps * 0.000762, 2)
 
+    # Активности за сегодня (завершённые)
+    activities = gar.get_activities_by_date(today_str, today_str) or []
+    activity_count = len(activities)
+
     daily_row = [
         today_str,
         steps,
-        steps_distance_km,
+        steps_distance_km,  # Только шаги!
         cals,
         r_hr,
         summary.get("bodyBatteryMostRecentValue", "")
+        # activity_count убран отсюда, чтобы не было лишней колонки
     ]
 
 except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (новые + история) ---
+# --- 3. ACTIVITIES (только сегодняшние, без дубликатов) ---
 HISTORY_FILE = "history.json"
 
 if os.path.exists(HISTORY_FILE):
@@ -124,18 +129,22 @@ else:
     history = {"processed_activity_ids": []}
 
 processed_ids = set(history.get("processed_activity_ids", []))
+
 activities_to_log = []
 
 try:
-    latest_activities = gar.get_activities(0, 10)  # последние 10
+    latest_activities = gar.get_activities(0, 10)  # берём последние 10
+    today_str = datetime.now().strftime("%Y-%m-%d")
 
     for a in latest_activities:
         activity_id = str(a.get("activityId"))
-
         if activity_id in processed_ids:
-            continue  # уже обработана
+            continue
 
         start_local = a.get("startTimeLocal", "")
+        if not start_local.startswith(today_str):
+            continue
+
         act_date_time = start_local.replace("T", " ")[:16]  # YYYY-MM-DD HH:MM
 
         cad = (
@@ -168,7 +177,7 @@ try:
             intensity_val = ""
 
         activities_to_log.append([
-            act_date_time,
+            act_date_time,          # дата + время
             a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
@@ -180,11 +189,11 @@ try:
             a.get('calories', ""),
             a.get('avgPower', ""),
             cad,
-            activity_id
+            activity_id            # ID
         ])
+
         processed_ids.add(activity_id)
 
-    # сохраняем историю
     history["processed_activity_ids"] = list(processed_ids)
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2)
@@ -206,11 +215,11 @@ try:
     act_sheet = ss.worksheet("Activities")
 
     existing_keys = {
-        f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2
+        f"{r[0]}_{r[1]}_{r[2]}"
+        for r in act_sheet.get_all_values() if len(r) > 2
     }
 
-    # сортировка по дате и времени
-    activities_to_log.sort(key=lambda x: x[0])
+    activities_to_log.sort(key=lambda x: x[0])  # сортировка по дате+времени
 
     for act in activities_to_log:
         key = f"{act[0]}_{act[1]}_{act[2]}"
@@ -223,37 +232,43 @@ try:
 except Exception as e:
     print("Sheets Activities write error:", e)
 
-# --- 4. SYNC, AI & TELEGRAM ---
+# --- 4. SYNC, AI & TELEGRAM (google.genai) ---
 try:
-    creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-    ss = gspread.authorize(c_obj).open("Garmin_Data")
-    
+    ss.update_cells = None  # защита от дубликатов
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
     advice = "Нет данных для анализа"
     if GEMINI_API_KEY:
-        try:
-            genai.configure(api_key=GEMINI_API_KEY.strip())
-            res = genai.text.generate(
-                model="models/text-bison-001",
-                prompt=f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день."
+        genai.configure(api_key=GEMINI_API_KEY.strip())
+        available_models = [m.name for m in genai.list_models() if 'generateText' in m.supported_generation_methods]
+        if available_models:
+            model_name = available_models[0]
+            model = genai.TextGenerationModel(model_name)
+
+            prompt = (
+                f"Биометрия пользователя:\n"
+                f"HRV: {hrv}, Пульс: {r_hr}, Батарейка: {bb_morning}, "
+                f"Сон: {slp_h}ч (Score: {slp_sc}).\n"
+                f"Напиши короткое заключение и мудрый совет на день, "
+                f"можно с лёгкой иронией."
             )
-            advice = res.output[0].content
-        except Exception as ai_e:
-            advice = f"AI Error: {str(ai_e)[:50]}"
-    
-    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
-    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
+
+            res = model.generate(prompt=prompt, max_output_tokens=150)
+            advice = res.output_text.strip()
+
+    ss.worksheet("AI_Log").append_row([
+        datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "Success",
+        advice
+    ])
+    print(f"✔ AI Advice: {advice[:40]}")
 
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        msg = f"🚀 Отчет:\nHRV: {hrv}\nСон: {slp_h}ч\nПульс: {r_hr}\n\n🤖 {advice.replace('*', '')}"
+        msg = f"🚀 Отчет:\nHRV: {hrv}\nСон: {slp_h}ч\nПульс: {r_hr}\n\n🤖 {advice}"
         tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
         resp = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID.strip(), "text": msg}, timeout=15)
         print(f"Telegram Response: {resp.status_code} {resp.text}")
-    else:
-        print("Telegram Token or ID is missing in Secrets!")
 
 except Exception as e:
-    print(f"Final Error: {e}")
+    print(f"AI/Telegram Error: {str(e)}")
