@@ -34,7 +34,8 @@ def update_or_append(sheet, date_str, row_data):
         else:
             sheet.append_row(row_data)
             return "Appended"
-    except Exception as e: return f"Err: {str(e)[:15]}"
+    except Exception as e:
+        return f"Err: {str(e)[:15]}"
 
 # --- LOGIN ---
 try:
@@ -88,18 +89,18 @@ try:
     summary = gar.get_user_summary(today_str) or {}
     stats = gar.get_stats(today_str) or {}
 
+    # Шаги
     steps_data = gar.get_daily_steps(today_str, today_str)
     steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
 
+    # Калории
     cals = (
         summary.get("activeKilocalories", 0)
         + summary.get("bmrKilocalories", 0)
     ) or stats.get("calories") or 0
 
+    # Дистанция ТОЛЬКО от шагов (в км)
     steps_distance_km = round(steps * 0.000762, 2)
-
-    activities = gar.get_activities_by_date(today_str, today_str) or []
-    activity_count = len(activities)
 
     daily_row = [
         today_str,
@@ -114,9 +115,8 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (только новые сегодняшние) ---
+# --- 3. ACTIVITIES ---
 HISTORY_FILE = "history.json"
-
 if os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, "r") as f:
         history = json.load(f)
@@ -128,18 +128,13 @@ activities_to_log = []
 
 try:
     latest_activities = gar.get_activities(0, 10)
-    today_str = datetime.now().strftime("%Y-%m-%d")
-
     for a in latest_activities:
+
         activity_id = str(a.get("activityId"))
         if activity_id in processed_ids:
             continue
 
-        start_local = a.get("startTimeLocal", "")
-        if not start_local.startswith(today_str):
-            continue
-
-        act_date_time = start_local.replace("T", " ")[:16]  # YYYY-MM-DD HH:MM
+        act_date_time = a.get("startTimeLocal", "").replace("T", " ")[:16]
 
         cad = (
             a.get('averageBikingCadenceInRevPerMinute') or
@@ -213,11 +208,11 @@ try:
         for r in act_sheet.get_all_values() if len(r) > 2
     }
 
-    # сортировка по дате+времени
+    # сортировка по дате + времени
     activities_to_log.sort(key=lambda x: x[0])
 
     for act in activities_to_log:
-        key = f"{act[0]}_{act[1]}_{act[2]}"
+        key = f"{act[0]}_{act[1]}_{act[12]}"  # дата+время + тип + id
         if key not in existing_keys:
             act_sheet.append_row(act)
             print("Appended activity:", key)
@@ -230,7 +225,11 @@ except Exception as e:
 # --- 4. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    c_obj = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=["https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"]
+    )
     ss = gspread.authorize(c_obj).open("Garmin_Data")
     
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
@@ -239,20 +238,12 @@ try:
     advice = "Нет данных для анализа"
     if GEMINI_API_KEY:
         try:
-            genai.configure(api_key=GEMINI_API_KEY.strip())
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            if available_models:
-                model_name = available_models[0]
-                model = genai.GenerativeModel(model_name)
-                prompt = (
-                    f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                    f"Сон {slp_h}ч (Score: {slp_sc}). "
-                    f"Напиши краткий аналитический вывод и наставления на день, добавь немного иронии."
-                )
-                res = model.generate_content(prompt)
-                advice = res.text.strip()
-            else:
-                advice = "API Key жив, но доступных моделей нет."
+            client = genai.Client(api_key=GEMINI_API_KEY.strip())
+            prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
+                      f"Сон {slp_h}ч (Score: {slp_sc}). "
+                      f"Напиши один ироничный и мудрый совет на день.")
+            res = client.generate_text(model="models/text-bison-001", prompt=prompt)
+            advice = res.text.strip()
         except Exception as ai_e:
             advice = f"AI Error: {str(ai_e)[:50]}"
     
