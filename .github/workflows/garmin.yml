@@ -23,7 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install garminconnect gspread google-auth google-generativeai requests
 
-      - name: Run script
+      - name: Run script and update history
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
@@ -32,8 +32,17 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # Создаём JSON-файл истории, если его нет
+          # создаём JSON, если его нет
           if [ ! -f activity_history.json ]; then
             echo "[]" > activity_history.json
           fi
+
+          # запускаем скрипт
           python main.py
+
+          # если JSON обновился, коммитим обратно в репозиторий
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add activity_history.json
+          git commit -m "Update activity history" || echo "No changes to commit"
+          git push
