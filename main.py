@@ -28,7 +28,7 @@ def update_or_append(sheet, date_str, row_data):
                 break
         if found_idx != -1:
             for i, val in enumerate(row_data[1:], start=2):
-                if val not in (None, "", 0, "0", 0.0, "N/A"): 
+                if val not in (None, "", 0, "0", 0.0, "N/A"):
                     sheet.update_cell(found_idx, i, val)
             return "Updated"
         else:
@@ -42,7 +42,8 @@ try:
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
 except Exception as e:
-    print(f"Login Fail: {e}"); exit(1)
+    print(f"Login Fail: {e}")
+    exit(1)
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
@@ -54,7 +55,7 @@ morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00",
 try:
     stats = gar.get_stats(today_str) or {}
     hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv")
-    
+
     for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
@@ -64,7 +65,8 @@ try:
                 slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
                 morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
                 break
-        except: continue
+        except:
+            continue
 
     for i in range(3):
         d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
@@ -73,7 +75,8 @@ try:
             if w_data and w_data.get('uploads'):
                 weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
                 break
-        except: continue
+        except:
+            continue
 
     summary = gar.get_user_summary(today_str) or {}
     r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
@@ -89,17 +92,14 @@ try:
     summary = gar.get_user_summary(today_str) or {}
     stats = gar.get_stats(today_str) or {}
 
-    # Шаги
     steps_data = gar.get_daily_steps(today_str, today_str)
     steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
 
-    # Калории
     cals = (
         summary.get("activeKilocalories", 0)
         + summary.get("bmrKilocalories", 0)
     ) or stats.get("calories") or 0
 
-    # Дистанция ТОЛЬКО от шагов (в км)
     steps_distance_km = round(steps * 0.000762, 2)
 
     daily_row = [
@@ -115,8 +115,9 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES ---
+# --- 3. ACTIVITIES (только новые, дата+время в первой колонке) ---
 HISTORY_FILE = "history.json"
+
 if os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, "r") as f:
         history = json.load(f)
@@ -127,14 +128,19 @@ processed_ids = set(history.get("processed_activity_ids", []))
 activities_to_log = []
 
 try:
-    latest_activities = gar.get_activities(0, 10)
-    for a in latest_activities:
+    latest_activities = gar.get_activities(0, 10)  # последние 10
 
+    for a in latest_activities:
         activity_id = str(a.get("activityId"))
+
         if activity_id in processed_ids:
             continue
 
-        act_date_time = a.get("startTimeLocal", "").replace("T", " ")[:16]
+        start_local = a.get("startTimeLocal", "")
+        if not start_local.startswith(today_str):
+            continue
+
+        act_date_time = start_local.replace("T", " ")[:16]  # YYYY-MM-DD HH:MM
 
         cad = (
             a.get('averageBikingCadenceInRevPerMinute') or
@@ -166,7 +172,7 @@ try:
             intensity_val = ""
 
         activities_to_log.append([
-            act_date_time,
+            act_date_time,          # первая колонка: дата + время
             a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
@@ -178,7 +184,7 @@ try:
             a.get('calories', ""),
             a.get('avgPower', ""),
             cad,
-            activity_id
+            activity_id            # последний столбец: ID
         ])
 
         processed_ids.add(activity_id)
@@ -200,24 +206,20 @@ try:
         scopes=["https://www.googleapis.com/auth/spreadsheets",
                 "https://www.googleapis.com/auth/drive"]
     )
-    ss = gspread.authorize(credentials).open("Garmin_Data")
-    act_sheet = ss.worksheet("Activities")
+    ss = gspread.authorize(credentials)
+    act_sheet = ss.open("Garmin_Data").worksheet("Activities")
 
-    existing_keys = {
-        f"{r[0]}_{r[1]}_{r[2]}"
-        for r in act_sheet.get_all_values() if len(r) > 2
-    }
+    existing_ids = {r[-1] for r in act_sheet.get_all_values() if r}
 
-    # сортировка по дате + времени
     activities_to_log.sort(key=lambda x: x[0])
 
     for act in activities_to_log:
-        key = f"{act[0]}_{act[1]}_{act[12]}"  # дата+время + тип + id
-        if key not in existing_keys:
+        activity_id = act[-1]
+        if activity_id not in existing_ids:
             act_sheet.append_row(act)
-            print("Appended activity:", key)
+            print("Appended activity:", activity_id)
         else:
-            print("Already exists:", key)
+            print("Already exists:", activity_id)
 
 except Exception as e:
     print("Sheets Activities write error:", e)
@@ -225,13 +227,9 @@ except Exception as e:
 # --- 4. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(
-        creds_dict,
-        scopes=["https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive"]
-    )
+    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(c_obj).open("Garmin_Data")
-    
+
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
@@ -240,13 +238,12 @@ try:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
             prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                      f"Сон {slp_h}ч (Score: {slp_sc}). "
-                      f"Напиши один ироничный и мудрый совет на день.")
-            res = client.generate_text(model="models/text-bison-001", prompt=prompt)
-            advice = res.text.strip()
+                      f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
+            res = client.generate_text(prompt)
+            advice = res.result[0].content[0].text.strip() if res and res.result else "Нет ответа AI"
         except Exception as ai_e:
             advice = f"AI Error: {str(ai_e)[:50]}"
-    
+
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
     print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
 
