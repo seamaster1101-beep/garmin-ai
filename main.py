@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
+import google.genai as genai
 import requests
 
 # --- CONFIG ---
