@@ -22,20 +22,28 @@ try:
     if not GOOGLE_CREDS_JSON:
         raise ValueError("Секрет GOOGLE_CREDS пуст!")
     
-    # Пытаемся распарсить JSON. Если тут ошибка - значит в секретах мусор.
+    creds_dict = json.loads(GOOGLE_CREDS_JSON.strip())
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    
+    # Используем более современный способ создания creds
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    
+    gc = gspread.authorize(creds)
+    
+    # Попытка открыть таблицу с детальным выводом ошибки
     try:
-        creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    except json.JSONDecodeError as e:
-        print(f"❌ Ошибка: В секрете GOOGLE_CREDS невалидный JSON! Проверь копирование. Детали: {e}")
+        ss = gc.open("Garmin_Data")
+        print("✅ Успех: Таблица найдена и открыта")
+    except gspread.exceptions.SpreadsheetNotFound:
+        print("❌ ОШИБКА: Таблица 'Garmin_Data' не найдена!")
+        print(f"Проверь, что ты добавил доступ (Share) для: {creds_dict.get('client_email')}")
         exit(1)
 
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-    gc = gspread.authorize(creds)
-    ss = gc.open("Garmin_Data") 
-    print("✅ Успех: Google Sheets подключен")
 except Exception as e:
-    print(f"❌ Критическая ошибка Google Auth: {str(e)}")
+    # Если это Response [200], мы попробуем вытянуть из него текст
+    print(f"❌ Критическая ошибка Google Auth: {e}")
+    if hasattr(e, 'response') and hasattr(e.response, 'text'):
+        print(f"Детали ответа от Google: {e.response.text[:200]}") # Покажет первые 200 символов ошибки
     exit(1)
 
 # --- 3. GARMIN LOGIN ---
