@@ -4,7 +4,6 @@ from datetime import datetime
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
 import requests
 
 # --- 1. CONFIG (Берем данные из секретов GitHub) ---
@@ -20,111 +19,88 @@ def clean(val):
     if val is None or val == "" or val == 0: return ""
     return str(val).replace('.', ',')
 
-# --- 2. GOOGLE SHEETS AUTH (БЕЗ ФАЙЛОВ!) ---
+# --- 2. GOOGLE SHEETS AUTH ---
 try:
     if not GOOGLE_CREDS_JSON:
-        raise ValueError("Секрет GOOGLE_CREDS пуст!")
+        raise ValueError("Секрет GOOGLE_CREDS пуст или не найден!")
     
-    # Читаем JSON прямо из строки
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     
-    # Подключаемся
     gc = gspread.authorize(creds)
-    ss = gc.open("Garmin_Data") # Убедись, что таблица называется именно так
-    print("✅ Успех: Google Sheets подключен")
+    # Открываем таблицу по имени. Убедись, что имя в кавычках совпадает с реальностью!
+    ss = gc.open("Garmin_Data") 
+    print("✅ Успех: Подключено к Google Sheets")
 except Exception as e:
-    print(f"❌ Ошибка Google: {e}")
+    print(f"❌ Ошибка Google Auth: {e}")
     exit(1)
 
 # --- 3. GARMIN LOGIN ---
 try:
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
-    print("✅ Успех: Garmin подключен")
+    print("✅ Успех: Авторизация в Garmin прошла")
 except Exception as e:
-    print(f"❌ Ошибка Garmin: {e}")
+    print(f"❌ Ошибка Garmin: Проверь логин/пароль! Детали: {e}")
     exit(1)
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 
-# --- 4. DATA COLLECTION ---
+# --- 4. DATA COLLECTION (Биометрия) ---
 r_hr, hrv, bb_m, slp_h, steps, weight = "", "", "", "", "", ""
 try:
     summary = gar.get_user_summary(today_str) or {}
     stats = gar.get_stats(today_str) or {}
+    
     r_hr = summary.get("restingHeartRate") or stats.get("restingHeartRate") or ""
     hrv = stats.get("lastNightAvgHrv") or stats.get("allDayAvgHrv") or ""
     bb_m = summary.get("bodyBatteryHighestValue") or ""
     steps = stats.get("totalSteps") or ""
     
+    # Сон
     s_data = gar.get_sleep_data(today_str) or {}
     dto = s_data.get("dailySleepDTO") or {}
     slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1) if dto.get("sleepTimeSeconds") else ""
 
+    # Вес
     w_data = gar.get_body_composition(today_str)
     if w_data and w_data.get('uploads'):
         weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
+    
+    print(f"✅ Биометрия собрана: HR={r_hr}, Steps={steps}")
 except Exception as e:
     print(f"⚠️ Ошибка сбора биометрии: {e}")
 
-# --- 5. ACTIVITIES (С проверкой на дубликаты) ---
+# --- 5. ACTIVITIES (Тренировки) ---
 try:
     acts = gar.get_activities_by_date(today_str, today_str)
     act_sheet = ss.worksheet("Activities")
     existing_rows = act_sheet.get_all_values()
 
+    activities_to_log = []
     for a in acts:
         act_date = a.get("startTimeLocal", "")[:10]
         act_time = a.get("startTimeLocal", "")[11:16]
         sport = a.get('activityType', {}).get('typeKey', '').capitalize()
 
+        # Проверка на дубликаты
         if any(r[0] == act_date and r[1] == act_time and r[2] == sport for r in existing_rows):
             continue
 
         avg_hr = a.get('averageHR') or a.get('averageHeartRate') or 0
         
-        # Интенсивность
+        # Интенсивность (Low / Moderate / High)
         intensity = "N/A"
-        if avg_hr and r_hr and str(r_hr).isdigit():
-            res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
-            intensity = "Low" if res < 0.5 else ("Moderate" if res < 0.75 else "High")
+        try:
+            if avg_hr and r_hr and float(r_hr) > 0:
+                res = (float(avg_hr) - float(r_hr)) / (185 - float(r_hr))
+                if res < 0.5: intensity = "Low"
+                elif res < 0.75: intensity = "Moderate"
+                else: intensity = "High"
+        except: pass
 
-        row = [
-            act_date, act_time, sport, 
-            clean(round(a.get('duration', 0) / 3600, 2)), 
-            clean(round(a.get('distance', 0) / 1000, 2)),
-            avg_hr, a.get('maxHR') or "", intensity,
-            a.get('trainingLoad') or "", 
-            clean(round(float(a.get('aerobicTrainingEffect', 0)), 1)),
-            a.get('calories', ""), a.get('averagePower', ""), 
-            a.get('averageCadence', "")
-        ]
-        act_sheet.append_row(row)
-    print("✅ Активности проверены и обновлены")
-except Exception as e:
-    print(f"⚠️ Ошибка в Activities: {e}")
+        cad = (a.get('averageBikingCadence') or a.get('averageRunCadence') or a.get('averageCadence') or "")
 
-# --- 6. MORNING & DAILY SYNC ---
-try:
-    ss.worksheet("Daily").append_row([today_str, steps, "", "", r_hr, ""])
-    ss.worksheet("Morning").append_row([today_str, clean(weight), r_hr, hrv, bb_m, "", clean(slp_h)])
-    print("✅ Листы Daily/Morning обновлены")
-except Exception as e:
-    print(f"⚠️ Ошибка записи биометрии: {e}")
-
-# --- 7. AI & TELEGRAM ---
-advice = "AI Limit"
-if GEMINI_API_KEY:
-    try:
-        genai.configure(api_key=GEMINI_API_KEY.strip())
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        res = model.generate_content(f"HRV: {hrv}, HR: {r_hr}, Sleep: {slp_h}. Give 1 short advice.")
-        advice = res.text.strip()
-    except: pass
-
-if TELEGRAM_BOT_TOKEN:
-    msg = f"📊 {today_str}\n👣 Шаги: {steps}\n💓 HRV: {hrv}\n🤖 {advice}"
-    requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+        row
