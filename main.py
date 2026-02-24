@@ -21,14 +21,21 @@ def clean(val):
 try:
     if not GOOGLE_CREDS_JSON:
         raise ValueError("Секрет GOOGLE_CREDS пуст!")
-    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    
+    # Пытаемся распарсить JSON. Если тут ошибка - значит в секретах мусор.
+    try:
+        creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    except json.JSONDecodeError as e:
+        print(f"❌ Ошибка: В секрете GOOGLE_CREDS невалидный JSON! Проверь копирование. Детали: {e}")
+        exit(1)
+
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     gc = gspread.authorize(creds)
     ss = gc.open("Garmin_Data") 
     print("✅ Успех: Google Sheets подключен")
 except Exception as e:
-    print(f"❌ Ошибка Google Auth: {e}")
+    print(f"❌ Критическая ошибка Google Auth: {str(e)}")
     exit(1)
 
 # --- 3. GARMIN LOGIN ---
