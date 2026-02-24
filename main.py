@@ -156,6 +156,7 @@ try:
             ""
         )
 
+        # Training Load rounded to tenths
         raw_load = (
             a.get('activityTrainingLoad') or
             a.get('trainingLoad') or
@@ -167,6 +168,7 @@ try:
         avg_hr = a.get('averageHR', "")
         max_hr = a.get('maxHR', "")
 
+        # HR Intensity
         intensity_val = ""
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
@@ -184,13 +186,13 @@ try:
             round(a.get('distance', 0) / 1000, 2),
             avg_hr,
             max_hr,
-            intensity_val,https://github.com/seamaster1101-beep/garmin-ai/blob/main/main.py
+            intensity_val,
             t_load,
             round(float(a.get('aerobicTrainingEffect', 0)), 1),
             a.get('calories', ""),
             a.get('avgPower', ""),
             cad,
-            activity_id                             # последняя колонка: ID
+            activity_id                            # последняя колонка: ID
         ])
 
         processed_ids.add(activity_id)
