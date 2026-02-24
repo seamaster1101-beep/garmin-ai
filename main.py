@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
-import google.genai as genai
+from google.genai import Client
 import requests
 
 # --- CONFIG ---
@@ -90,11 +90,16 @@ try:
 
     steps_data = gar.get_daily_steps(today_str, today_str)
     steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
+
     cals = (
         summary.get("activeKilocalories", 0)
         + summary.get("bmrKilocalories", 0)
     ) or stats.get("calories") or 0
+
     steps_distance_km = round(steps * 0.000762, 2)
+
+    activities = gar.get_activities_by_date(today_str, today_str) or []
+    activity_count = len(activities)
 
     daily_row = [
         today_str,
@@ -122,8 +127,6 @@ activities_to_log = []
 
 try:
     latest_activities = gar.get_activities(0, 10)
-    today_str = datetime.now().strftime("%Y-%m-%d")
-
     for a in latest_activities:
         activity_id = str(a.get("activityId"))
         if activity_id in processed_ids:
@@ -143,6 +146,7 @@ try:
             a.get('averageFractionalCadence') or
             ""
         )
+
         raw_load = (
             a.get('activityTrainingLoad') or
             a.get('trainingLoad') or
@@ -150,6 +154,7 @@ try:
             0
         )
         t_load = round(float(raw_load), 1)
+
         avg_hr = a.get('averageHR', "")
         max_hr = a.get('maxHR', "")
 
@@ -177,7 +182,6 @@ try:
             cad,
             activity_id
         ])
-
         processed_ids.add(activity_id)
 
     history["processed_activity_ids"] = list(processed_ids)
@@ -200,15 +204,11 @@ try:
     ss = gspread.authorize(credentials).open("Garmin_Data")
     act_sheet = ss.worksheet("Activities")
 
-    existing_keys = {
-        f"{r[0]}_{r[1]}_{r[2]}"
-        for r in act_sheet.get_all_values() if len(r) > 2
-    }
-
+    existing_keys = {f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2}
     activities_to_log.sort(key=lambda x: x[0])  # сортировка по дате+времени
 
     for act in activities_to_log:
-        key = f"{act[0]}_{act[1]}_{act[2]}"
+        key = f"{act[0]}_{act[1]}_{act[12]}"
         if key not in existing_keys:
             act_sheet.append_row(act)
             print("Appended activity:", key)
@@ -221,7 +221,10 @@ except Exception as e:
 # --- 4. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    c_obj = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    )
     ss = gspread.authorize(c_obj).open("Garmin_Data")
     
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
@@ -230,17 +233,13 @@ try:
     advice = "Нет данных для анализа"
     if GEMINI_API_KEY:
         try:
-            client = genai.Client(api_key=GEMINI_API_KEY.strip())
-            prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                      f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
-
-            response = client.texts.generate(
+            client = Client(api_key=GEMINI_API_KEY.strip())
+            res = client.texts.generate(
                 model="models/text-bison-001",
-                temperature=0.7,
-                max_output_tokens=250,
-                prompt=prompt
+                prompt=f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
+                       f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день."
             )
-            advice = response.output[0].content[0].text.strip() if response and response.output else "Нет ответа AI"
+            advice = res.result[0].content.strip()
         except Exception as ai_e:
             advice = f"AI Error: {str(ai_e)[:50]}"
     
