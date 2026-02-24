@@ -119,7 +119,7 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Stable version: no duplicates, no Time column) ---
+# --- 3. ACTIVITIES (Date+Time в первой колонке, без лишней колонки) ---
 import json
 import os
 
@@ -133,23 +133,18 @@ else:
     history = {"processed_activity_ids": []}
 
 processed_ids = set(history.get("processed_activity_ids", []))
-
 activities_to_log = []
 
 try:
-    latest_activities = gar.get_activities(0, 5)  # берём последние 5
+    latest_activities = gar.get_activities(0, 10)  # последние 10
 
     for a in latest_activities:
-
         activity_id = str(a.get("activityId"))
-
-        # если уже обработана — пропускаем
         if activity_id in processed_ids:
             continue
 
-        # --- объединяем дату и время с пробелом, JSON хранит полное значение ---
-        start_dt_full = a.get("startTimeLocal", "").replace("T", " ")  # "YYYY-MM-DD HH:MM:SS"
-        act_date = start_dt_full[:10]  # для таблицы идёт только дата
+        start_dt_full = a.get("startTimeLocal", "").replace("T", " ")  # YYYY-MM-DD HH:MM:SS
+        act_date_for_sheet = start_dt_full[:16]  # YYYY-MM-DD HH:MM -> первая колонка таблицы
 
         # Cadence
         cad = (
@@ -161,7 +156,6 @@ try:
             ""
         )
 
-        # Training Load rounded to tenths
         raw_load = (
             a.get('activityTrainingLoad') or
             a.get('trainingLoad') or
@@ -173,40 +167,39 @@ try:
         avg_hr = a.get('averageHR', "")
         max_hr = a.get('maxHR', "")
 
-        # HR Intensity (relative to resting HR)
         intensity_val = ""
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
                 intensity_val = round(
                     ((float(avg_hr) - float(r_hr)) / (185 - float(r_hr))) * 100, 1
-                )  # % intensity
+                )
         except:
             intensity_val = ""
 
-        # --- запись для таблицы + JSON (Start_Time и act_time больше не нужны) ---
+        # --- запись для таблицы (Date+Time в первой колонке, ID в последней)
         activities_to_log.append([
-            act_date,  # таблица: только дата
+            act_date_for_sheet,                   # первая колонка: дата + время
             a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
             avg_hr,
             max_hr,
-            intensity_val,      # HR_Intensity in %
-            t_load,             # Training Load rounded
+            intensity_val,https://github.com/seamaster1101-beep/garmin-ai/blob/main/main.py
+            t_load,
             round(float(a.get('aerobicTrainingEffect', 0)), 1),
             a.get('calories', ""),
             a.get('avgPower', ""),
             cad,
-            activity_id,
-            start_dt_full       # JSON: полная дата + время
+            activity_id                             # последняя колонка: ID
         ])
 
-        # добавляем в список обработанных
         processed_ids.add(activity_id)
 
-    # сохраняем обновлённую историю
-    history["processed_activity_ids"] = list(processed_ids)
+    # сортировка по полной дате+времени
+    activities_to_log.sort(key=lambda x: x[0])  # x[0] теперь YYYY-MM-DD HH:MM
 
+    # сохраняем историю JSON локально без пуша в Git
+    history["processed_activity_ids"] = list(processed_ids)
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2)
 
