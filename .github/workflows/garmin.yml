@@ -1,29 +1,29 @@
-name: Garmin Sync
+name: Garmin Daily Sync
 
 on:
   schedule:
-    - cron: '0 6 * * *' # Запуск каждый день в 6 утра
-  workflow_dispatch: # Позволяет запускать вручную
+    - cron: '0 6 * * *' # каждый день в 06:00 UTC
+  workflow_dispatch:   # возможность запускать вручную
 
 jobs:
-  build:
+  sync:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: 3.11
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install garminconnect gspread google-auth requests google-genai
 
-      - name: Run script
+      - name: Run Garmin Sync (local JSON only)
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
@@ -40,5 +40,4 @@ jobs:
           # запускаем main.py
           python main.py
 
-          # убираем пуш в репозиторий, JSON остаётся только локально
-          echo "JSON обновлён локально, пуш не выполняется"
+          echo "✅ JSON обновлён локально, пуш в репозиторий не выполняется"
