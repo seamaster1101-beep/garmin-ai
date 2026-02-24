@@ -1,4 +1,4 @@
-#--- Активность 20.02-24.02
+#--- Активность only new
 
 import os
 import json
@@ -119,14 +119,34 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Range: yesterday_str -> yesterday_str) ---
-activities_to_log = []
-try:
-    # raw list
-    raw_acts = gar.get_activities_by_date("2026-02-20", "2026-02-24")
-    print("RAW_ACTIVITIES:", raw_acts)
+# --- 3. ACTIVITIES (Stable version: no duplicates) ---
+import json
+import os
 
-    for a in raw_acts:
+HISTORY_FILE = "history.json"
+
+# загрузка истории
+if os.path.exists(HISTORY_FILE):
+    with open(HISTORY_FILE, "r") as f:
+        history = json.load(f)
+else:
+    history = {"processed_activity_ids": []}
+
+processed_ids = set(history.get("processed_activity_ids", []))
+
+activities_to_log = []
+
+try:
+    latest_activities = gar.get_activities(0, 5)  # берём последние 5
+
+    for a in latest_activities:
+
+        activity_id = str(a.get("activityId"))
+
+        # если уже обработана — пропускаем
+        if activity_id in processed_ids:
+            continue
+
         act_date = a.get("startTimeLocal", "")[:10]
         act_time = a.get("startTimeLocal", "")[11:16]
 
@@ -175,10 +195,20 @@ try:
             round(float(a.get('aerobicTrainingEffect', 0)), 1),
             a.get('calories', ""),
             a.get('avgPower', ""),
-            cad
+            cad,
+            activity_id
         ])
 
-    print("ACTIVITIES_TO_LOG COUNT:", len(activities_to_log))
+    # добавляем в список обработанных
+        processed_ids.add(activity_id)
+
+    # сохраняем обновлённую историю
+    history["processed_activity_ids"] = list(processed_ids)
+
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
+    print("NEW ACTIVITIES ADDED:", len(activities_to_log))
 
 except Exception as e:
     print("Activities error:", e)
