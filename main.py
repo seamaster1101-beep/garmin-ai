@@ -119,7 +119,7 @@ except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Stable version: no duplicates) ---
+# --- 3. ACTIVITIES (Stable version: no duplicates, no Time column) ---
 import json
 import os
 
@@ -147,8 +147,9 @@ try:
         if activity_id in processed_ids:
             continue
 
-        act_date = a.get("startTimeLocal", "")[:10]
-        act_time = a.get("startTimeLocal", "")[11:16]
+        # --- объединяем дату и время с пробелом, JSON хранит полное значение ---
+        start_dt_full = a.get("startTimeLocal", "").replace("T", " ")  # "YYYY-MM-DD HH:MM:SS"
+        act_date = start_dt_full[:10]  # для таблицы идёт только дата
 
         # Cadence
         cad = (
@@ -182,9 +183,9 @@ try:
         except:
             intensity_val = ""
 
+        # --- запись для таблицы + JSON (Start_Time и act_time больше не нужны) ---
         activities_to_log.append([
-            act_date,
-            act_time,
+            act_date,  # таблица: только дата
             a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
@@ -196,10 +197,11 @@ try:
             a.get('calories', ""),
             a.get('avgPower', ""),
             cad,
-            activity_id
+            activity_id,
+            start_dt_full       # JSON: полная дата + время
         ])
 
-    # добавляем в список обработанных
+        # добавляем в список обработанных
         processed_ids.add(activity_id)
 
     # сохраняем обновлённую историю
