@@ -2,12 +2,32 @@
 
 import os
 import json
-from datetime import datetime, timedelta
-from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
-import requests
+
+# 1. Читаем секрет из переменной окружения
+google_creds_raw = os.environ.get("GOOGLE_CREDS")
+
+try:
+    if not google_creds_raw:
+        raise ValueError("Секрет GOOGLE_CREDS не найден в настройках GitHub!")
+
+    # 2. Превращаем текст секрета в словарь
+    creds_dict = json.loads(google_creds_raw)
+    
+    # 3. Настраиваем доступы
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    
+    # 4. Авторизуемся
+    gc = gspread.authorize(creds)
+    ss = gc.open("Garmin_Data")
+    print("✅ Успех! Подключились к таблице без всяких файлов.")
+
+except Exception as e:
+    print(f"❌ Ошибка авторизации: {e}")
+    # Останавливаем скрипт, если не удалось подключиться
+    exit(1)
 
 # --- CONFIG ---
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
@@ -36,16 +56,26 @@ def update_or_append(sheet, date_str, row_data):
             return "Appended"
     except Exception as e: return f"Err: {str(e)[:15]}"
 
-# --- LOGIN ---
+# --- GOOGLE SHEETS AUTH ---
 try:
-    gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-    gar.login()
-except Exception as e:
-    print(f"Login Fail: {e}"); exit(1)
+    if not GOOGLE_CREDS_JSON:
+        raise ValueError("Секрет GOOGLE_CREDS пуст или не найден!")
 
-now = datetime.now()
-today_str = now.strftime("%Y-%m-%d")
-yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Превращаем текст секрета в словарь
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    
+    # Настраиваем права доступа
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    
+    # Авторизуемся в Google Sheets
+    client = gspread.authorize(creds)
+    ss = client.open("Garmin_Data")
+    
+    print("✅ Успешное подключение к Google Sheets!")
+except Exception as e:
+    print(f"❌ Ошибка авторизации Google: {e}")
+    exit(1) # Останавливаем, если нет доступа к таблице
 
 # --- 1. MORNING BLOCK ---
 morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
