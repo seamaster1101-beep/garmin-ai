@@ -1,29 +1,36 @@
-name: Garmin Daily Sync
+name: Garmin Sync
 
 on:
   schedule:
-    - cron: '0 6 * * *' # каждый день в 06:00 UTC
-  workflow_dispatch:   # возможность запускать вручную
+    - cron: '0 6 * * *'   # запуск каждый день в 06:00 UTC
+  workflow_dispatch:      # возможность ручного запуска
 
 jobs:
-  sync:
+  garmin_sync:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.11
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install garminconnect gspread google-auth requests google-genai
+          pip install garminconnect gspread google-auth google-genai requests
 
-      - name: Run Garmin Sync (local JSON only)
+      - name: Create local history.json if missing
+        run: |
+          if [ ! -f history.json ]; then
+            echo '{"processed_activity_ids": []}' > history.json
+          fi
+
+      - name: Run main.py
+        run: python main.py
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
@@ -31,13 +38,6 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          # создаём локальный JSON истории, если нет
-          if [ ! -f history.json ]; then
-            echo '{"processed_activity_ids": []}' > history.json
-          fi
 
-          # запускаем main.py
-          python main.py
-
-          echo "✅ JSON обновлён локально, пуш в репозиторий не выполняется"
+      - name: Finish
+        run: echo "JSON обновлён локально, пуш не выполняется"
