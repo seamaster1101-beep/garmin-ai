@@ -1,28 +1,29 @@
-name: Garmin Full Local Test
+name: Garmin Daily Sync
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'  # каждый день в 6:00 утра
+  workflow_dispatch:     # ручной запуск
 
 jobs:
-  run_main:
+  garmin_sync:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install --upgrade google-genai gspread oauth2client garminconnect requests
+          pip install garminconnect gspread google-auth requests google-genai
 
-      - name: Create local JSON history if missing
+      - name: Create local history.json if missing
         run: |
           if [ ! -f history.json ]; then
             echo '{"processed_activity_ids": []}' > history.json
@@ -38,5 +39,5 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
 
-      - name: Finish
-        run: echo "✅ main.py executed, локальный JSON обновлён. Пуш не выполняется."
+      - name: Confirm completion
+        run: echo "Workflow finished, JSON updated locally, no push performed."
