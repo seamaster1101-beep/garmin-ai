@@ -123,7 +123,7 @@ except Exception as e:
 activities_to_log = []
 try:
     # raw list
-    raw_acts = gar.get_activities_by_date("2026-02-20", "2026-02-21", "2026-02-22", "2026-02-23")
+    raw_acts = gar.get_activities_by_date("2026-02-20", "2026-02-24")
     print("RAW_ACTIVITIES:", raw_acts)
 
     for a in raw_acts:
