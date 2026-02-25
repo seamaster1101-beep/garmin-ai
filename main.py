@@ -233,6 +233,10 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
+# ВОТ ЭТОГО КУСКА НЕ ХВАТАЛО:
+except Exception as e:
+    print(f"Error in Sync block: {e}")
+
 # ---------- AI BLOCK (REST API - максимально стабильный) ----------
 try: # Открываем блок для безопасности финальной стадии
     advice = "Нет данных для анализа"
