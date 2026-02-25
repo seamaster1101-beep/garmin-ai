@@ -239,34 +239,35 @@ except Exception as e:
 # ---------- AI BLOCK (Максимально живучий) ----------
 advice = "Нет данных для анализа"
 if GEMINI_API_KEY:
-    urls = [
-        f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}",
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
-    ]
+    # 1. Задаем адрес (используем v1beta, как самую надежную)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
     
-    for url in urls:
-        try:
-            headers = {'Content-Type': 'application/json'}
-            payload = {
-                "contents": [{
-                    "parts": [{
-                        "text": f"Биометрия: HRV {hrv}, Сон {slp_h}ч. Дай короткий ироничный совет на русском."
-                    }]
+    try:
+        headers = {'Content-Type': 'application/json'}
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": f"Биометрия: HRV {hrv}, Сон {slp_h}ч. Дай короткий ироничный совет на русском."
                 }]
-            }
-            res = requests.post(url, headers=headers, json=payload, timeout=20)
-            
-            if res.status_code == 200:
-                data = res.json()
-                advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print(f"✅ Успех AI через: {url.split('/')[3]}")
-                break 
-            else:
-                print(f"⚠️ Попытка {url.split('/')[3]} не удалась ({res.status_code})")
-                advice = f"AI Error {res.status_code}"
-        except Exception as e:
-            print(f"❌ Ошибка запроса AI: {e}")
-            continue
+            }]
+        }
+        
+        # 2. Делаем запрос (без цикла, просто один раз)
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
+        
+        if res.status_code == 200:
+            data = res.json()
+            advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            print("✅ AI совет успешно получен!")
+        else:
+            advice = f"AI Error {res.status_code}: {res.text[:50]}"
+            print(f"❌ Ошибка AI: {res.text}")
+
+    except Exception as e:
+        advice = f"AI Error: {str(e)[:50]}"
+        print(f"❌ Ошибка запроса: {e}")
+
+# ---------- ДАЛЬШЕ ИДЕТ БЛОК TELEGRAM ----------
 
 # ---------- TELEGRAM (Вынесен из цикла AI) ----------
 try:
