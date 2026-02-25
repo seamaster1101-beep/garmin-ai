@@ -233,45 +233,56 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
-    # ---------- AI BLOCK (через REST, максимально стабильный) ----------
-    advice = "Нет данных для анализа"
+   # ---------- AI BLOCK (REST API - максимально стабильный) ----------
+advice = "Нет данных для анализа"
 
-    if GEMINI_API_KEY:
-        try:
-            url = (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                "gemini-1.5-flash:generateContent"
-                f"?key={GEMINI_API_KEY.strip()}"
-            )
+if GEMINI_API_KEY:
+    try:
+        # Используем стабильную версию v1
+        url = (
+            "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
+            f"?key={GEMINI_API_KEY.strip()}"
+        )
 
-            payload = {
-                "contents": [{
-                    "parts": [{
-                        "text": (
-                            f"Биометрия: HRV {hrv}, Пульс {r_hr}, "
-                            f"Батарейка {bb_morning}, Сон {slp_h}ч "
-                            f"(Score: {slp_sc}). "
-                            f"Напиши один ироничный и мудрый совет на день."
-                        )
-                    }]
+        headers = {'Content-Type': 'application/json'}
+        
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": (
+                        f"Биометрия: HRV {hrv or 'N/A'}, Пульс {r_hr or 'N/A'}, "
+                        f"Body Battery {bb_morning or 'N/A'}, Сон {slp_h or 'N/A'}ч "
+                        f"(Score: {slp_sc or 'N/A'}). "
+                        f"Напиши один ироничный, короткий и мудрый совет на день на русском языке."
+                    )
                 }]
+            }],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 200
             }
+        }
 
-            response = requests.post(url, json=payload, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
 
-            if response.status_code == 200:
-                data = response.json()
+        if response.status_code == 200:
+            data = response.json()
+            # Добавлена проверка наличия кандидатов, чтобы скрипт не падал
+            if "candidates" in data and data["candidates"]:
                 advice = (
                     data["candidates"][0]
                     ["content"]["parts"][0]["text"]
                     .strip()
                 )
             else:
-                advice = f"AI HTTP {response.status_code}: {response.text[:80]}"
+                advice = "ИИ задумался и промолчал..."
+        else:
+            # Если 404 - значит модель недоступна в регионе или выключен API
+            advice = f"AI Error {response.status_code}: Проверь Enable API в консоли Google."
+            print(f"Full AI Error: {response.text}")
 
-        except Exception as ai_e:
-            advice = f"AI Error: {str(ai_e)[:80]}"
-
+    except Exception as ai_e:
+        advice = f"AI Error: {str(ai_e)[:80]}"
     # ---------- Логирование AI ----------
     ss.worksheet("AI_Log").append_row([
         datetime.now().strftime("%Y-%m-%d %H:%M"),
