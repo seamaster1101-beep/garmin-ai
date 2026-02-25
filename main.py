@@ -221,29 +221,24 @@ try:
 except Exception as e:
     print("Sheets Activities write error:", e)
 
-# --- 4. SYNC, AI & TELEGRAM ---
+# --- 4. SYNC (Таблицы) ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     c_obj = Credentials.from_service_account_info(
         creds_dict,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     )
     ss = gspread.authorize(c_obj).open("Garmin_Data")
 
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
-
-# ВОТ ЭТОГО КУСКА НЕ ХВАТАЛО:
+    print("✅ Таблицы Daily/Morning обновлены")
 except Exception as e:
-    print(f"Error in Sync block: {e}")
+    print(f"⚠️ Ошибка в блоке Sync: {e}")
 
 # ---------- AI BLOCK (Максимально живучий) ----------
 advice = "Нет данных для анализа"
 if GEMINI_API_KEY:
-    # Список URL для проверки (сначала стабильный, потом бета)
     urls = [
         f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}",
         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
@@ -255,7 +250,7 @@ if GEMINI_API_KEY:
             payload = {
                 "contents": [{
                     "parts": [{
-                        "text": f"Биометрия: HRV {hrv}, Сон {slp_h}ч. Дай короткий мудрый совет на русском."
+                        "text": f"Биометрия: HRV {hrv}, Сон {slp_h}ч. Дай короткий ироничный совет на русском."
                     }]
                 }]
             }
@@ -264,16 +259,17 @@ if GEMINI_API_KEY:
             if res.status_code == 200:
                 data = res.json()
                 advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print(f"✅ Успех через URL: {url.split('/')[3]}") # Покажет v1 или v1beta
-                break # Если получили ответ, выходим из цикла
+                print(f"✅ Успех AI через: {url.split('/')[3]}")
+                break 
             else:
-                print(f"⚠️ Попытка через {url.split('/')[3]} не удалась: {res.status_code}")
-                # Если 404 на обоих, выведем детали последнего ответа
-                advice = f"AI Error {res.status_code}: {res.text[:50]}"
+                print(f"⚠️ Попытка {url.split('/')[3]} не удалась ({res.status_code})")
+                advice = f"AI Error {res.status_code}"
         except Exception as e:
+            print(f"❌ Ошибка запроса AI: {e}")
             continue
 
-    # ---------- TELEGRAM ----------
+# ---------- TELEGRAM (Вынесен из цикла AI) ----------
+try:
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         message = (
             f"🚀 *Отчет Garmin*\n"
@@ -284,19 +280,17 @@ if GEMINI_API_KEY:
         )
 
         tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-
         tg_response = requests.post(
             tg_url,
             json={
                 "chat_id": TELEGRAM_CHAT_ID.strip(),
                 "text": message,
-                "parse_mode": "Markdown" # Добавил форматирование
+                "parse_mode": "Markdown"
             },
             timeout=15
         )
-        print(f"Telegram Response: {tg_response.status_code}")
+        print(f"✅ Telegram Response: {tg_response.status_code}")
     else:
-        print("Telegram Token or ID is missing in Secrets!")
-
+        print("⚠️ Данные Telegram (Token/ID) не найдены")
 except Exception as e:
-    print(f"Final Execution Error: {e}")
+    print(f"❌ Ошибка отправки Telegram: {e}")
