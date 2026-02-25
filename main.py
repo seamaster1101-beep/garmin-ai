@@ -239,9 +239,9 @@ except Exception as e:
 # ---------- AI BLOCK (Финальная рабочая версия) ----------
 advice = "Нет данных для анализа"
 if GEMINI_API_KEY:
-    # Используем v1beta и ПОЛНОЕ имя модели
+    # МЕНЯЕМ МОДЕЛЬ НА 2.0-FLASH (она есть в твоем списке выше)
     url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
         f"?key={GEMINI_API_KEY.strip()}"
     )
     
