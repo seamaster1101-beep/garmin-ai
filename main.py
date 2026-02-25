@@ -233,42 +233,39 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
-    # --- AI BLOCK через REST (самый стабильный способ) ---
-advice = "Нет данных для анализа"
+    # --- AI BLOCK (актуальный синтаксис google-genai) ---
+    advice = "Нет данных для анализа"
 
-if GEMINI_API_KEY:
-    try:
-        import requests
+    if GEMINI_API_KEY:
+        try:
+            from google.genai import Client
 
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-1.5-flash:generateContent"
-            f"?key={GEMINI_API_KEY.strip()}"
-        )
+            client = Client(api_key=GEMINI_API_KEY.strip())
 
-        payload = {
-            "contents": [{
-                "parts": [{
-                    "text": (
-                        f"Биометрия: HRV {hrv}, Пульс {r_hr}, "
-                        f"Батарейка {bb_morning}, Сон {slp_h}ч "
-                        f"(Score: {slp_sc}). Напиши один ироничный "
-                        f"и мудрый совет на день."
-                    )
-                }]
-            }]
-        }
+            response = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=(
+                    f"Биометрия: HRV {hrv}, Пульс {r_hr}, "
+                    f"Батарейка {bb_morning}, Сон {slp_h}ч (Score: {slp_sc}). "
+                    f"Напиши один ироничный и мудрый совет на день."
+                )
+            )
 
-        r = requests.post(url, json=payload, timeout=30)
+            if response and hasattr(response, "text"):
+                advice = response.text.strip()
+            else:
+                advice = "AI вернул пустой ответ"
 
-        if r.status_code == 200:
-            data = r.json()
-            advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        else:
-            advice = f"AI HTTP {r.status_code}: {r.text[:60]}"
+        except Exception as ai_e:
+            advice = f"AI Error: {str(ai_e)[:80]}"
 
-    except Exception as ai_e:
-        advice = f"AI Error: {str(ai_e)[:80]}"
+    ss.worksheet("AI_Log").append_row([
+        datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "Success",
+        advice
+    ])
+
+    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
 
     # --- TELEGRAM ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
