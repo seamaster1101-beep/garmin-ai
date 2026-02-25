@@ -191,6 +191,14 @@ if GEMINI_API_KEY:
         print(f"❌ Ошибка выполнения запроса: {e}")
         advice = "Ошибка связи с ИИ"
 
+try:
+    ai_sheet = ss.worksheet("AI_Log")
+    # Добавляем строку: Дата и сам текст совета
+    ai_sheet.append_row([today_str, advice.replace('*', '')])
+    print("✅ Запись в AI_Log добавлена")
+except Exception as e:
+    print(f"⚠️ Не удалось записать в AI_Log: {e}")
+
 # ---------- TELEGRAM ----------
 try:
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
