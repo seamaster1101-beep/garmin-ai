@@ -240,68 +240,38 @@ try:
 except Exception as e:
     print(f"Error in Sync block: {e}")
 
-# ---------- AI BLOCK (REST API - максимально стабильный) ----------
-try: # Открываем блок для безопасности финальной стадии
-    advice = "Нет данных для анализа"
-
-    if GEMINI_API_KEY:
+# ---------- AI BLOCK (Максимально живучий) ----------
+advice = "Нет данных для анализа"
+if GEMINI_API_KEY:
+    # Список URL для проверки (сначала стабильный, потом бета)
+    urls = [
+        f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}",
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+    ]
+    
+    for url in urls:
         try:
-            # Используем стабильную версию v1
-            url = (
-                "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
-                f"?key={GEMINI_API_KEY.strip()}"
-            )
-
             headers = {'Content-Type': 'application/json'}
-            
             payload = {
                 "contents": [{
                     "parts": [{
-                        "text": (
-                            f"Биометрия: HRV {hrv or 'N/A'}, Пульс {r_hr or 'N/A'}, "
-                            f"Body Battery {bb_morning or 'N/A'}, Сон {slp_h or 'N/A'}ч "
-                            f"(Score: {slp_sc or 'N/A'}). "
-                            f"Напиши один ироничный, короткий и мудрый совет на день на русском языке."
-                        )
+                        "text": f"Биометрия: HRV {hrv}, Сон {slp_h}ч. Дай короткий мудрый совет на русском."
                     }]
-                }],
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "maxOutputTokens": 200
-                }
+                }]
             }
-
-            response = requests.post(url, headers=headers, json=payload, timeout=30)
-
-            if response.status_code == 200:
-                data = response.json()
-                if "candidates" in data and data["candidates"]:
-                    advice = (
-                        data["candidates"][0]
-                        ["content"]["parts"][0]["text"]
-                        .strip()
-                    )
-                else:
-                    advice = "ИИ задумался и промолчал..."
+            res = requests.post(url, headers=headers, json=payload, timeout=20)
+            
+            if res.status_code == 200:
+                data = res.json()
+                advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                print(f"✅ Успех через URL: {url.split('/')[3]}") # Покажет v1 или v1beta
+                break # Если получили ответ, выходим из цикла
             else:
-                advice = f"AI Error {response.status_code}: Проверь API в консоли Google."
-                print(f"Full AI Error: {response.text}")
-
-        except Exception as ai_e:
-            advice = f"AI Error: {str(ai_e)[:80]}"
-
-    # ---------- Логирование AI ----------
-    # Вынесено за пределы внутреннего try, чтобы записать даже ошибку
-    try:
-        ss.worksheet("AI_Log").append_row([
-            datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "Success" if "Error" not in advice else "Fail",
-            advice
-        ])
-    except Exception as log_e:
-        print(f"Logging Error: {log_e}")
-
-    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:60]}")
+                print(f"⚠️ Попытка через {url.split('/')[3]} не удалась: {res.status_code}")
+                # Если 404 на обоих, выведем детали последнего ответа
+                advice = f"AI Error {res.status_code}: {res.text[:50]}"
+        except Exception as e:
+            continue
 
     # ---------- TELEGRAM ----------
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
