@@ -1,4 +1,4 @@
-#--- Активность 20.02-24.02
+#--- Активность only new
 
 import os
 import json
@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
+from google.genai import Client
 import requests
 
 # --- CONFIG ---
@@ -88,49 +88,56 @@ try:
     summary = gar.get_user_summary(today_str) or {}
     stats = gar.get_stats(today_str) or {}
 
-    # Шаги
     steps_data = gar.get_daily_steps(today_str, today_str)
     steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
 
-    # Калории
     cals = (
         summary.get("activeKilocalories", 0)
         + summary.get("bmrKilocalories", 0)
     ) or stats.get("calories") or 0
 
-    # Дистанция ТОЛЬКО от шагов (в км, 0.762м/шаг - стандарт)
     steps_distance_km = round(steps * 0.000762, 2)
 
-    # Активности за сегодня (завершённые)
     activities = gar.get_activities_by_date(today_str, today_str) or []
     activity_count = len(activities)
 
     daily_row = [
         today_str,
         steps,
-        steps_distance_km,  # Только шаги!
+        steps_distance_km,
         cals,
         r_hr,
         summary.get("bodyBatteryMostRecentValue", "")
-        # activity_count убран отсюда, чтобы не было лишней колонки
     ]
 
 except Exception as e:
     print(f"Daily Error: {e}")
     daily_row = [today_str, "", "", "", "", ""]
 
-# --- 3. ACTIVITIES (Range: yesterday_str -> yesterday_str) ---
+# --- 3. ACTIVITIES (только сегодняшние, без дубликатов) ---
+HISTORY_FILE = "history.json"
+if os.path.exists(HISTORY_FILE):
+    with open(HISTORY_FILE, "r") as f:
+        history = json.load(f)
+else:
+    history = {"processed_activity_ids": []}
+
+processed_ids = set(history.get("processed_activity_ids", []))
 activities_to_log = []
+
 try:
-    # raw list
-    raw_acts = gar.get_activities_by_date("2026-02-20", "2026-02-24")
-    print("RAW_ACTIVITIES:", raw_acts)
+    latest_activities = gar.get_activities(0, 10)
+    for a in latest_activities:
+        activity_id = str(a.get("activityId"))
+        if activity_id in processed_ids:
+            continue
 
-    for a in raw_acts:
-        act_date = a.get("startTimeLocal", "")[:10]
-        act_time = a.get("startTimeLocal", "")[11:16]
+        start_local = a.get("startTimeLocal", "")
+        if not start_local.startswith(today_str):
+            continue
 
-        # Cadence
+        act_date_time = start_local.replace("T", " ")[:16]
+
         cad = (
             a.get('averageBikingCadenceInRevPerMinute') or
             a.get('averageBikingCadence') or
@@ -140,7 +147,6 @@ try:
             ""
         )
 
-        # Training Load rounded to tenths
         raw_load = (
             a.get('activityTrainingLoad') or
             a.get('trainingLoad') or
@@ -152,33 +158,37 @@ try:
         avg_hr = a.get('averageHR', "")
         max_hr = a.get('maxHR', "")
 
-        # HR Intensity (relative to resting HR)
         intensity_val = ""
         try:
             if avg_hr and r_hr and float(r_hr) > 0:
                 intensity_val = round(
                     ((float(avg_hr) - float(r_hr)) / (185 - float(r_hr))) * 100, 1
-                )  # % intensity
+                )
         except:
             intensity_val = ""
 
         activities_to_log.append([
-            act_date,
-            act_time,
+            act_date_time,
             a.get('activityType', {}).get('typeKey', ''),
             round(a.get('duration', 0) / 3600, 2),
             round(a.get('distance', 0) / 1000, 2),
             avg_hr,
             max_hr,
-            intensity_val,      # HR_Intensity in %
-            t_load,             # Training Load rounded
+            intensity_val,
+            t_load,
             round(float(a.get('aerobicTrainingEffect', 0)), 1),
             a.get('calories', ""),
             a.get('avgPower', ""),
-            cad
+            cad,
+            activity_id
         ])
+        processed_ids.add(activity_id)
 
-    print("ACTIVITIES_TO_LOG COUNT:", len(activities_to_log))
+    history["processed_activity_ids"] = list(processed_ids)
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
+    print("NEW ACTIVITIES ADDED:", len(activities_to_log))
 
 except Exception as e:
     print("Activities error:", e)
@@ -194,17 +204,11 @@ try:
     ss = gspread.authorize(credentials).open("Garmin_Data")
     act_sheet = ss.worksheet("Activities")
 
-    # читает существующие строки
-    existing_keys = {
-        f"{r[0]}_{r[1]}_{r[2]}"
-        for r in act_sheet.get_all_values() if len(r) > 2
-    }
-
-    # сортировка по дате и времени
-    activities_to_log.sort(key=lambda x: (x[0], x[1]))
+    existing_keys = {f"{r[0]}_{r[1]}_{r[2]}" for r in act_sheet.get_all_values() if len(r) > 2}
+    activities_to_log.sort(key=lambda x: x[0])  # сортировка по дате+времени
 
     for act in activities_to_log:
-        key = f"{act[0]}_{act[1]}_{act[2]}"
+        key = f"{act[0]}_{act[1]}_{act[12]}"
         if key not in existing_keys:
             act_sheet.append_row(act)
             print("Appended activity:", key)
@@ -214,11 +218,13 @@ try:
 except Exception as e:
     print("Sheets Activities write error:", e)
 
-
 # --- 4. SYNC, AI & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    c_obj = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    c_obj = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    )
     ss = gspread.authorize(c_obj).open("Garmin_Data")
     
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
@@ -227,24 +233,19 @@ try:
     advice = "Нет данных для анализа"
     if GEMINI_API_KEY:
         try:
-            genai.configure(api_key=GEMINI_API_KEY.strip())
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            if available_models:
-                model_name = available_models[0]
-                model = genai.GenerativeModel(model_name)
-                prompt = (f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                          f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день.")
-                res = model.generate_content(prompt)
-                advice = res.text.strip()
-            else:
-                advice = "API Key жив, но доступных моделей нет."
+            client = Client(api_key=GEMINI_API_KEY.strip())
+            res = client.texts.generate(
+                model="models/text-bison-001",
+                prompt=f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
+                       f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день."
+            )
+            advice = res.result[0].content.strip()
         except Exception as ai_e:
-            advice = f"AI Error: {str(ai_e)[:30]}"
+            advice = f"AI Error: {str(ai_e)[:50]}"
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
     print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
 
-    # --- ОТПРАВКА В ТЕЛЕГРАМ ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         msg = f"🚀 Отчет:\nHRV: {hrv}\nСон: {slp_h}ч\nПульс: {r_hr}\n\n🤖 {advice.replace('*', '')}"
         tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
