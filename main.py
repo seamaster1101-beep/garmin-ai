@@ -233,43 +233,57 @@ try:
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
-    # --- AI BLOCK (актуальный синтаксис google-genai) ---
+    # ---------- AI BLOCK (через REST, максимально стабильный) ----------
     advice = "Нет данных для анализа"
 
     if GEMINI_API_KEY:
         try:
-            from google.genai import Client
-
-            client = Client(api_key=GEMINI_API_KEY.strip())
-
-            response = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=(
-                    f"Биометрия: HRV {hrv}, Пульс {r_hr}, "
-                    f"Батарейка {bb_morning}, Сон {slp_h}ч (Score: {slp_sc}). "
-                    f"Напиши один ироничный и мудрый совет на день."
-                )
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                "gemini-1.5-flash:generateContent"
+                f"?key={GEMINI_API_KEY.strip()}"
             )
 
-            if response and hasattr(response, "text"):
-                advice = response.text.strip()
+            payload = {
+                "contents": [{
+                    "parts": [{
+                        "text": (
+                            f"Биометрия: HRV {hrv}, Пульс {r_hr}, "
+                            f"Батарейка {bb_morning}, Сон {slp_h}ч "
+                            f"(Score: {slp_sc}). "
+                            f"Напиши один ироничный и мудрый совет на день."
+                        )
+                    }]
+                }]
+            }
+
+            response = requests.post(url, json=payload, timeout=30)
+
+            if response.status_code == 200:
+                data = response.json()
+                advice = (
+                    data["candidates"][0]
+                    ["content"]["parts"][0]["text"]
+                    .strip()
+                )
             else:
-                advice = "AI вернул пустой ответ"
+                advice = f"AI HTTP {response.status_code}: {response.text[:80]}"
 
         except Exception as ai_e:
             advice = f"AI Error: {str(ai_e)[:80]}"
 
+    # ---------- Логирование AI ----------
     ss.worksheet("AI_Log").append_row([
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         "Success",
         advice
     ])
 
-    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
+    print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:60]}")
 
-    # --- TELEGRAM ---
+    # ---------- TELEGRAM ----------
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        msg = (
+        message = (
             f"🚀 Отчет:\n"
             f"HRV: {hrv}\n"
             f"Сон: {slp_h}ч\n"
@@ -277,18 +291,21 @@ try:
             f"🤖 {advice.replace('*', '')}"
         )
 
-        tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
+        tg_url = (
+            f"https://api.telegram.org/bot"
+            f"{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
+        )
 
-        resp = requests.post(
+        tg_response = requests.post(
             tg_url,
             json={
                 "chat_id": TELEGRAM_CHAT_ID.strip(),
-                "text": msg
+                "text": message
             },
             timeout=15
         )
 
-        print(f"Telegram Response: {resp.status_code}")
+        print(f"Telegram Response: {tg_response.status_code}")
 
     else:
         print("Telegram Token or ID is missing in Secrets!")
