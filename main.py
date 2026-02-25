@@ -236,38 +236,47 @@ try:
 except Exception as e:
     print(f"⚠️ Ошибка в блоке Sync: {e}")
 
-# ---------- AI BLOCK (Максимально живучий) ----------
+# ---------- AI BLOCK (Финальная рабочая версия) ----------
 advice = "Нет данных для анализа"
 if GEMINI_API_KEY:
-    # 1. Задаем адрес (используем v1beta, как самую надежную)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+    # Используем v1beta и ПОЛНОЕ имя модели
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        f"?key={GEMINI_API_KEY.strip()}"
+    )
     
     try:
         headers = {'Content-Type': 'application/json'}
         payload = {
             "contents": [{
                 "parts": [{
-                    "text": f"Биометрия: HRV {hrv}, Сон {slp_h}ч. Дай короткий ироничный совет на русском."
+                    "text": (
+                        f"Биометрия за сегодня: HRV {hrv or 'N/A'}, "
+                        f"Пульс в покое {r_hr or 'N/A'}, Сон {slp_h or 'N/A'}ч. "
+                        f"Напиши один короткий ироничный совет на русском."
+                    )
                 }]
             }]
         }
         
-        # 2. Делаем запрос (без цикла, просто один раз)
+        # Прямой запрос без циклов
         res = requests.post(url, headers=headers, json=payload, timeout=20)
         
         if res.status_code == 200:
             data = res.json()
-            advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            print("✅ AI совет успешно получен!")
+            if "candidates" in data and data["candidates"]:
+                advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                print("✅ AI ответ получен успешно!")
+            else:
+                advice = "ИИ промолчал (пустой ответ)."
         else:
-            advice = f"AI Error {res.status_code}: {res.text[:50]}"
-            print(f"❌ Ошибка AI: {res.text}")
+            # Выводим полную ошибку в логи, чтобы мы могли её прочитать
+            print(f"❌ Ошибка API: {res.status_code} - {res.text}")
+            advice = f"AI Error {res.status_code}"
 
     except Exception as e:
-        advice = f"AI Error: {str(e)[:50]}"
-        print(f"❌ Ошибка запроса: {e}")
-
-# ---------- ДАЛЬШЕ ИДЕТ БЛОК TELEGRAM ----------
+        print(f"❌ Ошибка выполнения запроса: {e}")
+        advice = "Ошибка связи с ИИ"
 
 # ---------- TELEGRAM (Вынесен из цикла AI) ----------
 try:
