@@ -243,13 +243,13 @@ try:
             client = Client(api_key=GEMINI_API_KEY.strip())
 
             response = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=(
-                    f"Биометрия: HRV {hrv}, Пульс {r_hr}, "
-                    f"Батарейка {bb_morning}, Сон {slp_h}ч (Score: {slp_sc}). "
-                    f"Напиши один ироничный и мудрый совет на день."
-                )
-            )
+    model="gemini-1.5-pro",
+    contents=(
+        f"Биометрия: HRV {hrv}, Пульс {r_hr}, "
+        f"Батарейка {bb_morning}, Сон {slp_h}ч (Score: {slp_sc}). "
+        f"Напиши один ироничный и мудрый совет на день."
+    )
+)
 
             if response and hasattr(response, "text"):
                 advice = response.text.strip()
