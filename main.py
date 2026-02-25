@@ -231,17 +231,25 @@ try:
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 
     advice = "Нет данных для анализа"
-    if GEMINI_API_KEY:
-        try:
-            client = Client(api_key=GEMINI_API_KEY.strip())
-            res = client.texts.generate(
-                model="models/text-bison-001",
-                prompt=f"Биометрия: HRV {hrv}, Пульс {r_hr}, Батарейка {bb_morning}, "
-                       f"Сон {slp_h}ч (Score: {slp_sc}). Напиши один ироничный и мудрый совет на день."
-            )
-            advice = res.result[0].content.strip()
-        except Exception as ai_e:
-            advice = f"AI Error: {str(ai_e)[:50]}"
+    from google.genai import Client
+
+advice = "Нет данных для анализа"
+
+if GEMINI_API_KEY:
+    try:
+        client = Client(api_key=GEMINI_API_KEY.strip())
+
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=f"Биометрия: HRV {hrv}, Пульс {r_hr}, "
+                     f"Батарейка {bb_morning}, Сон {slp_h}ч (Score: {slp_sc}). "
+                     f"Напиши один ироничный и мудрый совет на день."
+        )
+
+        advice = response.text.strip()
+
+    except Exception as ai_e:
+        advice = f"AI Error: {str(ai_e)[:80]}"
     
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", advice])
     print(f"✔ Финиш! HRV: {hrv}, AI: {advice[:40]}")
