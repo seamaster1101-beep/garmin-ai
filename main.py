@@ -146,58 +146,49 @@ try:
     print("✅ Таблицы Daily/Morning обновлены")
 except Exception as e: print(f"⚠️ Ошибка в блоке Sync: {e}")
 
-# ---------- AI BLOCK (Оптимизирован под лимиты) ----------
+# ---------- AI BLOCK: УМНЫЙ АНАЛИЗ ТРЕНДОВ ----------
 advice = "Нет данных для анализа"
 if GEMINI_API_KEY:
-    # Используем версию FLASH-LITE — у нее выше лимиты запросов в минуту
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent"
-        f"?key={GEMINI_API_KEY.strip()}"
-    )
-    
     try:
-        headers = {'Content-Type': 'application/json'}
+        # 1. Забираем историю из таблиц (последние 5 дней)
+        daily_hist = ss.worksheet("Daily").get_all_values()[-5:]
+        morning_hist = ss.worksheet("Morning").get_all_values()[-5:]
+        
+        # 2. Формируем контекст для ИИ
+        history_context = f"История за 5 дней (Daily): {daily_hist}\nИстория за 5 дней (Morning): {morning_hist}"
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY.strip()}"
+        
         payload = {
             "contents": [{
                 "parts": [{
                     "text": (
-                        f"Биометрия за сегодня: HRV {hrv or 'N/A'}, "
-                        f"Пульс в покое {r_hr or 'N/A'}, Сон {slp_h or 'N/A'}ч. "
-                        f"Напиши один очень короткий, мудрый и слегка ироничный совет на русском."
+                        f"Ты — ироничный цифровой тренер. Проанализируй данные пользователя Garmin.\n"
+                        f"ТЕКУЩИЕ ДАННЫЕ: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, Вес {weight}.\n"
+                        f"КОНТЕКСТ ПРОШЛЫХ ДНЕЙ:\n{history_context}\n\n"
+                        f"ЗАДАЧА: Сделай короткий вывод о состоянии (есть ли прогресс или переутомление) "
+                        f"и дай один мудрый, но очень колкий и ироничный совет. Не используй много текста."
                     )
                 }]
             }]
         }
         
-        # Делаем небольшую паузу на всякий случай перед запросом
-        time.sleep(2)
-        res = requests.post(url, headers=headers, json=payload, timeout=20)
-        
+        time.sleep(2) # Защита от 429
+        res = requests.post(url, json=payload, timeout=20)
         if res.status_code == 200:
-            data = res.json()
-            if "candidates" in data and data["candidates"]:
-                advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print("✅ AI ответ получен успешно!")
-            else:
-                advice = "ИИ задумался и промолчал."
+            advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         elif res.status_code == 429:
-            print("⚠️ Лимит запросов исчерпан (429).")
-            advice = "Нужно немного отдохнуть от советов."
-        else:
-            print(f"❌ Ошибка API: {res.status_code} - {res.text}")
-            advice = f"AI Error {res.status_code}"
-
+            advice = "ИИ взял тайм-аут из-за лимитов. Подожди немного."
     except Exception as e:
-        print(f"❌ Ошибка выполнения запроса: {e}")
-        advice = "Ошибка связи с ИИ"
+        print(f"AI Deep Analysis Error: {e}")
+        advice = "ИИ сегодня не в духе."
 
+# Запись в AI_Log (как мы обсуждали — в 3 колонки)
 try:
-    ai_sheet = ss.worksheet("AI_Log")
-    # Добавляем строку: Дата и сам текст совета
-    ai_sheet.append_row([today_str, advice.replace('*', '')])
-    print("✅ Запись в AI_Log добавлена")
-except Exception as e:
-    print(f"⚠️ Не удалось записать в AI_Log: {e}")
+    log_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    status = "Success" if "Error" not in advice and "тайм-аут" not in advice else "Fail"
+    ss.worksheet("AI_Log").append_row([log_time, status, advice.replace('*', '')])
+except: pass
 
 # ---------- TELEGRAM ----------
 try:
