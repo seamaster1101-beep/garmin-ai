@@ -96,20 +96,18 @@ except Exception as e:
 advice = "Совет временно недоступен"
 if GEMINI_API_KEY:
     try:
+        # Убедимся, что используем самую стабильную модель
         client = genai.Client(api_key=GEMINI_API_KEY.strip())
-        prompt = (f"Данные за сегодня: HRV {hrv}, Пульс в покое {r_hr}, "
-                  f"Body Battery {bb_morning}, Сон {slp_h}ч (балл {slp_sc}). "
-                  f"Дай один короткий, ироничный и мудрый совет на день на русском.")
-        
-        # Новый метод вызова
         response = client.models.generate_content(
             model="gemini-1.5-flash",
-            contents=prompt
+            contents=f"HRV {hrv}, HR {r_hr}, Sleep {slp_h}h. Дай мудрый совет на русском."
         )
-        advice = response.text.strip()
-        print("✅ AI Advice Generated")
+        if response and response.text:
+            advice = response.text.strip()
+        else:
+            advice = "Тело спит, и ИИ спит."
     except Exception as ai_e:
-        print(f"⚠️ AI Error: {ai_e}")
+        print(f"DEBUG: Полная ошибка AI: {ai_e}")
         advice = "Слушай своё тело, а не сломанный ИИ."
 
 # --- 3. WRITE TO GOOGLE SHEETS ---
