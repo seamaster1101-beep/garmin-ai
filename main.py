@@ -52,36 +52,44 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK ---
+# --- 1. MORNING DATA (RE-FIXED 2026) ---
 morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
 try:
-    stats = gar.get_stats(today_str) or {}
-    hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv")
+    # 1. Пробуем достать HRV (самый капризный пункт)
+    try:
+        hrv_res = gar.get_hrv_data(today_str)
+        hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
+    except:
+        stats = gar.get_stats(today_str) or {}
+        hrv = stats.get("lastNightAvgHrv") or stats.get("allDayAvgHrv") or ""
+
+    # 2. Сон и Sleep Score (ищем во всех закоулках JSON)
     for d in [today_str, yesterday_str]:
         try:
-            sleep_data = gar.get_sleep_data(d)
-            dto = sleep_data.get("dailySleepDTO") or {}
-            if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or ""
+            s_data = gar.get_sleep_data(d) or {}
+            dto = s_data.get("dailySleepDTO") or {}
+            if dto.get("sleepTimeSeconds", 0) > 0:
+                # Ищем Score: сначала в dto, потом в корне, потом в специальных полях
+                slp_sc = dto.get("sleepScore") or s_data.get("sleepScore") or s_data.get("overallScore", {}).get("value") or ""
                 slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
-                morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16] or morning_ts
+                morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
                 break
         except: continue
-    for i in range(3):
-        d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
-        try:
-            w_data = gar.get_body_composition(d_check, today_str)
-            if w_data and w_data.get('uploads'):
-                weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-                break
-        except: continue
+
+    # 3. Вес (последний доступный)
+    try:
+        w_res = gar.get_body_composition(today_str)
+        if w_res and w_res.get('uploads'):
+            weight = round(w_res['uploads'][-1].get('weight', 0) / 1000, 1)
+    except: pass
+
+    # 4. Остальное (пульс и Body Battery)
     summary = gar.get_user_summary(today_str) or {}
     r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
     bb_morning = summary.get("bodyBatteryHighestValue") or ""
-    morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+    
 except Exception as e:
-    print(f"Morning Error: {e}")
-    morning_row = [morning_ts, "", "", "", "", "", ""]
+    print(f"Morning Block Error: {e}")
 
 # --- 2. DAILY BLOCK ---
 try:
