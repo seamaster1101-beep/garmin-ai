@@ -2,7 +2,9 @@ name: Garmin Daily Sync
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # каждый день в 6:00 утра
+    - cron: '0 6 * * *'  # 07:00 (Мальта / UTC+1)
+    - cron: '0 15 * * *' # 16:00 (Мальта / UTC+1)
+    - cron: '0 21 * * *' # 22:00 (Мальта / UTC+1)
   workflow_dispatch:     # ручной запуск
 
 jobs:
