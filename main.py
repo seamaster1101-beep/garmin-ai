@@ -46,11 +46,13 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK (ИНТЕГРИРОВАННАЯ ВЕРСИЯ С HRV) ---
-morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h = f"{today_str} 08:00", "", "", "", "", "", ""
+# --- 1. MORNING BLOCK (ИСПРАВЛЕННЫЙ) ---
+# Инициализируем дату сразу, чтобы она не пропала при ошибках
+morning_ts = f"{today_str} 08:00"
+weight, r_hr, hrv, bb_morning, slp_sc, slp_h = "", "", "", "", "", ""
 
 try:
-    # Ищем HRV (через спец. метод и через общую статистику)
+    # 1. HRV
     try:
         hrv_res = gar.get_hrv_data(today_str)
         if hrv_res and "hrvSummary" in hrv_res:
@@ -60,42 +62,47 @@ try:
     if not hrv:
         try:
             stats = gar.get_stats(today_str) or {}
-            hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or stats.get("lastNightHrv") or ""
+            hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-    # Ищем Сон и Sleep Score
-    for d in [yesterday_str, today_str]:
+    # 2. Сон и Время (Исправлено: 6.9 и сохранение morning_ts)
+    for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
             dto = sleep_data.get("dailySleepDTO") or {}
             if dto and dto.get("sleepTimeSeconds", 0) > 0:
                 slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or ""
+                # Та самая формула для 6.9
                 slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-                morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
+                
+                # Обновляем время только если оно есть в данных сна
+                if dto.get("sleepEndTimeLocal"):
+                    morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
                 break
         except: continue
 
-    # Ищем Вес (за последние 5 дней)
+    # 3. Вес (Исправлена опечатка w_res)
     for i in range(5):
         d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
-            w_data = gar.get_body_composition(d_check, today_str)
-            if w_data and isinstance(w_data, dict) and w_data.get('uploads'):
-                w = round(w_res['uploads'][-1].get('weight', 0) / 1000, 1) if 'w_res' in locals() else round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-                if w > 0:
-                    weight = w
+            w_data = gar.get_body_composition(d_check)
+            if w_data and w_data.get('uploads'):
+                val = w_data['uploads'][-1].get('weight', 0)
+                if val > 0:
+                    weight = round(val / 1000, 1)
                     break
         except: continue
 
-    # Пульс покоя и Body Battery
+    # 4. Пульс и BB
     summary = gar.get_user_summary(today_str) or {}
     r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
     bb_morning = summary.get("bodyBatteryHighestValue") or ""
-    
-    morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+
 except Exception as e:
-    print(f"Morning Block Error: {e}")
-    morning_row = [morning_ts, "", "", "", "", "", ""]
+    print(f"Morning Block Minor Error: {e}")
+
+# Финальная сборка строки (morning_ts теперь точно не пустой)
+morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 
 # --- 2. DAILY BLOCK ---
 try:
