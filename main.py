@@ -387,18 +387,3 @@ else:
     log_debug("\n💪 === АНАЛИЗ ТРЕНИРОВКИ ===")
     log_debug("  ⚠️ Нет тренировок сегодня")
 
-log_debug("\n📨 === TELEGRAM УВЕДОМЛЕНИЯ ===")
-if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-    telegram_msg = f"🌅 *Утренний отчёт*\n{morning_analysis}"
-    if workout_analysis:
-        telegram_msg += f"\n\n💪 *Анализ тренировки*\n{workout_analysis}"
-    if send_telegram_message(telegram_msg):
-        log_debug("  ✅ Telegram сообщение отправлено")
-    else:
-        log_debug("  ⚠️ Не удалось отправить в Telegram")
-else:
-    log_debug("  ⚠️ Telegram не сконфигурирован")
-
-log_debug("\n" + "="*60)
-log_debug("✅ СКРИПТ ЗАВЕРШЁН")
-log_debug("="*60)
