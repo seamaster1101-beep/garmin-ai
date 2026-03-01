@@ -109,7 +109,6 @@ except Exception as e:
                 slp_h = round(dto.get("sleepTimeSeconds", 0) / 3600, 1)
                 morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
 
-       try:
         weight = morning_data.get('weight', 'N/A')
         rhr = morning_data.get('rhr', 'N/A')
         hrv = morning_data.get('hrv', 'N/A')
