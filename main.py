@@ -1,78 +1,85 @@
-# Refactored Code for main.py
-
 import logging
-import datetime
-from safe_log_to_sheets import log_to_sheets
+import time
+import requests
+from datetime import datetime
+from telegram import Bot
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+# Configuring Logging
+logging.basicConfig(level=logging.DEBUG, 
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger()
 
-# Utility function to log data safely
+# Telegram Notification Setup
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
+bot = Bot(token=TELEGRAM_TOKEN)
 
-def log_data(data):
+def safe_log_to_sheets(data):
+    # Function to log data to Google Sheets safely
+    logger.debug("Logging data to Google Sheets.")
+    # Implement logging logic here
+
+def fetch_hrv_data(source):
+    # Fetch HRV data from multiple sources with fallback
     try:
-        log_to_sheets(data)
-        logger.info('Successfully logged data to sheets.')
-    except Exception as e:
-        logger.error(f'Failed to log data: {e}')
+        response = requests.get(source)
+        response.raise_for_status()
+        return response.json().get('hrv')
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching HRV from {source}: {e}")
+        return None
 
-# Extraction functions
+def fetch_weight_sleep_score():
+    # Fetch Weight/Sleep Score with fallback
+    sources = ["source1", "source2"]
+    for source in sources:
+        try:
+            response = requests.get(source)
+            response.raise_for_status()
+            return response.json().get('weight'), response.json().get('sleep_score')
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching data from {source}: {e}")
+    return None, None
 
-def extract_weight(data):
-    weight = data.get('weight', 'N/A')
-    logger.debug(f'Extracted weight: {weight}')
-    return weight
+def log_workout_analysis():
+    # Analyze workouts
+    logger.debug("Analyzing workouts...")
+    # Implement analysis logic here
 
+def send_telegram_notification(message):
+    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    logger.debug("Sent notification via Telegram.")
 
-def extract_hrv(data):
-    hrv = data.get('hrv', 'N/A')
-    logger.debug(f'Extracted HRV: {hrv}')
-    return hrv
+def retry_request(url, max_retries=5):
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in [429, 503]:
+                wait_time = 2 ** attempt  # Exponential backoff
+                logger.warning(f"Received HTTP status {response.status_code}. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Request failed: {e}")
+                break
+    return None
 
+def generate_morning_report():
+    # Generate a report for the morning
+    logger.debug("Generating morning report...")
+    weight, sleep_score = fetch_weight_sleep_score()
+    logger.info(f"Morning report: Weight: {weight}, Sleep Score: {sleep_score}")
+    send_telegram_notification(f"Morning report - Weight: {weight}, Sleep Score: {sleep_score}")
 
-def extract_sleep_score(data):
-    sleep_score = data.get('sleep_score', 'N/A')
-    logger.debug(f'Extracted Sleep Score: {sleep_score}')
-    return sleep_score
+def main():
+    logger.info("Starting the program.")
+    generate_morning_report()
+    hrv_data = fetch_hrv_data("your_hrv_source")
+    if hrv_data:
+        logger.info(f"HRV Data: {hrv_data}")
+    log_workout_analysis()
 
-# Activity class to encapsulate activity data
-
-class Activity:
-    def __init__(self, weight, hrv, sleep_score, timestamp):
-        self.weight = weight
-        self.hrv = hrv
-        self.sleep_score = sleep_score
-        self.timestamp = timestamp
-
-    def __repr__(self):
-        return f'Activity(weight={self.weight}, hrv={self.hrv}, sleep_score={self.sleep_score}, timestamp={self.timestamp})'
-
-# Function to process activities
-
-def process_activities(activity_data):
-    activities = []
-
-    for data in activity_data:
-        weight = extract_weight(data)
-        hrv = extract_hrv(data)
-        sleep_score = extract_sleep_score(data)
-        timestamp = datetime.datetime.utcnow().isoformat()
-        activity = Activity(weight, hrv, sleep_score, timestamp)
-        activities.append(activity)
-
-    logger.debug(f'Unsorted activities: {activities}')
-    activities_sorted = sorted(activities, key=lambda x: x.timestamp)
-    logger.debug(f'Sorted activities: {activities_sorted}')
-
-    return activities_sorted
-
-if __name__ == '__main__':
-    # Example activity data
-    example_activity_data = [
-        {'weight': 75, 'hrv': 60, 'sleep_score': 85},
-        {'weight': 80, 'hrv': 55, 'sleep_score': 90},
-    ]
-
-    sorted_activities = process_activities(example_activity_data)
-    log_data(sorted_activities)
+if __name__ == "__main__":
+    main()
