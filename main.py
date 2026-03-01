@@ -224,30 +224,3 @@ try:
     status = "Success" if "Error" not in advice and "тайм-аут" not in advice else "Fail"
     ss.worksheet("AI_Log").append_row([log_time, status, advice.replace('*', '')])
 except: pass
-
-# ---------- TELEGRAM ----------
-try:
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        # Убираем лишние символы из ответа AI для чистоты сообщения
-        clean_advice = advice.replace('*', '').replace('#', '')
-        message = (
-            f"🚀 *Отчет Garmin*\n"
-            f"💓 HRV: {hrv or 'N/A'}\n"
-            f"🌙 Сон: {slp_h or 'N/A'}ч\n"
-            f"🩺 Пульс: {r_hr or 'N/A'}\n\n"
-            f"🤖 {clean_advice}"
-        )
-
-        tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN.strip()}/sendMessage"
-        tg_response = requests.post(
-            tg_url,
-            json={
-                "chat_id": TELEGRAM_CHAT_ID.strip(),
-                "text": message,
-                "parse_mode": "Markdown"
-            },
-            timeout=15
-        )
-        print(f"✅ Telegram Response: {tg_response.status_code}")
-except Exception as e:
-    print(f"❌ Ошибка отправки Telegram: {e}")
