@@ -46,62 +46,105 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK (ИСПРАВЛЕННЫЙ) ---
-# Инициализируем дату сразу, чтобы она не пропала при ошибках
+# --- 1. MORNING BLOCK (СТАБИЛЬНАЯ ВЕРСИЯ) ---
+
 morning_ts = f"{today_str} 08:00"
 weight, r_hr, hrv, bb_morning, slp_sc, slp_h = "", "", "", "", "", ""
 
 try:
-    # 1. HRV
+
+    # 1️⃣ HRV
     try:
         hrv_res = gar.get_hrv_data(today_str)
-        if hrv_res and "hrvSummary" in hrv_res:
-            hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
-    except: pass
-    
+        if hrv_res:
+            hrv = (
+                hrv_res.get("hrvSummary", {}).get("lastNightAvg")
+                or hrv_res.get("lastNightAvg")
+                or ""
+            )
+    except:
+        pass
+
     if not hrv:
         try:
             stats = gar.get_stats(today_str) or {}
-            hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
-        except: pass
+            hrv = (
+                stats.get("lastNightAvgHrv")
+                or stats.get("allDayAvgHrv")
+                or ""
+            )
+        except:
+            pass
 
-    # 2. Сон и Время (Исправлено: 6.9 и сохранение morning_ts)
-    for d in [today_str, yesterday_str]:
+
+    # 2️⃣ SLEEP + SLEEP SCORE
+    for d in [yesterday_str, today_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
-            dto = sleep_data.get("dailySleepDTO") or {}
-            if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or ""
-                # Та самая формула для 6.9
-                slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-                
-                # Обновляем время только если оно есть в данных сна
-                if dto.get("sleepEndTimeLocal"):
-                    morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
-                break
-        except: continue
+            if not sleep_data:
+                continue
 
-    # 3. Вес (Исправлена опечатка w_res)
-    for i in range(5):
+            dto = sleep_data.get("dailySleepDTO", {})
+
+            if dto.get("sleepTimeSeconds", 0) > 0:
+
+                # часы сна
+                slp_h = round(dto["sleepTimeSeconds"] / 3600, 1)
+
+                # Sleep Score — проверяем ВСЕ варианты
+                slp_sc = (
+                    dto.get("sleepScore")
+                    or sleep_data.get("sleepScore")
+                    or sleep_data.get("overallScore", {}).get("value")
+                    or dto.get("sleepScores", {}).get("overall")
+                    or dto.get("sleepScores", {}).get("overall", {}).get("value")
+                    or ""
+                )
+
+                # время пробуждения
+                if dto.get("sleepEndTimeLocal"):
+                    morning_ts = dto["sleepEndTimeLocal"].replace("T", " ")[:16]
+
+                break
+
+        except:
+            continue
+
+
+    # 3️⃣ WEIGHT (самый стабильный способ)
+    for i in range(7):
         d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
-            w_data = gar.get_body_composition(d_check)
-            if w_data and w_data.get('uploads'):
-                val = w_data['uploads'][-1].get('weight', 0)
-                if val > 0:
+            weighins = gar.get_weigh_ins(d_check)
+            if weighins:
+                val = weighins[-1].get("weight")
+                if val and val > 0:
                     weight = round(val / 1000, 1)
                     break
-        except: continue
+        except:
+            continue
 
-    # 4. Пульс и BB
+
+    # 4️⃣ Resting HR + Body Battery
     summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
-    bb_morning = summary.get("bodyBatteryHighestValue") or ""
+
+    r_hr = (
+        summary.get("restingHeartRate")
+        or summary.get("heartRateRestingValue")
+        or ""
+    )
+
+    bb_morning = (
+        summary.get("bodyBatteryHighestValue")
+        or ""
+    )
+
 
 except Exception as e:
     print(f"Morning Block Minor Error: {e}")
 
-# Финальная сборка строки (morning_ts теперь точно не пустой)
+
+# Финальная строка
 morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 
 # --- 2. DAILY BLOCK ---
