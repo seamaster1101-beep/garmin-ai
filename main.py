@@ -32,7 +32,7 @@ def update_or_append(sheet, date_str, row_data):
         else:
             sheet.append_row(row_data)
             return "Appended"
-    except Exception as e: return f"Err: {str(e)[:15]}"
+    except: return "Error"
 
 # --- LOGIN ---
 try:
@@ -88,8 +88,7 @@ try:
     bb_morning = summary.get("bodyBatteryHighestValue") or ""
     
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
-except Exception as e:
-    print(f"Morning Error: {e}")
+except:
     morning_row = [morning_ts, "", "", "", "", "", ""]
 
 # --- 2. DAILY BLOCK ---
@@ -97,4 +96,74 @@ try:
     summary = gar.get_user_summary(today_str) or {}
     steps_data = gar.get_daily_steps(today_str, today_str)
     steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
-    cals = (summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0)) or
+    # Исправленная строка расчета калорий:
+    cals = (summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0)) or 0
+    daily_row = [today_str, steps, round(steps * 0.000762, 2), cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+except:
+    daily_row = [today_str, "", "", "", "", ""]
+
+# --- 3. ACTIVITIES ---
+HISTORY_FILE = "history.json"
+if os.path.exists(HISTORY_FILE):
+    with open(HISTORY_FILE, "r") as f: history = json.load(f)
+else: history = {"processed_activity_ids": []}
+processed_ids = set(history.get("processed_activity_ids", []))
+activities_to_log = []
+
+try:
+    latest = gar.get_activities(0, 10)
+    for a in latest:
+        activity_id = str(a.get("activityId"))
+        if activity_id in processed_ids: continue
+        if not a.get("startTimeLocal", "").startswith(today_str): continue
+        
+        act_row = [
+            a.get("startTimeLocal", "").replace("T", " ")[:16],
+            a.get('activityType', {}).get('typeKey', ''),
+            round(a.get('duration', 0) / 3600, 2),
+            round(a.get('distance', 0) / 1000, 2),
+            a.get('averageHR', ""), a.get('maxHR', ""), "", 
+            round(float(a.get('trainingLoad', 0)), 1),
+            round(float(a.get('aerobicTrainingEffect', 0)), 1),
+            a.get('calories', ""), "", "", activity_id
+        ]
+        activities_to_log.append(act_row)
+        processed_ids.add(activity_id)
+    
+    history["processed_activity_ids"] = list(processed_ids)
+    with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=2)
+except: pass
+
+# --- WRITE TO SHEETS ---
+try:
+    creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), 
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(creds).open("Garmin_Data")
+    
+    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
+    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    
+    act_sheet = ss.worksheet("Activities")
+    for act in activities_to_log:
+        act_sheet.append_row(act)
+except Exception as e: print(f"Sheets Error: {e}")
+
+# ---------- AI BLOCK ----------
+advice = "Нет данных для анализа"
+if GEMINI_API_KEY:
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY.strip()}"
+        prompt = (f"Ты - ироничный тренер. Данные сегодня: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, Вес {weight}.\n"
+                  f"Дай 1 короткий колкий совет на русском.")
+        
+        time.sleep(4)
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
+        if res.status_code == 200:
+            advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except: advice = "ИИ сегодня отдыхает"
+
+# LOG TO AI_LOG
+try:
+    status = "Success" if "отдыхает" not in advice else "Fail"
+    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), status, advice.replace('*', '')])
+except: pass
