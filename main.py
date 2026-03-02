@@ -212,49 +212,57 @@ if GEMINI_API_KEY:
         advice = "ИИ сегодня не в духе."
 
 # ---------- AI ANALYSIS BLOCK (ULTIMATE AUTO-FIND) ----------
-import google.generativeai as genai
 
-ai_advice = "Анализ не выполнен"
-if gemini_key:
+# ---------- AI BLOCK (ИСПРАВЛЕННЫЙ: БЕЗ ВНЕШНИХ БИБЛИОТЕК) ----------
+ai_advice = "Нет данных для анализа"
+
+if GEMINI_API_KEY:
     try:
-        genai.configure(api_key=gemini_key.strip())
+        # Подготовка данных для промпта
+        workout_info = f"Тренировка: {activities_to_log[0][1]}, TE: {activities_to_log[0][8]}" if activities_to_log else "Тренировок не было"
         
-        # Автоматический поиск доступной модели (чтобы не гадать с 1.5-flash)
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        print(f"Available models: {available_models}")
-        
-        # Выбираем первую попавшуюся модель flash или pro
-        target_model = None
-        for m_name in ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-8b', 'models/gemini-1.0-pro']:
-            if m_name in available_models:
-                target_model = m_name
-                break
-        
-        if not target_model and available_models:
-            target_model = available_models[0]
-            
-        if target_model:
-            print(f"Using model: {target_model}")
-            model = genai.GenerativeModel(target_model)
-            
-            workout_info = f"Тренировка: {last_act['activityType']['typeKey']}, TE: {last_act.get('trainingEffect')}" if last_act else "Тренировок не было"
-            
-            user_prompt = (f"Проанализируй показатели за сегодня ({today_date}): "
-                           f"Сон: {sleep_score}/100, HRV: {hrv}, Пульс покоя: {resting_hr}, "
-                           f"Body Battery: {body_battery}, Шаги: {steps}. {workout_info}. "
-                           f"Дай краткую оценку восстановления и совет на завтра (2 sentences).")
+        # Формируем промпт, используя те же переменные, что и выше в скрипте
+        user_prompt = (f"Проанализируй показатели за сегодня ({today_str}): "
+                       f"Сон: {slp_sc}/100 ({slp_h}ч), HRV: {hrv}, Пульс покоя: {r_hr}, "
+                       f"Body Battery: {bb_morning}, Шаги: {steps}. {workout_info}. "
+                       f"Дай краткую оценку восстановления и совет на завтра (2 предложения на русском).")
 
-            response = model.generate_content(user_prompt)
-            ai_advice = response.text
-            print("✅ ПОБЕДА! ИИ ответил.")
+        # Прямой URL к API (используем flash-lite как самую быструю и стабильную)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY.strip()}"
+        
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": user_prompt
+                }]
+            }]
+        }
+
+        time.sleep(2) # Защита от лимитов
+        res = requests.post(url, json=payload, timeout=30)
+        
+        if res.status_code == 200:
+            result = res.json()
+            if "candidates" in result:
+                ai_advice = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+                print("✅ ПОБЕДА! ИИ ответил.")
+            else:
+                ai_advice = "ИИ прислал пустой ответ."
         else:
-            ai_advice = "Error: No supported models found in this account."
+            ai_advice = f"Ошибка API: {res.status_code}"
+            print(f"❌ Ошибка API: {res.text}")
 
     except Exception as e:
         ai_advice = f"Ultimate Error: {str(e)[:100]}"
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка ИИ: {e}")
 
 print(f"Final AI Status: {ai_advice}")
+
+# Записываем результат в таблицу AI_Log (если она есть)
+try:
+    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", ai_advice.replace('*', '')])
+except:
+    pass
 
 # ---------- TELEGRAM (ОТКЛЮЧЕНО ПО ПРОСЬБЕ) ----------
 # try:
