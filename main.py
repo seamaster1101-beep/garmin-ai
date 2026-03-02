@@ -255,7 +255,6 @@ if gemini_key:
         print(f"❌ Ошибка: {e}")
 
 print(f"Final AI Status: {ai_advice}")
-except: pass
 
 # ---------- TELEGRAM (ОТКЛЮЧЕНО ПО ПРОСЬБЕ) ----------
 # try:
