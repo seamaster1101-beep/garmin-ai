@@ -65,16 +65,6 @@ try:
             hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-    # --- DEBUG SLEEP JSON ---
-import json
-try:
-    raw_sleep = gar.get_sleep_data(yesterday_str)
-    print("===== RAW SLEEP JSON =====")
-    print(json.dumps(raw_sleep, indent=2))
-    print("===== END SLEEP JSON =====")
-except Exception as e:
-    print("Sleep debug error:", e)
-
 # 2. Сон и Время (Исправлено: 6.9 и сохранение morning_ts)
     for d in [today_str, yesterday_str]:
         try:
