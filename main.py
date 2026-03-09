@@ -65,7 +65,17 @@ try:
             hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-    # 2. Сон и Время (Исправлено: 6.9 и сохранение morning_ts)
+    # --- DEBUG SLEEP JSON ---
+import json
+try:
+    raw_sleep = gar.get_sleep_data(yesterday_str)
+    print("===== RAW SLEEP JSON =====")
+    print(json.dumps(raw_sleep, indent=2))
+    print("===== END SLEEP JSON =====")
+except Exception as e:
+    print("Sleep debug error:", e)
+
+# 2. Сон и Время (Исправлено: 6.9 и сохранение morning_ts)
     for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
@@ -103,27 +113,6 @@ except Exception as e:
 
 # Финальная сборка строки (morning_ts теперь точно не пустой)
 morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
-
-# --- Дополнительная попытка получить Sleep Score ---
-if not slp_sc:
-    for d in [yesterday_str, today_str]:
-        try:
-            sleep_data = gar.get_sleep_data(d)
-            if not sleep_data:
-                continue
-
-            slp_sc = (
-                sleep_data.get("sleepScore")
-                or sleep_data.get("overallScore", {}).get("value")
-                or sleep_data.get("sleepScores", {}).get("overall")
-                or sleep_data.get("sleepScores", {}).get("overall", {}).get("value")
-                or ""
-            )
-
-            if slp_sc:
-                break
-        except:
-            continue
 
 # --- 2. DAILY BLOCK ---
 try:
