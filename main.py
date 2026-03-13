@@ -45,108 +45,122 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK ---
+# --- ИНИЦИАЛИЗАЦИЯ (Чтобы не было ошибок "not defined") ---
 morning_ts = f"{today_str} 08:00"
 weight, r_hr, hrv, bb_morning, slp_sc, slp_h = "", "", "", "", "", ""
+daily_row = [today_str, "", "", "", "", ""]
+activities_to_log = []
 
+# --- 1. MORNING BLOCK ---
 try:
-    hrv_res = gar.get_hrv_data(today_str) or {}
-    hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
-
-    for d in [today_str, yesterday_str]:
-        sleep_data = gar.get_sleep_data(d) or {}
-        dto = sleep_data.get("dailySleepDTO") or {}
-        if dto and dto.get("sleepTimeSeconds", 0) > 0:
-            slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-            scores = dto.get("sleepScores") or {}
-            slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
-            raw_ts = dto.get("sleepEndTimestampLocal")
-            if raw_ts:
-                if isinstance(raw_ts, (int, float)):
-                    dt_obj = datetime.fromtimestamp(raw_ts / 1000)
-                    morning_ts = dt_obj.strftime("%Y-%m-%d %H:%M")
-                else:
-                    morning_ts = str(raw_ts).replace("T", " ")[:16]
-            break
-
+    # HRV
     try:
-        w_data = gar.get_body_composition(today_str)
-        weights = w_data.get('dateWeightList', [])
-        if not weights:
-            w_data = gar.get_body_composition(yesterday_str, today_str)
-            weights = w_data.get('dateWeightList', [])
-        if weights:
-            last_w_entry = weights[-1] 
-            weight = round(float(last_w_entry.get('weight', 0)) / 1000, 1)
+        hrv_res = gar.get_hrv_data(today_str) or {}
+        hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
     except: pass
 
+    # Сон
+    for d in [today_str, yesterday_str]:
+        try:
+            sleep_data = gar.get_sleep_data(d) or {}
+            dto = sleep_data.get("dailySleepDTO") or {}
+            if dto and dto.get("sleepTimeSeconds", 0) > 0:
+                slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
+                scores = dto.get("sleepScores") or {}
+                slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
+                raw_ts = dto.get("sleepEndTimestampLocal")
+                if raw_ts:
+                    if isinstance(raw_ts, (int, float)):
+                        morning_ts = datetime.fromtimestamp(raw_ts / 1000).strftime("%Y-%m-%d %H:%M")
+                    else:
+                        morning_ts = str(raw_ts).replace("T", " ")[:16]
+                break
+        except: continue
+
+    # Вес
+    try:
+        w_data = gar.get_body_composition(yesterday_str, today_str) or {}
+        weights = w_data.get('dateWeightList', [])
+        if weights:
+            weight = round(float(weights[-1].get('weight', 0)) / 1000, 1)
+    except: pass
+
+    # Сводка (Пульс, BB, Калории)
     summary = gar.get_user_summary(today_str) or {}
     r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
-    bb_morning = summary.get("bodyBatteryHighestValue") or summary.get("bodyBatteryMostRecentValue") or ""
-except Exception as e: print(f"Morning Error: {e}")
+    bb_now = summary.get("bodyBatteryMostRecentValue") or ""
+    bb_morning = summary.get("bodyBatteryHighestValue") or bb_now
+    
+    # Заполнение Daily
+    steps_data = gar.get_daily_steps(today_str, today_str)
+    steps = steps_data[0].get('totalSteps', 0) if steps_data else 0
+    cals = (summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0)) or 0
+    daily_row = [today_str, steps, round(steps * 0.000762, 2), cals, r_hr, bb_now]
+
+except Exception as e:
+    print(f"Morning/Daily Data Collection Error: {e}")
+
+morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 
 # --- 2. ACTIVITIES ---
-activities_to_log = []
 try:
-    latest_activities = gar.get_activities(0, 5)
+    latest_activities = gar.get_activities(0, 5) or []
     for a in latest_activities:
         start_local = a.get("startTimeLocal", "")
         if not start_local.startswith(today_str): continue
         
-        act_date_time = start_local.replace("T", " ")[:16]
+        act_id = str(a.get("activityId"))
         cad = (a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "")
         t_load = round(float(a.get('activityTrainingLoad') or 0), 1)
         
         activities_to_log.append({
             "type": a.get('activityType', {}).get('typeKey', ''),
             "dist": round(a.get('distance', 0) / 1000, 2),
-            "dur": round(a.get('duration', 0) / 3600, 2),
-            "avg_hr": a.get('averageHR', ""),
-            "max_hr": a.get('maxHR', ""),
-            "aerobic": round(float(a.get('aerobicTrainingEffect', 0)), 1),
-            "pwr": a.get('avgPower', ""),
             "speed": round(a.get('averageSpeed', 0) * 3.6, 1),
-            "id": str(a.get("activityId")),
-            "row": [act_date_time, a.get('activityType', {}).get('typeKey', ''), 
+            "pwr": a.get('avgPower', "0"),
+            "avg_hr": a.get('averageHR', ""),
+            "aerobic": round(float(a.get('aerobicTrainingEffect', 0)), 1),
+            "id": act_id,
+            "row": [start_local.replace("T", " ")[:16], a.get('activityType', {}).get('typeKey', ''), 
                     round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
                     a.get('averageHR', ""), a.get('maxHR', ""), "", t_load,
                     round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
-                    a.get('avgPower', ""), cad, str(a.get("activityId"))]
+                    a.get('avgPower', ""), cad, act_id]
         })
 except: pass
 
 # --- 3. AI BLOCK ---
-ai_advice = "Нет данных"
+ai_advice = "Данные не готовы"
 if GEMINI_API_KEY:
     try:
         # Автоподбор модели
-        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
-        available = [m["name"] for m in requests.get(list_url).json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        target_model = next((m for m in available if "flash" in m), available[0]) if available else "models/gemini-1.5-flash"
+        res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
+        available = [m["name"] for m in res_m.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", []).get("supportedGenerationMethods", ["generateContent"])] # Фикс ключа
+        target_model = next((m for m in available if "flash" in m), available[0])
 
-        # Формируем промпт
         if activities_to_log:
-            act = activities_to_log[0] # Берем последнюю
-            prompt = (f"Ты — Athlete Intelligence (стиль Strava). Проанализируй велотренировку:\n"
-                      f"Дистанция {act['dist']} км, Скорость {act['speed']} км/ч, Мощность {act['pwr']} Вт, "
-                      f"Пульс {act['avg_hr']} (аэробный эффект {act['aerobic']}).\n"
-                      f"Дай проф. разбор работы и в конце одну колкую шутку про атлета.")
+            act = activities_to_log[0]
+            prompt = (f"Ты — Athlete Intelligence. Разбери велотренировку: {act['dist']}км, {act['speed']}км/ч, "
+                      f"мощность {act['pwr']}Вт, пульс {act['avg_hr']}, эффект {act['aerobic']}. "
+                      f"Дай проф. анализ зон и колкую шутку в конце.")
         else:
-            prompt = (f"Ты — элитный спортивный аналитик. HRV: {hrv}, Пульс: {r_hr}, Сон: {slp_h}ч (Score: {slp_sc}), BB: {bb_morning}.\n"
-                      f"Дай экспертный вывод о готовности к нагрузкам (2-3 предл.) и одну ироничную колкость.")
+            prompt = (f"Ты — элитный аналитик. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, Score {slp_sc}, BB {bb_morning}. "
+                      f"Дай прогноз на день и ироничную колкость.")
 
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
-        ai_advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e: ai_advice = f"AI Error: {str(e)[:50]}"
+        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
+        ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except: ai_advice = "ИИ временно недоступен"
 
-# --- 4. WRITE & TELEGRAM ---
+# --- 4. WRITE TO SHEETS & TELEGRAM ---
 try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(credentials).open("Garmin_Data")
     
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
+    
     act_sheet = ss.worksheet("Activities")
     existing_ids = {r[12] for r in act_sheet.get_all_values() if len(r) > 12}
     for act in activities_to_log:
@@ -155,9 +169,9 @@ try:
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Info", ai_advice.replace('*', '')])
     
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        status_icon = "🚴‍♂️" if activities_to_log else "🌅"
-        msg = f"{status_icon} *Garmin Update*\n\n💓 HRV: {hrv}\n🌙 Сон: {slp_h}ч (Score: {slp_sc})\n⚖️ Вес: {weight} кг\n\n🤖 {ai_advice.replace('*', '')}"
+        status = "🚴‍♂️" if activities_to_log else "🌅"
+        msg = f"{status} *Garmin Sync*\n\n💓 HRV: {hrv or 'N/A'}\n🌙 Сон: {slp_h or 'N/A'}ч\n⚖️ Вес: {weight or 'N/A'}кг\n\n🤖 {ai_advice.replace('*', '')}"
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                       json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-    print("✅ Успех!")
-except Exception as e: print(f"Final Error: {e}")
+    print("✅ Всё синхронизировано!")
+except Exception as e: print(f"Final Write Error: {e}")
