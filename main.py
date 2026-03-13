@@ -46,59 +46,60 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK (ФИКС ОШИБКИ ТИПА ДАННЫХ) ---
+# --- 1. MORNING BLOCK (ФИНАЛЬНЫЙ ФИКС ВЕСА И ДАТЫ) ---
 morning_ts = f"{today_str} 08:00"
 weight, r_hr, hrv, bb_morning, slp_sc, slp_h = "", "", "", "", "", ""
 
 try:
     # 1. HRV
-    try:
-        hrv_res = gar.get_hrv_data(today_str) or {}
-        hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
-    except: pass
+    hrv_res = gar.get_hrv_data(today_str) or {}
+    hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 
-    # 2. Сон и Sleep Score
+    # 2. Сон, Sleep Score и Дата
     for d in [today_str, yesterday_str]:
-        try:
-            sleep_data = gar.get_sleep_data(d) or {}
-            dto = sleep_data.get("dailySleepDTO") or {}
-            if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-                
-                # Путь к Score, который точно работает
-                scores = dto.get("sleepScores") or {}
-                slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
-                
-                # Фикс ошибки 'int' object has no attribute 'replace'
-                raw_ts = dto.get("sleepEndTimestampLocal")
-                if raw_ts:
+        sleep_data = gar.get_sleep_data(d) or {}
+        dto = sleep_data.get("dailySleepDTO") or {}
+        if dto and dto.get("sleepTimeSeconds", 0) > 0:
+            slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
+            scores = dto.get("sleepScores") or {}
+            slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
+            
+            # ИСПРАВЛЕНИЕ ДАТЫ:
+            raw_ts = dto.get("sleepEndTimestampLocal")
+            if raw_ts:
+                if isinstance(raw_ts, (int, float)):
+                    # Конвертируем число (ms) в нормальную дату
+                    dt_obj = datetime.fromtimestamp(raw_ts / 1000)
+                    morning_ts = dt_obj.strftime("%Y-%m-%d %H:%M")
+                else:
                     morning_ts = str(raw_ts).replace("T", " ")[:16]
-                break
-        except: continue
+            break
 
-    # 3. Вес (Index S2)
+    # 3. ВЕС (Ищем самый свежий замер за сегодня)
     try:
-        # Запрос за 7 дней, чтобы точно зацепить замер
-        w_data = gar.get_body_composition((now - timedelta(days=7)).strftime("%Y-%m-%d"), today_str)
-        if w_data and w_data.get('dateWeightList'):
-            last_entry = w_data['dateWeightList'][-1]
-            weight = round(float(last_entry.get('weight', 0)) / 1000, 1)
-            print(f"✅ Вес найден в dateWeightList: {weight}")
+        # Запрашиваем данные только за сегодня
+        w_data = gar.get_body_composition(today_str)
+        
+        # Если весы Index S2, данные обычно лежат в dateWeightList
+        weights = w_data.get('dateWeightList', [])
+        if not weights:
+            # Если сегодня еще не взвешивался, проверяем последние 2 дня
+            w_data = gar.get_body_composition(yesterday_str, today_str)
+            weights = w_data.get('dateWeightList', [])
+
+        if weights:
+            # Сортируем по времени, чтобы взять САМЫЙ последний замер
+            # В weights обычно лежат объекты с ключом 'sampleTime'
+            last_w_entry = weights[-1] 
+            weight = round(float(last_w_entry.get('weight', 0)) / 1000, 1)
+            print(f"✅ Актуальный вес найден: {weight}")
     except Exception as ew:
         print(f"DEBUG Weight Error: {ew}")
 
     # 4. Пульс и BB
-    try:
-        sum_data = gar.get_user_summary(today_str) or {}
-        r_hr = sum_data.get("restingHeartRate") or sum_data.get("heartRateRestingValue") or ""
-        bb_morning = sum_data.get("bodyBatteryHighestValue") or sum_data.get("bodyBatteryMostRecentValue") or ""
-        
-        # Запасной вариант для веса из сводки
-        if not weight:
-            w_raw = sum_data.get("weight") or sum_data.get("latestWeight")
-            if w_raw:
-                weight = round(float(w_raw) / 1000, 1)
-    except: pass
+    summary = gar.get_user_summary(today_str) or {}
+    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
+    bb_morning = summary.get("bodyBatteryHighestValue") or summary.get("bodyBatteryMostRecentValue") or ""
 
 except Exception as e:
     print(f"General Morning Error: {e}")
