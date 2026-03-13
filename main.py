@@ -179,21 +179,21 @@ try:
     print("✅ Данные Garmin синхронизированы с Google Sheets")
 except Exception as e: print("Sheets write error:", e)
 
-# ---------- ЕДИНЫЙ AI БЛОК (FIX 404 FINAL) ----------
+# ---------- ЕДИНЫЙ AI БЛОК (ULTIMATE FIX 404) ----------
 ai_advice = "Нет данных"
 if not GEMINI_API_KEY:
     ai_advice = "Ошибка: API Ключ не найден"
 else:
     try:
-        print("⏳ Ожидание 10с... Пробую стабильный API v1")
+        print("⏳ Ожидание 10с... Пробую модель 1.5-flash-8b")
         time.sleep(10)
         
         workout = f"Тренировка: {activities_to_log[0][1]}" if activities_to_log else "Нет тренировок"
         prompt = (f"Ты ироничный тренер. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}, {workout}.\n"
                   f"Оцени состояние и дай 1 колкий совет на русском (до 2 предложений).")
 
-        # Пробуем стабильную версию v1 и самую актуальную модель
-        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+        # Пробуем максимально точный URL
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key={GEMINI_API_KEY.strip()}"
         
         payload = {
             "contents": [{
@@ -209,17 +209,17 @@ else:
             resp_json = res.json()
             if "candidates" in resp_json:
                 ai_advice = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print("✅ ИИ успешно ответил через v1")
+                print("✅ ИИ ответил!")
             else:
-                ai_advice = "API 200, но контента нет"
+                ai_advice = "API 200, но ответ пуст"
         else:
-            # Если всё еще 404, выводим полный URL (без ключа) для диагностики
+            # Выводим подробности ошибки в консоль GitHub Actions
+            print(f"❌ Ошибка {res.status_code}")
+            print(f"❌ Тело ответа: {res.text}")
             ai_advice = f"Ошибка API: {res.status_code}"
-            print(f"❌ Ошибка {res.status_code}. URL: {url.split('?')[0]}")
-            print(f"❌ Ответ сервера: {res.text}")
 
     except Exception as e:
-        ai_advice = f"Ошибка: {str(e)[:50]}"
+        ai_advice = f"Ошибка выполнения: {str(e)[:50]}"
 
 # Запись в AI_Log
 try:
