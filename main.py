@@ -179,21 +179,21 @@ try:
     print("✅ Данные Garmin синхронизированы с Google Sheets")
 except Exception as e: print("Sheets write error:", e)
 
-# ---------- ЕДИНЫЙ AI БЛОК (FIX 404) ----------
+# ---------- ЕДИНЫЙ AI БЛОК (FIX 404 FINAL) ----------
 ai_advice = "Нет данных"
 if not GEMINI_API_KEY:
     ai_advice = "Ошибка: API Ключ не найден"
 else:
     try:
-        print(f"⏳ Ожидание 10с (защита от лимитов)... Модель: gemini-1.5-flash")
+        print("⏳ Ожидание 10с... Пробую стабильный API v1")
         time.sleep(10)
         
         workout = f"Тренировка: {activities_to_log[0][1]}" if activities_to_log else "Нет тренировок"
-        prompt = (f"Ты ироничный тренер. Данные сегодня: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}, {workout}.\n"
+        prompt = (f"Ты ироничный тренер. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}, {workout}.\n"
                   f"Оцени состояние и дай 1 колкий совет на русском (до 2 предложений).")
 
-        # Пробуем универсальный эндпоинт v1beta
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+        # Пробуем стабильную версию v1 и самую актуальную модель
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
         
         payload = {
             "contents": [{
@@ -207,22 +207,16 @@ else:
         
         if res.status_code == 200:
             resp_json = res.json()
-            ai_advice = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-            print(f"✅ Успех!")
-        elif res.status_code == 404:
-            # Если 1.5-flash не найдена, пробуем старую добрую gemini-pro
-            print("⚠️ Модель 1.5-flash не найдена (404), пробую gemini-pro...")
-            url_alt = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY.strip()}"
-            res_alt = requests.post(url_alt, json=payload, timeout=30)
-            if res_alt.status_code == 200:
-                ai_advice = res_alt.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if "candidates" in resp_json:
+                ai_advice = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+                print("✅ ИИ успешно ответил через v1")
             else:
-                ai_advice = f"Ошибка после 404: {res_alt.status_code}"
-        elif res.status_code == 429:
-            ai_advice = "Лимит запросов (429)"
+                ai_advice = "API 200, но контента нет"
         else:
+            # Если всё еще 404, выводим полный URL (без ключа) для диагностики
             ai_advice = f"Ошибка API: {res.status_code}"
-            print(f"❌ Текст ошибки: {res.text}")
+            print(f"❌ Ошибка {res.status_code}. URL: {url.split('?')[0]}")
+            print(f"❌ Ответ сервера: {res.text}")
 
     except Exception as e:
         ai_advice = f"Ошибка: {str(e)[:50]}"
