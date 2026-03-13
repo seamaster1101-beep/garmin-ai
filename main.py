@@ -78,36 +78,25 @@ try:
                 morning_ts = dto.get("sleepEndTimestampLocal", "").replace("T", " ")[:16]
             break
 
-    # 3. Вес (Специально для Index S2)
-    # Запрашиваем композицию тела — для S2 это самый точный метод
-    try:
-        w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str)
-        if w_data and w_data.get('dateWeightList'):
-            weight = round(w_data['dateWeightList'][-1].get('weight', 0) / 1000, 1)
-    except: pass
+    # 3. Вес (Исправлена опечатка w_res)
+    for i in range(5):
+        d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        try:
+            w_data = gar.get_body_composition(d_check)
+            if w_data and w_data.get('uploads'):
+                val = w_data['uploads'][-1].get('weight', 0)
+                if val > 0:
+                    weight = round(val / 1000, 1)
+                    break
+        except: continue
 
-    # 4. Пульс и BB (Исправляем внезапное исчезновение)
-    # Запрашиваем общую сводку
-    sum_data = gar.get_user_summary(today_str) or {}
-    
-    # Resting HR: проверяем несколько ключей
-    r_hr = (sum_data.get("restingHeartRate") or 
-            sum_data.get("heartRateRestingValue") or 
-            sum_data.get("minHeartRate") or "")
-    
-    # Body Battery: берем максимальное за утро
-    bb_morning = sum_data.get("bodyBatteryHighestValue") or sum_data.get("bodyBatteryMostRecentValue") or ""
-
-    # Доп. проверка веса из сводки, если первый метод подвел
-    if not weight:
-        w_raw = sum_data.get("weight") or sum_data.get("latestWeight")
-        if w_raw:
-            weight = round(float(w_raw) / 1000, 1)
+    # 4. Пульс и BB
+    summary = gar.get_user_summary(today_str) or {}
+    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
+    bb_morning = summary.get("bodyBatteryHighestValue") or ""
 
 except Exception as e:
-    print(f"General Morning Error: {e}")
-
-morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+    print(f"Morning Block Minor Error: {e}")
 
 # Финальная сборка строки (morning_ts теперь точно не пустой)
 morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
