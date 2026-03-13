@@ -179,58 +179,58 @@ try:
     print("✅ Данные Garmin синхронизированы с Google Sheets")
 except Exception as e: print("Sheets write error:", e)
 
-# ---------- ЕДИНЫЙ AI БЛОК (DEBUG-ВЕРСИЯ) ----------
+# ---------- ЕДИНЫЙ AI БЛОК (FIX 404) ----------
 ai_advice = "Нет данных"
 if not GEMINI_API_KEY:
-    ai_advice = "Ошибка: API Ключ не найден в Secrets"
-    print("❌ Ключ GEMINI_API_KEY не найден!")
+    ai_advice = "Ошибка: API Ключ не найден"
 else:
     try:
-        print(f"⏳ Ожидание 10с для сброса лимитов API... (Ключ найден: {GEMINI_API_KEY[:4]}***)")
+        print(f"⏳ Ожидание 10с (защита от лимитов)... Модель: gemini-1.5-flash")
         time.sleep(10)
         
-        # Контекст
-        try:
-            hist_vals = ss.worksheet("Morning").get_all_values()[-3:]
-            history_str = f"Прошлые дни: {hist_vals}"
-        except: history_str = "История недоступна"
-
         workout = f"Тренировка: {activities_to_log[0][1]}" if activities_to_log else "Нет тренировок"
-        
-        prompt = (f"Ты ироничный тренер. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}, {workout}.\n"
-                  f"{history_str}\n"
+        prompt = (f"Ты ироничный тренер. Данные сегодня: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}, {workout}.\n"
                   f"Оцени состояние и дай 1 колкий совет на русском (до 2 предложений).")
 
+        # Пробуем универсальный эндпоинт v1beta
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
         
-        headers = {'Content-Type': 'application/json'}
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": prompt
+                }]
+            }]
+        }
         
-        res = requests.post(url, json=payload, headers=headers, timeout=30)
+        res = requests.post(url, json=payload, timeout=30)
         
         if res.status_code == 200:
             resp_json = res.json()
-            if "candidates" in resp_json and len(resp_json["candidates"]) > 0:
-                ai_advice = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print(f"✅ ИИ успешно ответил: {ai_advice[:50]}...")
+            ai_advice = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+            print(f"✅ Успех!")
+        elif res.status_code == 404:
+            # Если 1.5-flash не найдена, пробуем старую добрую gemini-pro
+            print("⚠️ Модель 1.5-flash не найдена (404), пробую gemini-pro...")
+            url_alt = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY.strip()}"
+            res_alt = requests.post(url_alt, json=payload, timeout=30)
+            if res_alt.status_code == 200:
+                ai_advice = res_alt.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             else:
-                ai_advice = "API ответил 200, но текст не прислал (Empty Candidates)"
+                ai_advice = f"Ошибка после 404: {res_alt.status_code}"
         elif res.status_code == 429:
-            ai_advice = "Лимит запросов (429). Подождите 1-2 минуты."
+            ai_advice = "Лимит запросов (429)"
         else:
             ai_advice = f"Ошибка API: {res.status_code}"
-            print(f"❌ Детали ошибки: {res.text}")
+            print(f"❌ Текст ошибки: {res.text}")
 
     except Exception as e:
-        ai_advice = f"Ошибка выполнения: {str(e)[:50]}"
-        print(f"❌ Ошибка в блоке ИИ: {e}")
+        ai_advice = f"Ошибка: {str(e)[:50]}"
 
 # Запись в AI_Log
 try:
-    log_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ss.worksheet("AI_Log").append_row([log_time, "Info", ai_advice.replace('*', '')])
-except Exception as e:
-    print(f"❌ Не удалось записать в AI_Log: {e}")
+    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Info", ai_advice.replace('*', '')])
+except: pass
     
 # ---------- TELEGRAM (ОТКЛЮЧЕНО ПО ПРОСЬБЕ) ----------
 # try:
