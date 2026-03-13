@@ -46,59 +46,63 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK (ИСПРАВЛЕННЫЙ) ---
-# Инициализируем дату сразу, чтобы она не пропала при ошибках
+# --- 1. MORNING BLOCK (ФИКС ОШИБКИ ТИПА ДАННЫХ) ---
 morning_ts = f"{today_str} 08:00"
 weight, r_hr, hrv, bb_morning, slp_sc, slp_h = "", "", "", "", "", ""
 
 try:
     # 1. HRV
     try:
-        hrv_res = gar.get_hrv_data(today_str)
-        if hrv_res and "hrvSummary" in hrv_res:
-            hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
+        hrv_res = gar.get_hrv_data(today_str) or {}
+        hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
     except: pass
-    
-    if not hrv:
-        try:
-            stats = gar.get_stats(today_str) or {}
-            hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
-        except: pass
 
-# 2. Сон и Sleep Score (Твой рабочий метод)
+    # 2. Сон и Sleep Score
     for d in [today_str, yesterday_str]:
-        sleep_data = gar.get_sleep_data(d) or {}
-        dto = sleep_data.get("dailySleepDTO") or {}
-        if dto and dto.get("sleepTimeSeconds", 0) > 0:
-            slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-            # Тот самый путь, который сработал:
-            scores = dto.get("sleepScores") or {}
-            slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
-            if dto.get("sleepEndTimestampLocal"):
-                morning_ts = dto.get("sleepEndTimestampLocal", "").replace("T", " ")[:16]
-            break
-
-    # 3. Вес (Исправлена опечатка w_res)
-    for i in range(5):
-        d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
-            w_data = gar.get_body_composition(d_check)
-            if w_data and w_data.get('uploads'):
-                val = w_data['uploads'][-1].get('weight', 0)
-                if val > 0:
-                    weight = round(val / 1000, 1)
-                    break
+            sleep_data = gar.get_sleep_data(d) or {}
+            dto = sleep_data.get("dailySleepDTO") or {}
+            if dto and dto.get("sleepTimeSeconds", 0) > 0:
+                slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
+                
+                # Путь к Score, который точно работает
+                scores = dto.get("sleepScores") or {}
+                slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
+                
+                # Фикс ошибки 'int' object has no attribute 'replace'
+                raw_ts = dto.get("sleepEndTimestampLocal")
+                if raw_ts:
+                    morning_ts = str(raw_ts).replace("T", " ")[:16]
+                break
         except: continue
 
+    # 3. Вес (Index S2)
+    try:
+        # Запрос за 7 дней, чтобы точно зацепить замер
+        w_data = gar.get_body_composition((now - timedelta(days=7)).strftime("%Y-%m-%d"), today_str)
+        if w_data and w_data.get('dateWeightList'):
+            last_entry = w_data['dateWeightList'][-1]
+            weight = round(float(last_entry.get('weight', 0)) / 1000, 1)
+            print(f"✅ Вес найден в dateWeightList: {weight}")
+    except Exception as ew:
+        print(f"DEBUG Weight Error: {ew}")
+
     # 4. Пульс и BB
-    summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
-    bb_morning = summary.get("bodyBatteryHighestValue") or ""
+    try:
+        sum_data = gar.get_user_summary(today_str) or {}
+        r_hr = sum_data.get("restingHeartRate") or sum_data.get("heartRateRestingValue") or ""
+        bb_morning = sum_data.get("bodyBatteryHighestValue") or sum_data.get("bodyBatteryMostRecentValue") or ""
+        
+        # Запасной вариант для веса из сводки
+        if not weight:
+            w_raw = sum_data.get("weight") or sum_data.get("latestWeight")
+            if w_raw:
+                weight = round(float(w_raw) / 1000, 1)
+    except: pass
 
 except Exception as e:
-    print(f"Morning Block Minor Error: {e}")
+    print(f"General Morning Error: {e}")
 
-# Финальная сборка строки (morning_ts теперь точно не пустой)
 morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 
 # --- ОБНОВЛЕННЫЙ DEBUG DATA ---
