@@ -179,18 +179,21 @@ try:
     print("✅ Данные Garmin синхронизированы с Google Sheets")
 except Exception as e: print("Sheets write error:", e)
 
-# ---------- ЕДИНЫЙ AI БЛОК ----------
+# ---------- ЕДИНЫЙ AI БЛОК (DEBUG-ВЕРСИЯ) ----------
 ai_advice = "Нет данных"
-if GEMINI_API_KEY:
+if not GEMINI_API_KEY:
+    ai_advice = "Ошибка: API Ключ не найден в Secrets"
+    print("❌ Ключ GEMINI_API_KEY не найден!")
+else:
     try:
-        print("⏳ Ожидание 10с (защита от лимитов API)...")
+        print(f"⏳ Ожидание 10с для сброса лимитов API... (Ключ найден: {GEMINI_API_KEY[:4]}***)")
         time.sleep(10)
         
-        # Контекст из таблицы Morning
+        # Контекст
         try:
             hist_vals = ss.worksheet("Morning").get_all_values()[-3:]
             history_str = f"Прошлые дни: {hist_vals}"
-        except: history_str = ""
+        except: history_str = "История недоступна"
 
         workout = f"Тренировка: {activities_to_log[0][1]}" if activities_to_log else "Нет тренировок"
         
@@ -199,21 +202,36 @@ if GEMINI_API_KEY:
                   f"Оцени состояние и дай 1 колкий совет на русском (до 2 предложений).")
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
+        
+        headers = {'Content-Type': 'application/json'}
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        
+        res = requests.post(url, json=payload, headers=headers, timeout=30)
         
         if res.status_code == 200:
-            ai_advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            print(f"🤖 ИИ: {ai_advice}")
+            resp_json = res.json()
+            if "candidates" in resp_json and len(resp_json["candidates"]) > 0:
+                ai_advice = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+                print(f"✅ ИИ успешно ответил: {ai_advice[:50]}...")
+            else:
+                ai_advice = "API ответил 200, но текст не прислал (Empty Candidates)"
         elif res.status_code == 429:
-            ai_advice = "ИИ перегружен (429)"
+            ai_advice = "Лимит запросов (429). Подождите 1-2 минуты."
+        else:
+            ai_advice = f"Ошибка API: {res.status_code}"
+            print(f"❌ Детали ошибки: {res.text}")
+
     except Exception as e:
-        ai_advice = f"Ошибка ИИ: {str(e)[:50]}"
+        ai_advice = f"Ошибка выполнения: {str(e)[:50]}"
+        print(f"❌ Ошибка в блоке ИИ: {e}")
 
 # Запись в AI_Log
 try:
-    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Info", ai_advice.replace('*', '')])
-except: pass
-
+    log_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ss.worksheet("AI_Log").append_row([log_time, "Info", ai_advice.replace('*', '')])
+except Exception as e:
+    print(f"❌ Не удалось записать в AI_Log: {e}")
+    
 # ---------- TELEGRAM (ОТКЛЮЧЕНО ПО ПРОСЬБЕ) ----------
 # try:
 #     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
