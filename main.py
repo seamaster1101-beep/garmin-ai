@@ -77,13 +77,18 @@ try:
                 break
         except: continue
 
-    # Вес
+    # ВЕС: Сортируем по времени замера (sampleTime), чтобы не брать старье
     try:
-        w_data = gar.get_body_composition(yesterday_str, today_str) or {}
+        # Берем данные за 3 дня для надежности
+        w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
         weights = w_data.get('dateWeightList', [])
         if weights:
-            weight = round(float(weights[-1].get('weight', 0)) / 1000, 1)
-    except: pass
+            # СОРТИРОВКА: выбираем замер с самой поздней меткой времени
+            actual_entry = max(weights, key=lambda x: x.get('sampleTime', 0))
+            weight = round(float(actual_entry.get('weight', 0)) / 1000, 1)
+            print(f"✅ Найден самый свежий вес: {weight}")
+    except Exception as ew:
+        print(f"DEBUG Weight Error: {ew}")
 
     # Сводка (Пульс, BB, Калории)
     summary = gar.get_user_summary(today_str) or {}
@@ -129,13 +134,16 @@ try:
         })
 except: pass
 
-# --- 3. AI BLOCK ---
+# --- 3. AI BLOCK (ФИКС ПОДБОРА МОДЕЛИ) ---
 ai_advice = "Данные не готовы"
 if GEMINI_API_KEY:
     try:
-        # Автоподбор модели
+        # Упрощенный подбор модели без лишних вложений
         res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
-        available = [m["name"] for m in res_m.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", []).get("supportedGenerationMethods", ["generateContent"])] # Фикс ключа
+        models_list = res_m.json().get("models", [])
+        
+        # Ищем flash, если нет - любую доступную для генерации
+        available = [m["name"] for m in models_list if "generateContent" in m.get("supportedGenerationMethods", [])]
         target_model = next((m for m in available if "flash" in m), available[0])
 
         if activities_to_log:
@@ -148,9 +156,11 @@ if GEMINI_API_KEY:
                       f"Дай прогноз на день и ироничную колкость.")
 
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
-        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
+        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except: ai_advice = "ИИ временно недоступен"
+    except Exception as e: 
+        print(f"AI Error: {e}")
+        ai_advice = "ИИ временно недоступен"
 
 # --- 4. WRITE TO SHEETS & TELEGRAM ---
 try:
