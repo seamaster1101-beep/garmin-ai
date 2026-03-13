@@ -65,33 +65,36 @@ try:
             hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-# 2. Сон и Время (Исправлено: 6.9 и сохранение morning_ts)
+# 2. Сон и Sleep Score (Новая логика поиска score)
     for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
+            # Ищем баллы везде, где они могут быть
+            slp_sc = (sleep_data.get("dailySleepDTO", {}).get("sleepScore") or 
+                      sleep_data.get("sleepScore") or 
+                      sleep_data.get("dailySleepDTO", {}).get("value") or "")
+            
             dto = sleep_data.get("dailySleepDTO") or {}
             if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                slp_sc = dto.get("sleepScore") or sleep_data.get("sleepScore") or ""
-                # Та самая формула для 6.9
                 slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-                
-                # Обновляем время только если оно есть в данных сна
                 if dto.get("sleepEndTimeLocal"):
                     morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
                 break
         except: continue
 
-    # 3. Вес (Исправлена опечатка w_res)
-    for i in range(5):
-        d_check = (now - timedelta(days=i)).strftime("%Y-%m-%d")
-        try:
-            w_data = gar.get_body_composition(d_check)
-            if w_data and w_data.get('uploads'):
-                val = w_data['uploads'][-1].get('weight', 0)
-                if val > 0:
-                    weight = round(val / 1000, 1)
-                    break
-        except: continue
+    # 3. Вес (Метод-дублер для ручного ввода)
+    try:
+        # Сначала пробуем стандарт
+        w_data = gar.get_body_composition(today_str)
+        if w_data and w_data.get('uploads'):
+            weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
+        
+        # Если пусто — пробуем получить через историю веса
+        if not weight:
+            w_hist = gar.get_weight(yesterday_str, today_str)
+            if w_hist and w_hist.get('weightList'):
+                weight = round(w_hist['weightList'][-1].get('weight', 0) / 1000, 1)
+    except: pass
 
     # 4. Пульс и BB
     summary = gar.get_user_summary(today_str) or {}
