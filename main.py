@@ -65,32 +65,29 @@ try:
             hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-# 2. Сон и Sleep Score (С полным дампом ключей)
+# 2. Сон и Sleep Score (Достаем из глубокой вложенности)
     for d in [today_str, yesterday_str]:
         sleep_data = gar.get_sleep_data(d) or {}
         dto = sleep_data.get("dailySleepDTO") or {}
         if dto and dto.get("sleepTimeSeconds", 0) > 0:
             slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-            # ВЫВОДИМ ВСЕ КЛЮЧИ ДЛЯ ПОИСКА SCORE
-            print(f"DEBUG SLEEP KEYS: {list(sleep_data.keys())}")
-            if "dailySleepDTO" in sleep_data:
-                print(f"DEBUG DTO KEYS: {list(sleep_data['dailySleepDTO'].keys())}")
             
-            slp_sc = (sleep_data.get("sleepScore") or dto.get("sleepScore") or 
-                      sleep_data.get("score") or dto.get("value") or "")
+            # Извлекаем Score из вложенного словаря sleepScores
+            scores = dto.get("sleepScores") or {}
+            slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
+            
+            if dto.get("sleepEndTimestampLocal"):
+                # Конвертируем таймстамп в читаемую дату, если нужно
+                morning_ts = dto.get("sleepEndTimestampLocal", "").replace("T", " ")[:16]
             break
 
-    # 3. Вес (Запрос за 7 дней для Index S2)
+    # 3. Вес (Специально для Index S2 из dateWeightList)
     try:
         w_data = gar.get_body_composition((now - timedelta(days=7)).strftime("%Y-%m-%d"), today_str)
-        print(f"DEBUG WEIGHT KEYS: {list(w_data.keys()) if w_data else 'None'}")
-        
-        if w_data and w_data.get('uploads'):
-            last_upload = w_data['uploads'][-1]
-            weight = round(last_upload.get('weight', 0) / 1000, 1)
-            print(f"DEBUG: Нашел вес в uploads: {weight}")
-        elif w_data and w_data.get('totalWeight'): # Иногда у S2 ключ тут
-            weight = round(w_data['totalWeight'] / 1000, 1)
+        if w_data and w_data.get('dateWeightList'):
+            # Берем последний замер из списка за неделю
+            last_entry = w_data['dateWeightList'][-1]
+            weight = round(last_entry.get('weight', 0) / 1000, 1)
     except Exception as e:
         print(f"DEBUG Weight Error: {e}")
     
