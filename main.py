@@ -179,55 +179,57 @@ try:
     print("✅ Данные Garmin синхронизированы с Google Sheets")
 except Exception as e: print("Sheets write error:", e)
 
-# ---------- ЕДИНЫЙ AI БЛОК (ФИНАЛЬНЫЙ ТЫК В 404) ----------
+# ---------- БЛОК ИИ С АВТОПОДБОРОМ МОДЕЛИ ----------
 ai_advice = "Нет данных"
 if not GEMINI_API_KEY:
     ai_advice = "Ошибка: API Ключ не найден"
 else:
     try:
-        print("⏳ Ожидание 15с... Пробую стандартную модель gemini-1.5-flash")
-        time.sleep(15)
+        print("🔍 Шаг 1: Опрашиваю список доступных моделей...")
+        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY.strip()}"
+        list_res = requests.get(list_url, timeout=20)
         
-        workout = f"Тренировка: {activities_to_log[0][1]}" if activities_to_log else "Нет тренировок"
-        prompt = (f"Ты ироничный тренер. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}, {workout}.\n"
-                  f"Оцени состояние и дай 1 колкий совет на русском (до 2 предложений).")
+        target_model = "models/gemini-1.5-flash" # Резерв
+        if list_res.status_code == 200:
+            models_data = list_res.json().get("models", [])
+            # Ищем любую модель, поддерживающую генерацию контента
+            available = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
+            if available:
+                # Приоритет: flash -> pro -> любая первая
+                target_model = next((m for m in available if "flash" in m), 
+                                    next((m for m in available if "pro" in m), available[0]))
+                print(f"✅ Найдена рабочая модель: {target_model}")
+            else:
+                print("⚠️ Список моделей пуст, пробую стандарт.")
+        else:
+            print(f"⚠️ Не удалось получить список моделей ({list_res.status_code}), пробую стандарт.")
 
-        # Используем v1beta, но с максимально стандартным именем модели
-        # Если и это даст 404, значит Google требует v1 (без beta)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+        print(f"⏳ Шаг 2: Запрос к {target_model}...")
+        time.sleep(5)
         
-        payload = {
-            "contents": [{
-                "parts": [{
-                    "text": prompt
-                }]
-            }]
-        }
-        
-        res = requests.post(url, json=payload, timeout=30)
+        prompt = (f"Ты ироничный тренер. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}.\n"
+                  f"Дай 1 колкий совет на русском (до 2 предложений).")
+
+        # Формируем URL динамически на основе найденной модели
+        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY.strip()}"
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         
         if res.status_code == 200:
-            resp_json = res.json()
-            if "candidates" in resp_json:
-                ai_advice = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print("✅ УСПЕХ! ИИ ответил.")
-            else:
-                ai_advice = "API 200, но нет ответа"
+            ai_advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            print("✅ ИИ ответил!")
         else:
-            print(f"❌ Ошибка {res.status_code}. Пробую последнюю попытку через v1/gemini-1.5-pro...")
-            # Последний шанс: версия v1 и модель PRO
-            url_pro = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY.strip()}"
-            res_pro = requests.post(url_pro, json=payload, timeout=30)
-            
-            if res_pro.status_code == 200:
-                ai_advice = res_pro.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print("✅ УСПЕХ через PRO модель!")
-            else:
-                print(f"❌ Ответ v1/pro: {res_pro.text}")
-                ai_advice = f"API Error {res_pro.status_code}"
+            ai_advice = f"Ошибка API {res.status_code}"
+            print(f"❌ Финальный отказ: {res.text}")
 
     except Exception as e:
         ai_advice = f"Ошибка выполнения: {str(e)[:50]}"
+
+# --- РЕНТГЕН ДАННЫХ (Для Weight и Sleep Score) ---
+print("\n--- DEBUG DATA ---")
+print(f"Weight Raw: {weight}")
+print(f"Sleep Score Raw: {slp_sc}")
+print(f"Sleep Hours: {slp_h}")
+# --------------------------------------------------
 
 # Запись в AI_Log
 try:
