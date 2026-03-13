@@ -179,21 +179,22 @@ try:
     print("✅ Данные Garmin синхронизированы с Google Sheets")
 except Exception as e: print("Sheets write error:", e)
 
-# ---------- ЕДИНЫЙ AI БЛОК (ULTIMATE FIX 404) ----------
+# ---------- ЕДИНЫЙ AI БЛОК (ФИНАЛЬНЫЙ ТЫК В 404) ----------
 ai_advice = "Нет данных"
 if not GEMINI_API_KEY:
     ai_advice = "Ошибка: API Ключ не найден"
 else:
     try:
-        print("⏳ Ожидание 10с... Пробую модель 1.5-flash-8b")
-        time.sleep(10)
+        print("⏳ Ожидание 15с... Пробую стандартную модель gemini-1.5-flash")
+        time.sleep(15)
         
         workout = f"Тренировка: {activities_to_log[0][1]}" if activities_to_log else "Нет тренировок"
         prompt = (f"Ты ироничный тренер. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}, {workout}.\n"
                   f"Оцени состояние и дай 1 колкий совет на русском (до 2 предложений).")
 
-        # Пробуем максимально точный URL
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key={GEMINI_API_KEY.strip()}"
+        # Используем v1beta, но с максимально стандартным именем модели
+        # Если и это даст 404, значит Google требует v1 (без beta)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
         
         payload = {
             "contents": [{
@@ -209,14 +210,21 @@ else:
             resp_json = res.json()
             if "candidates" in resp_json:
                 ai_advice = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print("✅ ИИ ответил!")
+                print("✅ УСПЕХ! ИИ ответил.")
             else:
-                ai_advice = "API 200, но ответ пуст"
+                ai_advice = "API 200, но нет ответа"
         else:
-            # Выводим подробности ошибки в консоль GitHub Actions
-            print(f"❌ Ошибка {res.status_code}")
-            print(f"❌ Тело ответа: {res.text}")
-            ai_advice = f"Ошибка API: {res.status_code}"
+            print(f"❌ Ошибка {res.status_code}. Пробую последнюю попытку через v1/gemini-1.5-pro...")
+            # Последний шанс: версия v1 и модель PRO
+            url_pro = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY.strip()}"
+            res_pro = requests.post(url_pro, json=payload, timeout=30)
+            
+            if res_pro.status_code == 200:
+                ai_advice = res_pro.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                print("✅ УСПЕХ через PRO модель!")
+            else:
+                print(f"❌ Ответ v1/pro: {res_pro.text}")
+                ai_advice = f"API Error {res_pro.status_code}"
 
     except Exception as e:
         ai_advice = f"Ошибка выполнения: {str(e)[:50]}"
