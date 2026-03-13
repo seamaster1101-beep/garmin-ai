@@ -65,41 +65,35 @@ try:
             hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-# 2. Сон и Sleep Score (Добавлен поиск через 'score' и 'value')
+# 2. Сон и Sleep Score (С полным дампом ключей)
     for d in [today_str, yesterday_str]:
-        try:
-            sleep_data = gar.get_sleep_data(d)
-            dto = sleep_data.get("dailySleepDTO") or {}
+        sleep_data = gar.get_sleep_data(d) or {}
+        dto = sleep_data.get("dailySleepDTO") or {}
+        if dto and dto.get("sleepTimeSeconds", 0) > 0:
+            slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
+            # ВЫВОДИМ ВСЕ КЛЮЧИ ДЛЯ ПОИСКА SCORE
+            print(f"DEBUG SLEEP KEYS: {list(sleep_data.keys())}")
+            if "dailySleepDTO" in sleep_data:
+                print(f"DEBUG DTO KEYS: {list(sleep_data['dailySleepDTO'].keys())}")
             
-            if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                # Ищем Score: приоритет на sleepScore, затем на вложенные структуры
-                slp_sc = (sleep_data.get("sleepScore") or 
-                          dto.get("sleepScore") or 
-                          sleep_data.get("sleepScores", {}).get("overall", {}).get("value") or 
-                          dto.get("value") or "")
-                
-                slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-                if dto.get("sleepEndTimeLocal"):
-                    morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
-                break
-        except: continue
+            slp_sc = (sleep_data.get("sleepScore") or dto.get("sleepScore") or 
+                      sleep_data.get("score") or dto.get("value") or "")
+            break
 
-    # 3. Вес (Специально для Garmin Index S2)
-    summary = gar.get_user_summary(today_str) or {}
+    # 3. Вес (Запрос за 7 дней для Index S2)
     try:
-        # Сначала пробуем вытащить вес из ежедневной сводки (самый надежный путь для Index S2)
-        weight_raw = summary.get("weight") or summary.get("latestWeight")
-        if weight_raw:
-            weight = round(float(weight_raw) / 1000, 1)
+        w_data = gar.get_body_composition((now - timedelta(days=7)).strftime("%Y-%m-%d"), today_str)
+        print(f"DEBUG WEIGHT KEYS: {list(w_data.keys()) if w_data else 'None'}")
         
-        # Если в сводке пусто, пробуем альтернативный метод для весов S2
-        if not weight:
-            w_data = gar.get_body_composition(today_str)
-            if w_data and 'totalWeight' in w_data: # Специфичный ключ для S2
-                weight = round(w_data['totalWeight'] / 1000, 1)
-            elif w_data and w_data.get('uploads'):
-                weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-    except: pass
+        if w_data and w_data.get('uploads'):
+            last_upload = w_data['uploads'][-1]
+            weight = round(last_upload.get('weight', 0) / 1000, 1)
+            print(f"DEBUG: Нашел вес в uploads: {weight}")
+        elif w_data and w_data.get('totalWeight'): # Иногда у S2 ключ тут
+            weight = round(w_data['totalWeight'] / 1000, 1)
+    except Exception as e:
+        print(f"DEBUG Weight Error: {e}")
+    
     # 4. Пульс и BB
     summary = gar.get_user_summary(today_str) or {}
     r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
@@ -110,6 +104,12 @@ except Exception as e:
 
 # Финальная сборка строки (morning_ts теперь точно не пустой)
 morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
+
+# --- ОБНОВЛЕННЫЙ DEBUG DATA ---
+print("\n--- FINAL RADAR REPORT ---")
+print(f"Weight: {weight}")
+print(f"Sleep Score: {slp_sc}")
+print(f"Sleep Hours: {slp_h}")
 
 # --- 2. DAILY BLOCK ---
 try:
