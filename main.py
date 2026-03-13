@@ -65,42 +65,32 @@ try:
             hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-# 2. Сон и Sleep Score
+# 2. Сон и Sleep Score (Ищем во всех закоулках)
     for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
             dto = sleep_data.get("dailySleepDTO") or {}
             
             if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                # Проверка всех возможных полей для Score
+                # В некоторых моделях Score лежит здесь:
                 slp_sc = (dto.get("sleepScore") or 
                           sleep_data.get("sleepScore") or 
-                          dto.get("value") or 
-                          sleep_data.get("score") or "")
+                          sleep_data.get("sleepScores", {}).get("overall", {}).get("value") or 
+                          dto.get("value") or "")
                 
                 slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
                 if dto.get("sleepEndTimeLocal"):
                     morning_ts = dto.get("sleepEndTimeLocal", "").replace("T", " ")[:16]
-                
-                print(f"DEBUG: Нашел сон за {d}, Score: {slp_sc}")
                 break
         except: continue
 
-    # 3. Вес (Двойная проверка)
+    # 3. Вес (Используем только доступные методы)
     try:
-        # Пробуем через композицию тела
-        w_data = gar.get_body_composition(today_str)
+        # Пробуем получить композицию за последние 3 дня
+        w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str)
         if w_data and w_data.get('uploads'):
+            # Берем самый последний замер из списка
             weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-        
-        # Если не вышло — пробуем через историю веса (Weight List)
-        if not weight:
-            w_hist = gar.get_weight(today_str) # за сегодня
-            if not w_hist or not w_hist.get('weightList'):
-                w_hist = gar.get_weight(yesterday_str, today_str) # интервал
-            
-            if w_hist and w_hist.get('weightList'):
-                weight = round(w_hist['weightList'][-1].get('weight', 0) / 1000, 1)
     except Exception as ew:
         print(f"DEBUG Weight Error: {ew}")
 
