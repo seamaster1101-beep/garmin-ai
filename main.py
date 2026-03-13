@@ -179,90 +179,40 @@ try:
     print("✅ Данные Garmin синхронизированы с Google Sheets")
 except Exception as e: print("Sheets write error:", e)
 
-# ---------- AI BLOCK: АНАЛИЗ ТРЕНДОВ ----------
-advice = "Нет данных для анализа"
+# ---------- ЕДИНЫЙ AI БЛОК ----------
+ai_advice = "Нет данных"
 if GEMINI_API_KEY:
     try:
-        daily_hist = ss.worksheet("Daily").get_all_values()[-5:]
-        morning_hist = ss.worksheet("Morning").get_all_values()[-5:]
-        history_context = f"История за 5 дней (Daily): {daily_hist}\nИстория за 5 дней (Morning): {morning_hist}"
+        print("⏳ Ожидание 10с (защита от лимитов API)...")
+        time.sleep(10)
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY.strip()}"
-        payload = {
-            "contents": [{
-                "parts": [{
-                    "text": (
-                        f"Ты — ироничный цифровой тренер. Проанализируй данные пользователя Garmin.\n"
-                        f"ТЕКУЩИЕ ДАННЫЕ: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, Вес {weight}.\n"
-                        f"КОНТЕКСТ ПРОШЛЫХ ДНЕЙ:\n{history_context}\n\n"
-                        f"ЗАДАЧА: Сделай короткий вывод о состоянии и дай один мудрый, но колкий совет. Без лишнего текста."
-                    )
-                }]
-            }]
-        }
+        # Контекст из таблицы Morning
+        try:
+            hist_vals = ss.worksheet("Morning").get_all_values()[-3:]
+            history_str = f"Прошлые дни: {hist_vals}"
+        except: history_str = ""
+
+        workout = f"Тренировка: {activities_to_log[0][1]}" if activities_to_log else "Нет тренировок"
         
-        time.sleep(2) # Защита от 429
-        res = requests.post(url, json=payload, timeout=20)
+        prompt = (f"Ты ироничный тренер. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {bb_morning}, {workout}.\n"
+                  f"{history_str}\n"
+                  f"Оцени состояние и дай 1 колкий совет на русском (до 2 предложений).")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
+        
         if res.status_code == 200:
-            advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            ai_advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            print(f"🤖 ИИ: {ai_advice}")
         elif res.status_code == 429:
-            advice = "ИИ взял тайм-аут из-за лимитов."
+            ai_advice = "ИИ перегружен (429)"
     except Exception as e:
-        print(f"AI Error: {e}")
-        advice = "ИИ сегодня не в духе."
+        ai_advice = f"Ошибка ИИ: {str(e)[:50]}"
 
-# ---------- AI ANALYSIS BLOCK (ULTIMATE AUTO-FIND) ----------
-
-# ---------- AI BLOCK (ИСПРАВЛЕННЫЙ: БЕЗ ВНЕШНИХ БИБЛИОТЕК) ----------
-ai_advice = "Нет данных для анализа"
-
-if GEMINI_API_KEY:
-    try:
-        # Подготовка данных для промпта
-        workout_info = f"Тренировка: {activities_to_log[0][1]}, TE: {activities_to_log[0][8]}" if activities_to_log else "Тренировок не было"
-        
-        # Формируем промпт, используя те же переменные, что и выше в скрипте
-        user_prompt = (f"Проанализируй показатели за сегодня ({today_str}): "
-                       f"Сон: {slp_sc}/100 ({slp_h}ч), HRV: {hrv}, Пульс покоя: {r_hr}, "
-                       f"Body Battery: {bb_morning}, Шаги: {steps}. {workout_info}. "
-                       f"Дай краткую оценку восстановления и совет на завтра (2 предложения на русском).")
-
-        # Прямой URL к API (используем flash-lite как самую быструю и стабильную)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY.strip()}"
-        
-        payload = {
-            "contents": [{
-                "parts": [{
-                    "text": user_prompt
-                }]
-            }]
-        }
-
-        time.sleep(2) # Защита от лимитов
-        res = requests.post(url, json=payload, timeout=30)
-        
-        if res.status_code == 200:
-            result = res.json()
-            if "candidates" in result:
-                ai_advice = result["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print("✅ ПОБЕДА! ИИ ответил.")
-            else:
-                ai_advice = "ИИ прислал пустой ответ."
-        else:
-            ai_advice = f"Ошибка API: {res.status_code}"
-            print(f"❌ Ошибка API: {res.text}")
-
-    except Exception as e:
-        ai_advice = f"Ultimate Error: {str(e)[:100]}"
-        print(f"❌ Ошибка ИИ: {e}")
-
-print(f"Final AI Status: {ai_advice}")
-
-# Записываем результат в таблицу AI_Log (если она есть)
+# Запись в AI_Log
 try:
-    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Success", ai_advice.replace('*', '')])
-except:
-    pass
+    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Info", ai_advice.replace('*', '')])
+except: pass
 
 # ---------- TELEGRAM (ОТКЛЮЧЕНО ПО ПРОСЬБЕ) ----------
 # try:
