@@ -65,16 +65,16 @@ try:
             hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-# 2. Сон и Sleep Score (Ищем во всех закоулках)
+# 2. Сон и Sleep Score (Добавлен поиск через 'score' и 'value')
     for d in [today_str, yesterday_str]:
         try:
             sleep_data = gar.get_sleep_data(d)
             dto = sleep_data.get("dailySleepDTO") or {}
             
             if dto and dto.get("sleepTimeSeconds", 0) > 0:
-                # В некоторых моделях Score лежит здесь:
-                slp_sc = (dto.get("sleepScore") or 
-                          sleep_data.get("sleepScore") or 
+                # Ищем Score: приоритет на sleepScore, затем на вложенные структуры
+                slp_sc = (sleep_data.get("sleepScore") or 
+                          dto.get("sleepScore") or 
                           sleep_data.get("sleepScores", {}).get("overall", {}).get("value") or 
                           dto.get("value") or "")
                 
@@ -84,16 +84,22 @@ try:
                 break
         except: continue
 
-    # 3. Вес (Используем только доступные методы)
+    # 3. Вес (Специально для Garmin Index S2)
+    summary = gar.get_user_summary(today_str) or {}
     try:
-        # Пробуем получить композицию за последние 3 дня
-        w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str)
-        if w_data and w_data.get('uploads'):
-            # Берем самый последний замер из списка
-            weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
-    except Exception as ew:
-        print(f"DEBUG Weight Error: {ew}")
-
+        # Сначала пробуем вытащить вес из ежедневной сводки (самый надежный путь для Index S2)
+        weight_raw = summary.get("weight") or summary.get("latestWeight")
+        if weight_raw:
+            weight = round(float(weight_raw) / 1000, 1)
+        
+        # Если в сводке пусто, пробуем альтернативный метод для весов S2
+        if not weight:
+            w_data = gar.get_body_composition(today_str)
+            if w_data and 'totalWeight' in w_data: # Специфичный ключ для S2
+                weight = round(w_data['totalWeight'] / 1000, 1)
+            elif w_data and w_data.get('uploads'):
+                weight = round(w_data['uploads'][-1].get('weight', 0) / 1000, 1)
+    except: pass
     # 4. Пульс и BB
     summary = gar.get_user_summary(today_str) or {}
     r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
