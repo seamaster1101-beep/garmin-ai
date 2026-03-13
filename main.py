@@ -65,39 +65,49 @@ try:
             hrv = stats.get("allDayAvgHrv") or stats.get("lastNightAvgHrv") or ""
         except: pass
 
-# 2. Сон и Sleep Score (Достаем из глубокой вложенности)
+# 2. Сон и Sleep Score (Твой рабочий метод)
     for d in [today_str, yesterday_str]:
         sleep_data = gar.get_sleep_data(d) or {}
         dto = sleep_data.get("dailySleepDTO") or {}
         if dto and dto.get("sleepTimeSeconds", 0) > 0:
             slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-            
-            # Извлекаем Score из вложенного словаря sleepScores
+            # Тот самый путь, который сработал:
             scores = dto.get("sleepScores") or {}
             slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
-            
             if dto.get("sleepEndTimestampLocal"):
-                # Конвертируем таймстамп в читаемую дату, если нужно
                 morning_ts = dto.get("sleepEndTimestampLocal", "").replace("T", " ")[:16]
             break
 
-    # 3. Вес (Специально для Index S2 из dateWeightList)
+    # 3. Вес (Специально для Index S2)
+    # Запрашиваем композицию тела — для S2 это самый точный метод
     try:
-        w_data = gar.get_body_composition((now - timedelta(days=7)).strftime("%Y-%m-%d"), today_str)
+        w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str)
         if w_data and w_data.get('dateWeightList'):
-            # Берем последний замер из списка за неделю
-            last_entry = w_data['dateWeightList'][-1]
-            weight = round(last_entry.get('weight', 0) / 1000, 1)
-    except Exception as e:
-        print(f"DEBUG Weight Error: {e}")
+            weight = round(w_data['dateWeightList'][-1].get('weight', 0) / 1000, 1)
+    except: pass
+
+    # 4. Пульс и BB (Исправляем внезапное исчезновение)
+    # Запрашиваем общую сводку
+    sum_data = gar.get_user_summary(today_str) or {}
     
-    # 4. Пульс и BB
-    summary = gar.get_user_summary(today_str) or {}
-    r_hr = summary.get("restingHeartRate") or summary.get("heartRateRestingValue") or ""
-    bb_morning = summary.get("bodyBatteryHighestValue") or ""
+    # Resting HR: проверяем несколько ключей
+    r_hr = (sum_data.get("restingHeartRate") or 
+            sum_data.get("heartRateRestingValue") or 
+            sum_data.get("minHeartRate") or "")
+    
+    # Body Battery: берем максимальное за утро
+    bb_morning = sum_data.get("bodyBatteryHighestValue") or sum_data.get("bodyBatteryMostRecentValue") or ""
+
+    # Доп. проверка веса из сводки, если первый метод подвел
+    if not weight:
+        w_raw = sum_data.get("weight") or sum_data.get("latestWeight")
+        if w_raw:
+            weight = round(float(w_raw) / 1000, 1)
 
 except Exception as e:
-    print(f"Morning Block Minor Error: {e}")
+    print(f"General Morning Error: {e}")
+
+morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 
 # Финальная сборка строки (morning_ts теперь точно не пустой)
 morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
