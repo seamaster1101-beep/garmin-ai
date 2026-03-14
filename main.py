@@ -107,52 +107,81 @@ except Exception as e:
 
 morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h]
 
-# --- 2. ACTIVITIES ---
+# --- 2. ACTIVITIES (УЛУЧШЕННЫЙ СБОР) ---
+activities_to_log = []
 try:
-    latest_activities = gar.get_activities(0, 5) or []
-    for a in latest_activities:
-        start_local = a.get("startTimeLocal", "")
-        if not start_local.startswith(today_str): continue
-        
+    # Берем чуть больше активностей на случай нескольких тренировок
+    latest_activities = gar.get_activities(0, 10) or []
+    # Фильтруем только за сегодня и разворачиваем (от ранних к поздним)
+    today_activities = [a for a in latest_activities if a.get("startTimeLocal", "").startswith(today_str)]
+    today_activities.reverse() 
+
+    for a in today_activities:
         act_id = str(a.get("activityId"))
+        act_type = a.get('activityType', {}).get('typeKey', '')
+        
+        # Ищем IF в разных ключах (Garmin иногда меняет названия)
+        if_val = a.get('intensityFactor') or a.get('weightedAverageIntensity') or ""
+        if if_val: if_val = round(float(if_val), 3) # IF обычно три знака после запятой
+
         cad = (a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "")
         t_load = round(float(a.get('activityTrainingLoad') or 0), 1)
         
         activities_to_log.append({
-            "type": a.get('activityType', {}).get('typeKey', ''),
+            "type": act_type,
             "dist": round(a.get('distance', 0) / 1000, 2),
             "speed": round(a.get('averageSpeed', 0) * 3.6, 1),
             "pwr": a.get('avgPower', "0"),
             "avg_hr": a.get('averageHR', ""),
+            "max_hr": a.get('maxHR', ""),
             "aerobic": round(float(a.get('aerobicTrainingEffect', 0)), 1),
+            "if": if_val,
             "id": act_id,
-            "row": [start_local.replace("T", " ")[:16], a.get('activityType', {}).get('typeKey', ''), 
-                    round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
-                    a.get('averageHR', ""), a.get('maxHR', ""), "", t_load,
-                    round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
-                    a.get('avgPower', ""), cad, act_id]
+            "row": [
+                a.get("startTimeLocal", "").replace("T", " ")[:16], 
+                act_type, 
+                round(a.get('duration', 0) / 3600, 2), 
+                round(a.get('distance', 0) / 1000, 2),
+                a.get('averageHR', ""), 
+                a.get('maxHR', ""), 
+                if_val, # Тот самый Intensity Factor
+                t_load,
+                round(float(a.get('aerobicTrainingEffect', 0)), 1), 
+                a.get('calories', ""),
+                a.get('avgPower', ""), 
+                cad, 
+                act_id
+            ]
         })
-except: pass
+except Exception as e: print(f"Activities error: {e}")
 
-# --- 3. AI BLOCK (ФИКС ПОДБОРА МОДЕЛИ) ---
+# --- 3. AI BLOCK (УМНЫЙ АНАЛИЗ ВСЕХ ТРЕНИРОВОК) ---
 ai_advice = "Данные не готовы"
 if GEMINI_API_KEY:
     try:
-        # Упрощенный подбор модели без лишних вложений
+        # Автоподбор модели (оставляем твой рабочий метод)
         res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
         models_list = res_m.json().get("models", [])
-        
-        # Ищем flash, если нет - любую доступную для генерации
         available = [m["name"] for m in models_list if "generateContent" in m.get("supportedGenerationMethods", [])]
         target_model = next((m for m in available if "flash" in m), available[0])
 
         if activities_to_log:
-            act = activities_to_log[0]
-            prompt = (f"Ты — Athlete Intelligence. Разбери велотренировку: {act['dist']}км, {act['speed']}км/ч, "
-                      f"мощность {act['pwr']}Вт, пульс {act['avg_hr']}, эффект {act['aerobic']}. "
-                      f"Дай проф. анализ зон и колкую шутку в конце.")
+            summary_text = ""
+            for i, act in enumerate(activities_to_log, 1):
+                summary_text += (f"Анализ тренировки №{i} ({act['type']}): {act['dist']} км, "
+                                 f"ср.пульс {act['avg_hr']}, эффект {act['aerobic']}, "
+                                 f"мощность {act['pwr']} Вт, IF: {act['if']}.\n")
+            
+            prompt = (f"Ты — Athlete Intelligence. Проанализируй спортивный день атлета:\n"
+                      f"{summary_text}\n"
+                      f"Утренние данные: HRV {hrv}, Пульс покоя {r_hr}, Сон {slp_h}ч, Score {slp_sc}.\n"
+                      f"Сделай профессиональный разбор (как в Strava) каждой тренировки. "
+                      f"Для силовых делай упор на пульс и восстановление, для вело — на мощность и IF. "
+                      f"В конце добавь одну ироничную колкость.")
+# ...
         else:
-            prompt = (f"Ты — элитный аналитик. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, Score {slp_sc}, BB {bb_morning}. "
+            # Если тренировок нет — обычный утренний промпт
+            prompt = (f"Ты — элитный аналитик. Данные: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, Score {slp_sc}, BB {bb_morning}.\n"
                       f"Дай прогноз на день и ироничную колкость.")
 
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
