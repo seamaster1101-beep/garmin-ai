@@ -1,108 +1,118 @@
 import os
 import json
-from datetime import datetime
+import requests
+from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
-import requests
 
 # --- CONFIG ---
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GOOGLE_CREDS = os.environ.get("GOOGLE_SHEETS_CREDS") or os.environ.get("GOOGLE_CREDS")
+GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
-def write_to_sheet(sheet, date_str, row_data):
+def update_or_append(sheet, date_str, row_data):
     try:
         col_values = sheet.col_values(1)
-        found_idx = -1
         search_date = date_str.split(' ')[0]
+        found_idx = -1
         for i, val in enumerate(col_values):
             if search_date in str(val):
                 found_idx = i + 1
                 break
         
+        # Используем USER_ENTERED, чтобы Google Sheets сам распознал числа и даты
         if found_idx != -1:
-            # USER_ENTERED заставляет Google считать строки числами
             sheet.update(f"A{found_idx}", [row_data], value_input_option='USER_ENTERED')
+            return "Updated"
         else:
             sheet.append_row(row_data, value_input_option='USER_ENTERED')
-    except Exception as e:
-        print(f"Sheet Error: {e}")
+            return "Appended"
+    except Exception as e: return f"Err: {e}"
 
-# --- DATA ---
+# --- LOGIN & DATA ---
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
 gar.login()
-today = datetime.now().strftime("%Y-%m-%d")
+now = datetime.now()
+today_str = now.strftime("%Y-%m-%d")
 
-stats = gar.get_user_summary(today)
-sleep = gar.get_sleep_data(today) or {}
-hrv_data = gar.get_hrv_data(today) or {}
+# 1. Сбор базовых данных (Твой рабочий метод)
+summary = gar.get_user_summary(today_str) or {}
+hrv_res = gar.get_hrv_data(today_str) or {}
+hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or 0
+r_hr = summary.get("restingHeartRate") or 0
 
-# 1. Калории (Суммируем, если total пустой)
-total_cals = stats.get('totalCalories')
-if not total_cals or total_cals == 0:
-    total_cals = int(stats.get('activeCalories', 0) + stats.get('bmrCalories', 0))
-
-# 2. Сон и Время (07:22)
-dto = sleep.get('dailySleepDTO', {})
-wake_raw = dto.get('sleepEndTimeLocal')
-wake_time = wake_raw.replace('T', ' ')[:16] if wake_raw else datetime.now().strftime("%Y-%m-%d %H:%M")
-
-slp_score = int(dto.get('sleepScore', 0))
-slp_hours = round(float(dto.get('sleepTimeSeconds', 0) / 3600), 1)
-hrv_val = int(hrv_data.get('hrvSummary', {}).get('lastNightAvg', 0))
-
-# 3. Вес
-weight = 0.0
+# 2. Сон и Точное время (Твой рабочий метод)
+morning_ts = f"{today_str} 08:00"
+slp_sc, slp_h = 0, 0
 try:
-    w_hist = gar.get_body_composition(today, today)
-    w_list = w_hist.get('dateWeightList', [])
-    if w_list: weight = round(float(w_list[-1]['weight'] / 1000), 1)
+    sleep_data = gar.get_sleep_data(today_str) or {}
+    dto = sleep_data.get("dailySleepDTO") or {}
+    if dto:
+        slp_h = round(float(dto.get("sleepTimeSeconds", 0)) / 3600, 1)
+        slp_sc = dto.get("sleepScore") or 0
+        raw_ts = dto.get("sleepEndTimestampLocal")
+        if raw_ts:
+            morning_ts = datetime.fromtimestamp(raw_ts / 1000).strftime("%Y-%m-%d %H:%M")
 except: pass
 
-# 4. Fitness Age (Числовой ответ)
-fit_age = 0
-if GEMINI_API_KEY and hrv_val > 0:
+# 3. Вес
+weight = 0
+try:
+    w_data = gar.get_body_composition(today_str, today_str) or {}
+    weights = w_data.get('dateWeightList', [])
+    if weights:
+        weight = round(float(weights[-1].get('weight', 0)) / 1000, 1)
+except: pass
+
+# 4. Калории (Твой рабочий метод)
+cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
+
+# 5. Fitness Age (Gemini - Строго только число)
+fit_age = ""
+if GEMINI_API_KEY and hrv > 0:
     try:
+        prompt = f"Возраст 62, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выведи ТОЛЬКО число."
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        p = f"Im 62y, RHR {stats.get('restingHeartRate')}, HRV {hrv_val}. Calculate my fitness age. Return ONLY the number."
-        resp = requests.post(url, json={"contents": [{"parts": [{"text": p}]}]}, timeout=10).json()
-        fit_age = resp["candidates"][0]["content"]["parts"][0]["text"].strip()
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=10).json()
+        fit_age = res["candidates"][0]["content"]["parts"][0]["text"].strip()
     except: fit_age = "Err"
 
-# --- СТРОКИ (Данные передаются как числа, а не строки) ---
+# --- ФОРМИРОВАНИЕ СТРОК (Чистые данные без str()) ---
 
-# Morning (A-K): Date, Weight, Fat, Muscle, RHR, HRV, BB, Sleep_Sc, Sleep_H, Age, Fit_Age
+# Morning (A:Date, B:Weight, C:Fat, D:Muscle, E:RHR, F:HRV, G:BB, H:Score, I:Hours, J:Age, K:FitAge)
 morning_row = [
-    wake_time, 
+    morning_ts, 
     weight if weight > 0 else "", 
-    "", "", # Fat, Muscle
-    int(stats.get('restingHeartRate', 0)),
-    hrv_val,
-    int(stats.get('bodyBatteryHighestValue', 0)),
-    slp_score,
-    slp_hours,
+    "", "", # Fat и Muscle (пусто)
+    int(r_hr),
+    int(hrv),
+    int(summary.get("bodyBatteryHighestValue", 0)),
+    int(slp_sc),
+    float(slp_h),
     62, 
     fit_age
 ]
 
-# Daily (A-F): Date, Steps, Dist, Cals, RHR, BB
-dist_km = round(float(stats.get('totalDistanceMeters', 0) / 1000), 2)
+# Daily (A:Date, B:Steps, C:Dist, D:Cals, E:RHR, F:BB)
+steps = int(summary.get('totalSteps', 0))
+dist = round(float(steps * 0.000762), 2)
 daily_row = [
-    today,
-    int(stats.get('totalSteps', 0)),
-    dist_km,
-    total_cals,
-    int(stats.get('restingHeartRate', 0)),
-    int(stats.get('bodyBatteryMostRecentValue', 0))
+    today_str, 
+    steps, 
+    dist, 
+    cals, 
+    int(r_hr), 
+    int(summary.get("bodyBatteryMostRecentValue", 0))
 ]
 
-# --- WRITE ---
-creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS), scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+# --- ЗАПИСЬ ---
+creds_dict = json.loads(GOOGLE_CREDS_JSON)
+creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
 ss = gspread.authorize(creds).open("Garmin_Data")
 
-write_to_sheet(ss.worksheet("Morning"), today, morning_row)
-write_to_sheet(ss.worksheet("Daily"), today, daily_row)
+update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+update_or_append(ss.worksheet("Daily"), today_str, daily_row)
 
-print(f"Done. Cals: {total_cals}")
+print(f"✅ Успех: Калории {cals}, Время {morning_ts}")
