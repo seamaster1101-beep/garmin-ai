@@ -35,51 +35,51 @@ gar.login()
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 
-# --- 1. MORNING BLOCK (Твой рабочий метод) ---
-summary = gar.get_user_summary(today_str) or {}
-hrv_res = gar.get_hrv_data(today_str) or {}
-hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
-r_hr = summary.get("restingHeartRate") or ""
-
-# Вес (Твой рабочий блок)
-weight = ""
-try:
-    w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
-    weights = w_data.get('dateWeightList', [])
-    if weights:
-        actual_entry = max(weights, key=lambda x: x.get('sampleTime', 0))
-        weight = round(float(actual_entry.get('weight', 0)) / 1000, 1)
-except: pass
-
-# Сон и Точное время (с фиксом 07:22)
-morning_ts = f"{today_str} 08:00"
+# 1. Сон и Score (с защитой от пустых значений)
 slp_sc, slp_h = "", ""
 try:
     sleep_data = gar.get_sleep_data(today_str) or {}
     dto = sleep_data.get("dailySleepDTO") or {}
-    if dto and dto.get("sleepTimeSeconds", 0) > 0:
-        slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-        slp_sc = dto.get("sleepScore") or ""
+    if dto:
+        # Пробуем достать Score напрямую или из вложенного словаря
+        slp_sc = dto.get("sleepScore") or sleep_data.get("sleepSummary", {}).get("score") or ""
+        slp_h = round(float(dto.get("sleepTimeSeconds", 0)) / 3600, 1)
+        
         raw_ts = dto.get("sleepEndTimestampLocal")
         if raw_ts:
-            # Исправляем формат времени, чтобы всегда было 07:22
             morning_ts = datetime.fromtimestamp(raw_ts / 1000).strftime("%Y-%m-%d %H:%M")
-except: pass
+except Exception as e:
+    print(f"Sleep data error: {e}")
 
-# Fitness Age (Gemini) - строго цифра
+# 2. Fitness Age (Gemini) — добавляем жесткую проверку
 fit_age = ""
 if GEMINI_API_KEY and hrv:
     try:
-        p = f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай только число."
-        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}", 
-                            json={"contents": [{"parts": [{"text": p}]}]}, timeout=10).json()
-        fit_age = ''.join(filter(str.isdigit, res["candidates"][0]["content"]["parts"][0]["text"]))
-    except: pass
+        prompt = f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай ТОЛЬКО одно число."
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}", 
+            json={"contents": [{"parts": [{"text": prompt}]}]}, 
+            timeout=15 # Увеличил таймаут
+        ).json()
+        text_resp = res["candidates"][0]["content"]["parts"][0]["text"].strip()
+        fit_age = ''.join(filter(str.isdigit, text_resp))
+    except:
+        fit_age = "Calc..." # Чтобы ты видел, что запрос был, но не прошел
 
-# Формируем Morning (A-K)
-# Важно: добавляем апостроф перед датой в списке, чтобы Google Sheets прижал её влево
-morning_row = [f"'{morning_ts}", weight, "", "", r_hr, hrv, summary.get("bodyBatteryHighestValue", ""), slp_sc, slp_h, 62, fit_age]
-
+# --- СТРОКА ДЛЯ ЗАПИСИ (Ничего не сдвигаем!) ---
+# A:Date, B:Weight, C:Fat, D:Muscle, E:RHR, F:HRV, G:BB, H:Score, I:Hours, J:Age, K:FitAge
+morning_row = [
+    f"'{morning_ts}", # Дата слева
+    weight,           # Вес в B
+    "", "",           # Пустые C, D
+    r_hr,             # E
+    hrv,              # F
+    summary.get("bodyBatteryHighestValue", ""), # G
+    slp_sc,           # H (Sleep Score вернулся!)
+    slp_h,           # I
+    62,               # J
+    fit_age           # K (Fitness Age)
+]
 # --- 2. DAILY BLOCK (Твоя логика без изменений) ---
 steps = summary.get('totalSteps', 0)
 cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
