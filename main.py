@@ -39,10 +39,14 @@ hrv_res = gar.get_hrv_data(today_str) or {}
 hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 r_hr = summary.get("restingHeartRate") or ""
 
-# --- 2. ВЕС (Твой рабочий блок) ---
+# --- 2. ВЕС (Твой рабочий блок + диагностика) ---
 weight, fat, muscle = "", "", ""
 try:
     w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
+    # --- ЛИНИЯ ДЛЯ ДИАГНОСТИКИ (потом удалим) ---
+    print(f"DEBUG S2 DATA: {json.dumps(w_data, indent=2)}") 
+    # --------------------------------------------
+    
     weights = w_data.get('dateWeightList', [])
     if weights:
         actual_entry = max(weights, key=lambda x: x.get('sampleTime', 0))
@@ -54,7 +58,8 @@ try:
         
         raw_muscle = actual_entry.get('muscleMass')
         if raw_muscle: muscle = round(float(raw_muscle) / 1000, 1)
-except: pass
+except Exception as e:
+    print(f"Ошибка в блоке веса: {e}")
 
 # --- 3. СОН И ВРЕМЯ (Твой рабочий утренний алгоритм) ---
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
