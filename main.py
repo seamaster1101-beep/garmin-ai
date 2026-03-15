@@ -86,15 +86,23 @@ for d in [today_str, yesterday_str]:
     except:
         continue
 
-# --- 4. FITNESS AGE (Теперь HRV точно определен выше) ---
+# --- 4. FITNESS AGE ---
 fit_age = ""
 if GEMINI_API_KEY and hrv:
     try:
-        p = f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай только число."
-        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}", 
-                            json={"contents": [{"parts": [{"text": p}]}]}, timeout=15).json()
-        fit_age = ''.join(filter(str.isdigit, res["candidates"][0]["content"]["parts"][0]["text"]))
-    except: pass
+        prompt = f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай ТОЛЬКО одно число."
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}", 
+            json={"contents": [{"parts": [{"text": prompt}]}]}, 
+            timeout=15
+        ).json()
+        
+        # Извлекаем текст и чистим от всего, кроме цифр
+        raw_text = res["candidates"][0]["content"]["parts"][0]["text"]
+        fit_age = ''.join(filter(str.isdigit, raw_text))
+    except Exception as e:
+        fit_age = "Err" # Если увидишь Err в таблице - значит API Gemini сбоит
+        print(f"Gemini error: {e}")
 
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
 # A:Date(1), B:Weight(2), C:Fat(3), D:Muscle(4), E:RHR(5), F:HRV(6), G:BB(7), H:Score(8), I:Hours(9), J:Age(10), K:FitAge(11)
