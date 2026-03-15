@@ -1,5 +1,5 @@
 import os, json, requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
@@ -18,7 +18,7 @@ def update_or_append(ws, date_str, row_data):
     if date_str in cells:
         idx = cells.index(date_str) + 1
         for i, val in enumerate(row_data):
-            ws.update_cell(idx, i + 1, val)
+            if val != "": ws.update_cell(idx, i + 1, val)
     else:
         ws.append_row(row_data)
 
@@ -27,28 +27,32 @@ try:
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
     
-    today = datetime.now()
-    today_str = today.strftime("%Y-%m-%d")
+    today_str = datetime.now().strftime("%Y-%m-%d")
     
-    # Биометрия (S2 и Профиль)
-    stats = gar.get_user_summary(today_str)
-    composition = gar.get_body_composition(today_str)
-    hrv_data = gar.get_hrv_data(today_str)
-    sleep = gar.get_sleep_data(today_str)
+    # Пытаемся забрать данные, если их нет - ставим прочерк
+    try: stats = gar.get_user_summary(today_str)
+    except: stats = {}
+    
+    try: composition = gar.get_body_composition(today_str)
+    except: composition = {}
+    
+    try: hrv_data = gar.get_hrv_data(today_str)
+    except: hrv_data = {}
+    
+    try: sleep = gar.get_sleep_data(today_str)
+    except: sleep = {}
     
     weight = round(stats.get('weight', 0) / 1000, 1) if stats.get('weight') else ""
-    # Данные с весов S2
-    body_fat = composition.get('totalDailyLeaf', {}).get('bodyFat')
+    body_fat = composition.get('totalDailyLeaf', {}).get('bodyFat', "")
     muscle_mass = composition.get('totalDailyLeaf', {}).get('muscleMass')
     if muscle_mass: muscle_mass = round(muscle_mass / 1000, 1)
 
-    rhr = stats.get('restingHeartRate')
-    hrv = hrv_data.get('hrvSummary', {}).get('lastNightAvg') if hrv_data else ""
-    bb = stats.get('bodyBatteryMostRecentValue')
-    slp_score = sleep.get('dailySleepDTO', {}).get('score')
-    slp_h = round(sleep.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) / 3600, 1)
+    rhr = stats.get('restingHeartRate', "")
+    hrv = hrv_data.get('hrvSummary', {}).get('lastNightAvg', "") if hrv_data else ""
+    bb = stats.get('bodyBatteryMostRecentValue', "")
+    slp_score = sleep.get('dailySleepDTO', {}).get('score', "")
+    slp_h = round(sleep.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) / 3600, 1) if sleep.get('dailySleepDTO') else ""
     
-    # Morning Row (A-K): Date, Weight, Fat, Muscle, RHR, HRV, BB, SlpScore, SlpH, Age, FitnessAge
     morning_row = [today_str, weight, body_fat, muscle_mass, rhr, hrv, bb, slp_score, slp_h, "", "AI Pending"]
 
     # Активности
@@ -60,51 +64,50 @@ try:
         if not start_local.startswith(today_str): continue
         
         act_id = a.get('activityId')
-        # Детальные метрики (NP, TSS)
-        details = gar.get_activity_details(act_id)
-        summary = details.get('summaryDTO', {})
-        
-        # Сбор данных
         sport = a.get('activityType', {}).get('typeKey', 'other')
         dur = round(a.get('duration', 0) / 3600, 2)
         dist = round(a.get('distance', 0) / 1000, 2)
         avg_hr = a.get('averageHR')
         max_hr = a.get('maxHR')
         
-        # IF и Load
-        rel_int = a.get('relativeIntensity') or a.get('weightedAverageIntensity')
-        if_val = a.get('intensityFactor') or (float(rel_int)/100 if rel_int else "")
-        load = a.get('trainingLoad')
-        te = a.get('trainingEffect')
-        cal = a.get('calories')
-        pwr = a.get('averagePower')
-        cad = a.get('averageCadence')
-        
-        # Вело-метрики
-        np = summary.get('normPower')
-        tss = summary.get('trainingStressScore')
+        # Мощность и TSS
+        pwr = a.get('averagePower', 0)
+        np = a.get('normPower', 0)
+        # Если Garmin не отдал NP в списке, попробуем залезть глубже
+        if not np or np == 0:
+            try:
+                det = gar.get_activity_details(act_id)
+                np = det.get('summaryDTO', {}).get('normPower', 0)
+            except: np = 0
+
+        if_val = a.get('intensityFactor', "")
+        load = a.get('trainingLoad', "")
+        te = a.get('trainingEffect', "")
+        cal = a.get('calories', "")
+        cad = a.get('averageCadence', "")
+        tss = a.get('trainingStressScore', "")
         vi = round(np / pwr, 2) if np and pwr and pwr > 0 else ""
 
-        # Activities Row (A-P): Date, Sport, Dur, Dist, AvgHR, MaxHR, IF, Load, TE, Cal, Pwr, Cad, NP, TSS, VI, ID
         row = [start_local, sport, dur, dist, avg_hr, max_hr, if_val, load, te, cal, pwr, cad, np, tss, vi, str(act_id)]
-        activities_to_log.append({"id": str(act_id), "row": row, "data": a})
+        activities_to_log.append({"id": str(act_id), "row": row})
 
     # --- 2. AI ANALYSIS ---
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-pro')
+    # ИСПОЛЬЗУЕМ НОВУЮ МОДЕЛЬ FLASH 2.0
+    model = genai.GenerativeModel('gemini-2.0-flash')
     
     prompt = f"""
-    Ты - Athlete Intelligence. Твой атлет: Вес {weight}кг, Жир {body_fat}%, Мышцы {muscle_mass}кг.
-    Утро: HRV {hrv}, Пульс покоя {rhr}, Сон {slp_h}ч (балл {slp_score}), Батарея {bb}.
+    Ты Athlete Intelligence. Твой атлет: Вес {weight}кг, Жир {body_fat}%, Мышцы {muscle_mass}кг.
+    Утро: HRV {hrv}, Пульс {rhr}, Сон {slp_h}ч (Score {slp_score}), Батарея {bb}.
     Тренировки сегодня: {[{'тип': x['row'][1], 'нагрузка': x['row'][7], 'NP': x['row'][12]} for x in activities_to_log]}
     
     Задачи:
-    1. Рассчитай Fitness Age по своей методике (сравни HRV и состав тела).
-    2. Проанализируй баланс нагрузки и восстановления.
-    3. Оцени вело-метрики (NP/TSS), если они есть.
-    4. Дай ироничный, но глубокий совет.
+    1. Рассчитай Fitness Age по своей методике (HRV vs Состав тела).
+    2. Оцени готовность к 50км велозаезду сегодня.
+    3. Дай ироничный совет.
     """
-    ai_advice = model.generate_content(prompt).text
+    response = model.generate_content(prompt)
+    ai_advice = response.text
 
     # --- 3. WRITE TO SHEETS ---
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
@@ -123,12 +126,10 @@ try:
 
     # --- 4. TELEGRAM ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        try:
-            clean_advice = ai_advice.replace('*', '').replace('_', '')
-            full_msg = f"📊 *Athlete Report*\n💓 HRV: {hrv}\n⚖️ Fat: {body_fat}%\n🤖 {clean_advice[:3800]}"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                          json={"chat_id": TELEGRAM_CHAT_ID, "text": full_msg, "parse_mode": "Markdown"}, timeout=15)
-        except: pass
+        clean_advice = ai_advice.replace('*', '')
+        full_msg = f"📊 *Athlete Report*\n💓 HRV: {hrv}\n⚖️ Жир: {body_fat}%\n\n{clean_advice[:3800]}"
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": full_msg, "parse_mode": "Markdown"})
 
 except Exception as e:
-    print(f"Error: {e}")
+    print(f"Критическая ошибка: {e}")
