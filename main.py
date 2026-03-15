@@ -132,54 +132,52 @@ steps = summary.get('totalSteps', 0)
 cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
 daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
 
-# --- 2. ACTIVITIES (Тест на данных за несколько дней) ---
-activities_to_log = [] # Инициализируем список, чтобы не было ошибки
+# --- 5. ACTIVITIES (Финальный рабочий вариант) ---
+activities_to_log = []
 try:
-    # Берем последние 10 штук, чтобы точно найти хоть одну
-    latest_activities = gar.get_activities(0, 10) or []
-    print(f"DEBUG: Всего найдено активностей в Garmin: {len(latest_activities)}")
-
+    # Берем последние 5, этого хватит для одного дня
+    latest_activities = gar.get_activities(0, 5) or []
+    
     for a in latest_activities:
         start_local = a.get("startTimeLocal", "")
-        # Убираем жесткий фильтр только по "сегодня", чтобы просто увидеть данные
+        # ОСТАВЛЯЕМ ТОЛЬКО СЕГОДНЯ
+        if not start_local.startswith(today_str): 
+            continue
         
-        act_id = a.get("activityId")
+        act_id = str(a.get("activityId"))
         
-        # Основные метрики (пробуем достать NP, TSS, IF)
+        # Вытягиваем NP, TSS, IF (теперь мы знаем, что они там есть!)
+        np_val = a.get('normPower') or a.get('weightedAveragePower', "")
         if_val = a.get('intensityFactor')
         tss_val = a.get('trainingStressScore')
-        np_val = a.get('normPower') or a.get('weightedAveragePower')
         
-        avg_pwr = a.get('avgPower', 0)
+        avg_pwr = a.get('avgPower', "")
         vi_val = ""
         if np_val and avg_pwr and float(avg_pwr) > 0:
             vi_val = round(float(np_val) / float(avg_pwr), 2)
 
-        # Формируем ряд для таблицы (A-P)
         row_data = [
-            start_local.replace("T", " ")[:16], 
-            a.get('activityType', {}).get('typeKey', ''), 
-            round(a.get('duration', 0) / 3600, 2), 
-            round(a.get('distance', 0) / 1000, 2),
-            a.get('averageHR', ""), 
-            a.get('maxHR', ""), 
-            round(float(if_val), 3) if if_val else "", 
-            round(float(a.get('activityTrainingLoad', 0)), 1),
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), 
-            a.get('calories', ""),
-            avg_pwr or "", 
-            a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "",
-            round(float(np_val), 1) if np_val else "", 
-            round(float(tss_val), 1) if tss_val else "", 
-            vi_val, 
-            str(act_id)
+            start_local.replace("T", " ")[:16],      # A: Date
+            a.get('activityType', {}).get('typeKey', ''), # B: Sport
+            round(a.get('duration', 0) / 3600, 2),   # C: Dur
+            round(a.get('distance', 0) / 1000, 2),   # D: Dist
+            a.get('averageHR', ""),                  # E: AvgHR
+            a.get('maxHR', ""),                      # F: MaxHR
+            round(float(if_val), 3) if if_val else "", # G: IF
+            round(float(a.get('activityTrainingLoad', 0)), 1), # H: Load
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), # I: TE
+            a.get('calories', ""),                   # J: Cal
+            avg_pwr,                                 # K: Pwr
+            a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "", # L: Cad
+            round(float(np_val), 1) if np_val else "", # M: NP
+            round(float(tss_val), 1) if tss_val else "", # N: TSS
+            vi_val,                                  # O: VI
+            act_id                                   # P: ID
         ]
         
-        activities_to_log.append({"id": str(act_id), "row": row_data})
-        print(f"DEBUG ACT: {start_local[:10]} | {a.get('activityType', {}).get('typeKey')} | NP: {np_val}")
-
+        activities_to_log.append({"id": act_id, "row": row_data})
 except Exception as e:
-    print(f"Activity Test Error: {e}")
+    print(f"Activity Error: {e}")
 
 # --- 6. ЗАПИСЬ ---
 creds_dict = json.loads(GOOGLE_CREDS_JSON)
