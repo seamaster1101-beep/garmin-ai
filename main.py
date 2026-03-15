@@ -39,27 +39,27 @@ hrv_res = gar.get_hrv_data(today_str) or {}
 hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 r_hr = summary.get("restingHeartRate") or ""
 
-# --- 2. ВЕС (Твой рабочий блок + диагностика) ---
+# --- 2. ВЕС, ЖИР, МЫШЦЫ (На основе твоего лога S2) ---
 weight, fat, muscle = "", "", ""
 try:
     w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
-    # --- ЛИНИЯ ДЛЯ ДИАГНОСТИКИ (потом удалим) ---
-    print(f"DEBUG S2 DATA: {json.dumps(w_data, indent=2)}") 
-    # --------------------------------------------
-    
     weights = w_data.get('dateWeightList', [])
     if weights:
-        actual_entry = max(weights, key=lambda x: x.get('sampleTime', 0))
+        # Берем самый свежий замер (за 15.03)
+        actual_entry = max(weights, key=lambda x: x.get('sampleTime', x.get('date', 0)))
+        
+        # Вес: 88080.0 -> 88.1
         weight = round(float(actual_entry.get('weight', 0)) / 1000, 1)
         
-        # Берем данные, если они есть в Garmin
-        raw_fat = actual_entry.get('bodyFat')
-        if raw_fat: fat = round(float(raw_fat), 1)
+        # Жир: 18.3
+        fat = actual_entry.get('bodyFat', "")
         
-        raw_muscle = actual_entry.get('muscleMass')
-        if raw_muscle: muscle = round(float(raw_muscle) / 1000, 1)
+        # Мышцы: 32500 -> 32.5
+        raw_m = actual_entry.get('muscleMass')
+        if raw_m:
+            muscle = round(float(raw_m) / 1000, 1)
 except Exception as e:
-    print(f"Ошибка в блоке веса: {e}")
+    print(f"Ошибка парсинга весов: {e}")
 
 # --- 3. СОН И ВРЕМЯ (Твой рабочий утренний алгоритм) ---
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -97,7 +97,20 @@ if GEMINI_API_KEY and hrv:
     except: pass
 
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
-morning_row = [f"'{morning_ts}", weight, "", "", r_hr, hrv, summary.get("bodyBatteryHighestValue", ""), slp_sc, slp_h, 62, fit_age]
+# A:Date(1), B:Weight(2), C:Fat(3), D:Muscle(4), E:RHR(5), F:HRV(6), G:BB(7), H:Score(8), I:Hours(9), J:Age(10), K:FitAge(11)
+morning_row = [
+    f"'{morning_ts}", 
+    weight, 
+    fat,        # Теперь здесь данные из actual_entry.get('bodyFat')
+    muscle,     # Теперь здесь данные из actual_entry.get('muscleMass')
+    r_hr, 
+    hrv, 
+    summary.get("bodyBatteryHighestValue", ""), 
+    slp_sc, 
+    slp_h, 
+    62, 
+    fit_age
+]
 
 steps = summary.get('totalSteps', 0)
 cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
