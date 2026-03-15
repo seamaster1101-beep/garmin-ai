@@ -50,12 +50,10 @@ try:
     sleep = gar.get_sleep_data(today_str)
     hrv_res = gar.get_hrv_data(today_str) or {}
     
-    # 1. Возраст (ИСПРАВЛЕНО: get_settings)
-    profile = gar.get_settings()
-    birth_date = profile.get('birthDate', '1964-01-01')
-    real_age = datetime.now().year - int(birth_date[:4])
+    # 1. ВОЗРАСТ (ФИКСИРУЕМ 62, чтобы избежать ошибок библиотеки)
+    real_age = 62
 
-    # 2. Время (ИСПРАВЛЕНО: 07:22)
+    # 2. Время (07:22)
     dto = sleep.get('dailySleepDTO', {})
     raw_ts = dto.get('sleepEndTimeLocal')
     morning_ts = raw_ts.replace('T', ' ')[:16] if raw_ts else datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -75,7 +73,8 @@ try:
     slp_h = round(float(dto.get("sleepTimeSeconds", 0)) / 3600, 1) if dto else ""
     bb_morning = stats.get("bodyBatteryHighestValue") or stats.get("bodyBatteryMostRecentValue") or ""
 
-    # 4. Daily (ИСПРАВЛЕНО: Калории)
+    # 4. Daily (Калории - Колонка D)
+    # Используем totalCalories, который точно есть в stats
     cals = stats.get("totalCalories", "")
     daily_row = [today_str, stats.get('totalSteps', 0), round(stats.get('totalDistanceMeters', 0)/1000, 2), cals, r_hr, stats.get("bodyBatteryMostRecentValue", "")]
 
@@ -86,7 +85,7 @@ try:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
             prompt = (f"Атлет: {real_age} лет. Данные: вес {weight}, HRV {hrv}, покой HR {r_hr}, сон {slp_h}ч. "
-                      f"Оцени Fitness Age одной фразой. Затем дай короткий совет.")
+                      f"Оцени Fitness Age одной фразой. Дай совет.")
             res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=15).json()
             full_text = res_ai["candidates"][0]["content"]["parts"][0]["text"].strip()
             fitness_age_result = full_text.split('\n')[0][:40]
@@ -114,7 +113,7 @@ try:
                 row = [a.get('startTimeLocal').replace('T',' ')[:16], a.get('activityType', {}).get('typeKey'), round(a.get('duration',0)/3600,2), round(a.get('distance',0)/1000,2), a.get('averageHR'), a.get('maxHR'), "", round(float(a.get('activityTrainingLoad',0)),1), round(float(a.get('aerobicTrainingEffect',0)),1), a.get('calories'), a.get('avgPower'), "", a_id]
                 ws_a.append_row(row)
 
-    print(f"✅ Готово! Возраст: {real_age}")
+    print(f"✅ Успех! Калории: {cals}, Время: {morning_ts}")
 
 except Exception as e:
     print(f"Error: {e}")
