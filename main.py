@@ -10,21 +10,21 @@ GARMIN_PASSWORD = os.getenv("GARMIN_PASSWORD")
 GOOGLE_CREDS_JSON = os.getenv("GOOGLE_SHEETS_CREDS")
 
 try:
-    # 1. АВТОРИЗАЦИЯ
     gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     gar.login()
     today_str = datetime.now().strftime("%Y-%m-%d")
     
-    # 2. СБОР ДАННЫХ
+    # 1. СБОР ДАННЫХ
     stats = gar.get_user_summary(today_str)
     sleep = gar.get_sleep_data(today_str)
     hrv_data = gar.get_hrv_data(today_str)
     
-    # Время пробуждения для Morning
+    # Время для Morning
     wake_time = sleep.get('dailySleepDTO', {}).get('sleepEndTimeLocal') if sleep else None
     display_time = wake_time.replace('T', ' ')[:16] if wake_time else datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # --- ЛИСТ MORNING ---
+    # Берем вес напрямую, как это работало раньше
     weight = round(stats.get('weight', 0) / 1000, 1) if stats.get('weight') else ""
     rhr = stats.get('restingHeartRate', "")
     bb = stats.get('bodyBatteryMostRecentValue', "")
@@ -32,16 +32,17 @@ try:
     slp_score = sleep.get('dailySleepDTO', {}).get('score', "") if sleep else ""
     slp_h = round(sleep.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) / 3600, 1) if sleep else ""
     
-    morning_row = [display_time, weight, "", "", rhr, hrv, bb, slp_score, slp_h, "40", "Synced"]
+    morning_row = [display_time, weight, "", "", rhr, hrv, bb, slp_score, slp_h, "40", "Restored"]
 
-    # --- ЛИСТ DAILY (Общие данные за день) ---
+    # --- ЛИСТ DAILY ---
+    # Возвращаем калории и дистанцию (делим метры на 1000)
     steps = stats.get('totalSteps', "")
-    cal_active = stats.get('activeCalories', "")
-    cal_total = stats.get('totalCalories', "")
-    intensity_min = stats.get('activeMinuteCount', "")
-    daily_row = [today_str, steps, cal_active, cal_total, intensity_min]
+    distance_km = round(stats.get('totalDistanceMeters', 0) / 1000, 2)
+    calories = stats.get('totalCalories', "")
+    
+    daily_row = [today_str, steps, distance_km, calories, rhr, bb]
 
-    # --- ЛИСТ ACTIVITIES (Тренировки) ---
+    # --- ЛИСТ ACTIVITIES ---
     activities_to_log = []
     all_acts = gar.get_activities(0, 5)
     for a in all_acts:
@@ -62,18 +63,14 @@ try:
             ]
             activities_to_log.append({"id": act_id, "row": row})
 
-    # 3. ЗАПИСЬ В ТАБЛИЦУ
+    # 2. ЗАПИСЬ
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(creds).open("Garmin_Data")
     
-    # Запись Morning
     ss.worksheet("Morning").append_row(morning_row)
-    
-    # Запись Daily
     ss.worksheet("Daily").append_row(daily_row)
     
-    # Запись Activities
     if activities_to_log:
         ws_a = ss.worksheet("Activities")
         data = ws_a.get_all_values()
@@ -82,7 +79,7 @@ try:
             if act["id"] not in existing_ids:
                 ws_a.append_row(act["row"])
 
-    print("Success: All 3 sheets updated.")
+    print("Success: Back to stable.")
 
 except Exception as e:
     print(f"Error: {e}")
