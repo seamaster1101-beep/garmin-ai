@@ -10,6 +10,7 @@ from google.oauth2.service_account import Credentials
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Теперь переменная GOOGLE_CREDS_JSON точно содержит твой секрет
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_SHEETS_CREDS")
 
 def update_or_append(sheet, date_str, row_data):
@@ -212,10 +213,15 @@ if GEMINI_API_KEY:
 
 # --- 4. ЗАПИСЬ И TELEGRAM ---
 try:
-    # Загружаем секрет, названный по твоей инструкции
-    creds_json = os.getenv("GOOGLE_CREDS")
-    creds_dict = json.loads(creds_json)
-    credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    if not GOOGLE_CREDS_JSON:
+        raise ValueError("GOOGLE_CREDS_JSON is None! Проверь секреты.")
+
+    # Используем переменную из блока CONFIG
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    credentials = Credentials.from_service_account_info(
+        creds_dict, 
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    )
     ss = gspread.authorize(credentials).open("Garmin_Data")
     
     # 1. Лист Morning (используем нашу функцию обновления)
