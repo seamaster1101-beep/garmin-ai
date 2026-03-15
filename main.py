@@ -40,13 +40,20 @@ hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 r_hr = summary.get("restingHeartRate") or ""
 
 # --- 2. ВЕС (Твой рабочий блок) ---
-weight = ""
+weight, fat, muscle = "", "", ""
 try:
     w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
     weights = w_data.get('dateWeightList', [])
     if weights:
         actual_entry = max(weights, key=lambda x: x.get('sampleTime', 0))
         weight = round(float(actual_entry.get('weight', 0)) / 1000, 1)
+        
+        # Берем данные, если они есть в Garmin
+        raw_fat = actual_entry.get('bodyFat')
+        if raw_fat: fat = round(float(raw_fat), 1)
+        
+        raw_muscle = actual_entry.get('muscleMass')
+        if raw_muscle: muscle = round(float(raw_muscle) / 1000, 1)
 except: pass
 
 # --- 3. СОН И ВРЕМЯ (Твой рабочий утренний алгоритм) ---
