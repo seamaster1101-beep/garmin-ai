@@ -2,10 +2,10 @@ name: Garmin Daily Sync
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # 07:00 (Мальта / UTC+1)
-    - cron: '0 15 * * *' # 16:00 (Мальта / UTC+1)
-    - cron: '0 21 * * *' # 22:00 (Мальта / UTC+1)
-  workflow_dispatch:     # ручной запуск
+    - cron: '0 6 * * *'
+    - cron: '0 15 * * *'
+    - cron: '0 21 * * *'
+  workflow_dispatch:
 
 jobs:
   garmin_sync:
@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Обновил с v3 на v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # Обновил с v4 на v5
         with:
           python-version: '3.11'
 
@@ -25,21 +25,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install garminconnect gspread google-auth requests google-generativeai
 
-      - name: Create local history.json if missing
-        run: |
-          if [ ! -f history.json ]; then
-            echo '{"processed_activity_ids": []}' > history.json
-          fi
-
       - name: Run main.py
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_CREDS }} 
+          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_CREDS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
-
-      - name: Confirm completion
-        run: echo "Workflow finished, JSON updated locally, no push performed."
