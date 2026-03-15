@@ -11,7 +11,10 @@ import requests
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
+
+# ПРОВЕРКА ОБЕИХ ПЕРЕМЕННЫХ, чтобы не гадать
+GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_SHEETS_CREDS") or os.environ.get("GOOGLE_CREDS")
+
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -50,15 +53,15 @@ try:
     sleep = gar.get_sleep_data(today_str)
     hrv_res = gar.get_hrv_data(today_str) or {}
     
-    # 1. ВОЗРАСТ (ФИКСИРУЕМ 62, чтобы избежать ошибок библиотеки)
+    # 1. Возраст (62 года, зафиксировано)
     real_age = 62
 
-    # 2. Время (07:22)
+    # 2. Время пробуждения (07:22)
     dto = sleep.get('dailySleepDTO', {})
     raw_ts = dto.get('sleepEndTimeLocal')
     morning_ts = raw_ts.replace('T', ' ')[:16] if raw_ts else datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # 3. Вес и Сводка
+    # 3. Вес
     weight = ""
     try:
         w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
@@ -73,28 +76,30 @@ try:
     slp_h = round(float(dto.get("sleepTimeSeconds", 0)) / 3600, 1) if dto else ""
     bb_morning = stats.get("bodyBatteryHighestValue") or stats.get("bodyBatteryMostRecentValue") or ""
 
-    # 4. Daily (Калории - Колонка D)
-    # Используем totalCalories, который точно есть в stats
+    # 4. Daily (Калории и Дистанция)
     cals = stats.get("totalCalories", "")
-    daily_row = [today_str, stats.get('totalSteps', 0), round(stats.get('totalDistanceMeters', 0)/1000, 2), cals, r_hr, stats.get("bodyBatteryMostRecentValue", "")]
+    steps = stats.get('totalSteps', 0)
+    dist_km = round(stats.get('totalDistanceMeters', 0)/1000, 2)
+    daily_row = [today_str, steps, dist_km, cals, r_hr, stats.get("bodyBatteryMostRecentValue", "")]
 
     # --- AI ANALYSIS ---
     fitness_age_result = "..."
-    ai_advice = ""
     if GEMINI_API_KEY:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-            prompt = (f"Атлет: {real_age} лет. Данные: вес {weight}, HRV {hrv}, покой HR {r_hr}, сон {slp_h}ч. "
-                      f"Оцени Fitness Age одной фразой. Дай совет.")
+            prompt = (f"Атлет: {real_age} года. Вес {weight}, HRV {hrv}, покой HR {r_hr}, сон {slp_h}ч. "
+                      f"Определи Fitness Age короткой фразой.")
             res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=15).json()
-            full_text = res_ai["candidates"][0]["content"]["parts"][0]["text"].strip()
-            fitness_age_result = full_text.split('\n')[0][:40]
-            ai_advice = full_text
+            fitness_age_result = res_ai["candidates"][0]["content"]["parts"][0]["text"].strip()[:40]
         except: fitness_age_result = "AI Error"
 
     morning_row = [morning_ts, weight, r_hr, hrv, bb_morning, slp_sc, slp_h, real_age, fitness_age_result]
 
-    # --- ЗАПИСЬ ---
+    # --- ЗАПИСЬ В ТАБЛИЦЫ ---
+    if not GOOGLE_CREDS_JSON:
+        print("Error: GOOGLE_CREDS not found in Environment Variables")
+        exit(1)
+
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(credentials).open("Garmin_Data")
@@ -102,7 +107,7 @@ try:
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     
-    # Activities
+    # Вело-активности
     latest_acts = gar.get_activities(0, 3)
     ws_a = ss.worksheet("Activities")
     existing_ids = {r[12] for r in ws_a.get_all_values() if len(r) > 12}
@@ -113,7 +118,7 @@ try:
                 row = [a.get('startTimeLocal').replace('T',' ')[:16], a.get('activityType', {}).get('typeKey'), round(a.get('duration',0)/3600,2), round(a.get('distance',0)/1000,2), a.get('averageHR'), a.get('maxHR'), "", round(float(a.get('activityTrainingLoad',0)),1), round(float(a.get('aerobicTrainingEffect',0)),1), a.get('calories'), a.get('avgPower'), "", a_id]
                 ws_a.append_row(row)
 
-    print(f"✅ Успех! Калории: {cals}, Время: {morning_ts}")
+    print(f"Success! Wake: {morning_ts}, Cals: {cals}")
 
 except Exception as e:
     print(f"Error: {e}")
