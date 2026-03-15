@@ -86,29 +86,31 @@ for d in [today_str, yesterday_str]:
     except:
         continue
 
-# --- 4. FITNESS AGE (Упрощенный вызов) ---
+# --- 4. FITNESS AGE (Логика на основе биомаркеров Garmin) ---
 fit_age = ""
-if GEMINI_API_KEY and hrv:
-    try:
-        # Прямой URL без лишних префиксов в модели
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-        payload = {
-            "contents": [{
-                "parts": [{"text": f"User age 62, HRV {hrv}, Resting Heart Rate {r_hr}. Estimate biological fitness age. Return ONLY a number."}]
-            }]
-        }
-        res = requests.post(url, json=payload, timeout=15).json()
-        
-        if 'candidates' in res:
-            text = res["candidates"][0]["content"]["parts"][0]["text"]
-            fit_age = ''.join(filter(str.isdigit, text))
-        else:
-            # Если опять 404, мы хотя бы увидим это сразу
-            print(f"Gemini Debug: {res}")
-            fit_age = "Err_API"
-    except Exception as e:
-        print(f"Gemini Error: {e}")
-        fit_age = "Err_Gen"
+try:
+    actual_age = 62
+    # 1. Влияние пульса покоя (RHR)
+    # Garmin хвалит за 45-46. Если RHR <= 48, это отличный бонус.
+    rhr_val = int(r_hr) if r_hr else 60
+    rhr_impact = (rhr_val - 55) * 0.4  # Чем ниже 55, тем моложе
+    
+    # 2. Влияние жира (Body Fat)
+    # У тебя 18.3%, что для 62 лет — атлетический уровень.
+    fat_val = float(fat) if fat else 25
+    fat_impact = (fat_val - 22) * 0.5  # Норма около 22%, всё что ниже — молодит
+    
+    # 3. Влияние HRV (Косвенный маркер стресса и восстановления)
+    hrv_val = int(hrv) if hrv else 40
+    hrv_impact = (hrv_val - 45) * 0.1  # Высокий HRV — признак молодого сердца
+    
+    # Итоговый расчет
+    calculated = actual_age + rhr_impact + fat_impact - hrv_impact
+    
+    # Ограничиваем разумными пределами (как у Garmin)
+    fit_age = round(max(45, min(actual_age + 5, calculated)), 1)
+except:
+    fit_age = "62"
         
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
 # A:Date(1), B:Weight(2), C:Fat(3), D:Muscle(4), E:RHR(5), F:HRV(6), G:BB(7), H:Score(8), I:Hours(9), J:Age(10), K:FitAge(11)
