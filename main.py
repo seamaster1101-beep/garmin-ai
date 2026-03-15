@@ -168,7 +168,7 @@ try:
             round(float(np_val), 1) if np_val else "", 
             round(float(tss_val), 1) if tss_val else "", 
             vi_val, 
-            act_id
+            f"'{act_id}"
         ]
         activities_to_log.append({"id": act_id, "row": row_data})
 except Exception as e:
