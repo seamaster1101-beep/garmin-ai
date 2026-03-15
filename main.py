@@ -49,19 +49,30 @@ try:
         weight = round(float(actual_entry.get('weight', 0)) / 1000, 1)
 except: pass
 
-# --- 3. СОН И ВРЕМЯ (Фикс 07:22 и Score) ---
+# --- 3. СОН И ВРЕМЯ (Твой рабочий утренний алгоритм) ---
+yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 morning_ts = f"{today_str} 08:00"
 slp_sc, slp_h = "", ""
-try:
-    sleep_data = gar.get_sleep_data(today_str) or {}
-    dto = sleep_data.get("dailySleepDTO") or {}
-    if dto:
-        slp_h = round(float(dto.get("sleepTimeSeconds", 0)) / 3600, 1)
-        slp_sc = dto.get("sleepScore") or sleep_data.get("sleepSummary", {}).get("score") or ""
-        raw_ts = dto.get("sleepEndTimestampLocal")
-        if raw_ts:
-            morning_ts = datetime.fromtimestamp(raw_ts / 1000).strftime("%Y-%m-%d %H:%M")
-except: pass
+
+for d in [today_str, yesterday_str]:
+    try:
+        sleep_data = gar.get_sleep_data(d) or {}
+        dto = sleep_data.get("dailySleepDTO") or {}
+        if dto and dto.get("sleepTimeSeconds", 0) > 0:
+            slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
+            # Тот самый поиск Score, который у тебя работал
+            scores = dto.get("sleepScores") or {}
+            slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
+            
+            raw_ts = dto.get("sleepEndTimestampLocal")
+            if raw_ts:
+                if isinstance(raw_ts, (int, float)):
+                    morning_ts = datetime.fromtimestamp(raw_ts / 1000).strftime("%Y-%m-%d %H:%M")
+                else:
+                    morning_ts = str(raw_ts).replace("T", " ")[:16]
+            break # Нашли данные — выходим из цикла
+    except:
+        continue
 
 # --- 4. FITNESS AGE (Теперь HRV точно определен выше) ---
 fit_age = ""
