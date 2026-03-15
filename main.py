@@ -132,31 +132,30 @@ steps = summary.get('totalSteps', 0)
 cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
 daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
 
-# --- ВРЕМЕННЫЙ ТЕСТ НА ВЧЕРАШНИХ ДАННЫХ ---
-yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-
+# --- 2. ACTIVITIES (Тест на данных за несколько дней) ---
+activities_to_log = [] # Инициализируем список, чтобы не было ошибки
 try:
-    latest_activities = gar.get_activities(0, 10) or [] # Возьмем чуть больше (10), чтобы точно зацепить вчера
+    # Берем последние 10 штук, чтобы точно найти хоть одну
+    latest_activities = gar.get_activities(0, 10) or []
+    print(f"DEBUG: Всего найдено активностей в Garmin: {len(latest_activities)}")
+
     for a in latest_activities:
         start_local = a.get("startTimeLocal", "")
-        
-        # ВРЕМЕННО: пропускаем и сегодня, и вчера
-        if not (start_local.startswith(today_str) or start_local.startswith(yesterday_str)): 
-            continue
+        # Убираем жесткий фильтр только по "сегодня", чтобы просто увидеть данные
         
         act_id = a.get("activityId")
         
-        # Метрики мощности (пробуем разные ключи)
+        # Основные метрики (пробуем достать NP, TSS, IF)
         if_val = a.get('intensityFactor')
         tss_val = a.get('trainingStressScore')
         np_val = a.get('normPower') or a.get('weightedAveragePower')
         
-        avg_pwr = a.get('avgPower')
+        avg_pwr = a.get('avgPower', 0)
         vi_val = ""
         if np_val and avg_pwr and float(avg_pwr) > 0:
             vi_val = round(float(np_val) / float(avg_pwr), 2)
 
-        # Формируем ряд (A-P)
+        # Формируем ряд для таблицы (A-P)
         row_data = [
             start_local.replace("T", " ")[:16], 
             a.get('activityType', {}).get('typeKey', ''), 
@@ -177,9 +176,10 @@ try:
         ]
         
         activities_to_log.append({"id": str(act_id), "row": row_data})
-        print(f"DEBUG ACT: Found {a.get('activityType', {}).get('typeKey')} ID: {act_id} NP: {np_val}")
+        print(f"DEBUG ACT: {start_local[:10]} | {a.get('activityType', {}).get('typeKey')} | NP: {np_val}")
+
 except Exception as e:
-    print(f"Test Activity Error: {e}")
+    print(f"Activity Test Error: {e}")
 
 # --- 6. ЗАПИСЬ ---
 creds_dict = json.loads(GOOGLE_CREDS_JSON)
