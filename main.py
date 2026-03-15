@@ -132,53 +132,54 @@ steps = summary.get('totalSteps', 0)
 cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
 daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
 
-# --- 5. ACTIVITIES (Финальный рабочий вариант) ---
+# --- 2. ACTIVITIES (Финальная сборка под твои столбцы A-P) ---
 activities_to_log = []
 try:
-    # Берем последние 5, этого хватит для одного дня
+    # Берем последние 5, чтобы не перегружать память
     latest_activities = gar.get_activities(0, 5) or []
     
     for a in latest_activities:
         start_local = a.get("startTimeLocal", "")
-        # ОСТАВЛЯЕМ ТОЛЬКО СЕГОДНЯ
+        # Оставляем только СЕГОДНЯ (фильтр на 15.03)
         if not start_local.startswith(today_str): 
             continue
         
         act_id = str(a.get("activityId"))
         
-        # Вытягиваем NP, TSS, IF (теперь мы знаем, что они там есть!)
+        # Вытягиваем сложные метрики мощности
         np_val = a.get('normPower') or a.get('weightedAveragePower', "")
         if_val = a.get('intensityFactor')
         tss_val = a.get('trainingStressScore')
-        
         avg_pwr = a.get('avgPower', "")
+        
+        # Считаем VI (Индекс вариативности)
         vi_val = ""
         if np_val and avg_pwr and float(avg_pwr) > 0:
             vi_val = round(float(np_val) / float(avg_pwr), 2)
 
+        # Твои столбцы один в один:
         row_data = [
-            start_local.replace("T", " ")[:16],      # A: Date
-            a.get('activityType', {}).get('typeKey', ''), # B: Sport
-            round(a.get('duration', 0) / 3600, 2),   # C: Dur
-            round(a.get('distance', 0) / 1000, 2),   # D: Dist
-            a.get('averageHR', ""),                  # E: AvgHR
-            a.get('maxHR', ""),                      # F: MaxHR
-            round(float(if_val), 3) if if_val else "", # G: IF
-            round(float(a.get('activityTrainingLoad', 0)), 1), # H: Load
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), # I: TE
-            a.get('calories', ""),                   # J: Cal
-            avg_pwr,                                 # K: Pwr
-            a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "", # L: Cad
-            round(float(np_val), 1) if np_val else "", # M: NP
+            start_local.replace("T", " ")[:16],      # A: Дата
+            a.get('activityType', {}).get('typeKey', ''), # B: Вид спорта
+            round(a.get('duration', 0) / 3600, 2),   # C: Длительность (час)
+            round(a.get('distance', 0) / 1000, 2),   # D: Дистанция (км)
+            a.get('averageHR', ""),                  # E: Средний пульс
+            a.get('maxHR', ""),                      # F: Макс пульс
+            round(float(if_val), 3) if if_val else "", # G: IF (Intensity Factor)
+            round(float(a.get('activityTrainingLoad', 0)), 1), # H: Load (Нагрузка)
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), # I: TE (Эффект)
+            a.get('calories', ""),                   # J: Калории
+            avg_pwr,                                 # K: Ср. Мощность
+            a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "", # L: Каденс
+            round(float(np_val), 1) if np_val else "", # M: NP (Норм. мощность)
             round(float(tss_val), 1) if tss_val else "", # N: TSS
-            vi_val,                                  # O: VI
-            act_id                                   # P: ID
+            vi_val,                                  # O: VI (Вариативность)
+            act_id                                   # P: ID (для проверки дублей)
         ]
         
         activities_to_log.append({"id": act_id, "row": row_data})
 except Exception as e:
     print(f"Activity Error: {e}")
-
 # --- 6. ЗАПИСЬ ---
 creds_dict = json.loads(GOOGLE_CREDS_JSON)
 ss = gspread.authorize(Credentials.from_service_account_info(creds_dict, 
