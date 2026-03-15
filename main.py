@@ -208,9 +208,24 @@ try:
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Info", ai_advice.replace('*', '')])
     
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        status = "🚴‍♂️" if activities_to_log else "🌅"
-        msg = f"{status} *Garmin Sync*\n\n💓 HRV: {hrv or 'N/A'}\n🌙 Сон: {slp_h or 'N/A'}ч\n⚖️ Вес: {weight or 'N/A'}кг\n\n🤖 {ai_advice.replace('*', '')}"
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-    print("✅ Всё синхронизировано!")
-except Exception as e: print(f"Final Write Error: {e}")
+        status_emoji = "🚴‍♂️+🏋️‍♂️" if len(activities_to_log) > 1 else ("🚴‍♂️" if activities_to_log else "🌅")
+        header = f"{status_emoji} *Garmin Daily Analysis*\n\n"
+        
+        # Убираем символы, которые могут сломать Markdown, и ограничиваем длину
+        clean_advice = ai_advice.replace('*', '').replace('_', '')
+        
+        # Если текст слишком длинный для одного сообщения, берем первые 3800 символов
+        if len(clean_advice) > 3800:
+            clean_advice = clean_advice[:3800] + "...\n(текст обрезан)"
+
+        full_msg = f"{header}💓 HRV: {hrv or 'N/A'}\n🌙 Сон: {slp_h or 'N/A'}ч\n⚖️ Вес: {weight or 'N/A'}кг\n\n🤖 {clean_advice}"
+        
+        try:
+            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                          json={"chat_id": TELEGRAM_CHAT_ID, "text": full_msg, "parse_mode": "Markdown"}, timeout=10)
+            if res.status_code != 200:
+                # Если Markdown все еще ломает — шлем обычным текстом
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                          json={"chat_id": TELEGRAM_CHAT_ID, "text": full_msg.replace('*', '')}, timeout=10)
+        except Exception as te:
+            print(f"Telegram Error: {te}")
