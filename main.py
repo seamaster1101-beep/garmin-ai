@@ -174,53 +174,74 @@ try:
 except Exception as e:
     print(f"Activity Error: {e}")
 
-# --- 3. AI BLOCK ---
-ai_advice = "ИИ анализирует..."
-if GEMINI_API_KEY:
+# --- 3. AI BLOCK (Умный выбор: Утро или Тренировка) ---
+ai_advice = ""
+report_type = "Morning"
+
+# Проверяем, был ли уже утренний отчет сегодня
+creds_dict = json.loads(GOOGLE_CREDS_JSON)
+credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+ss = gspread.authorize(credentials).open("Garmin_Data")
+log_sheet = ss.worksheet("AI_Log")
+last_logs = log_sheet.get_all_values()
+morning_done = any(today_str in row[0] and "Morning" in row[1] for row in last_logs)
+
+if activities_to_log:
+    # Если есть свежая тренировка — анализируем ЕЁ
+    report_type = "Activity"
+    act = activities_to_log[0]['row']
+    prompt = (f"Ты — Athlete Intelligence. Разбери велотренировку: {act[1]} (тип), {act[3]}км, "
+              f"мощность {act[10]}Вт (NP {act[12]}Вт), TSS {act[13]}, IF {act[6]}. "
+              f"Дай проф. анализ зон и колкую шутку атлету.")
+elif not morning_done:
+    # Если тренировок нет и утренний отчет еще не отправлялся
+    report_type = "Morning"
+    prompt = (f"Ты — элитный аналитик. HRV {morning_row[5]}, Пульс {morning_row[4]}, "
+              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]} (реальный 62). "
+              f"Дай прогноз на день и ироничную колкость.")
+else:
+    ai_advice = "SKIP" # Утренний уже был, новых тренировок нет
+
+if GEMINI_API_KEY and ai_advice != "SKIP":
     try:
         res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
         available = [m["name"] for m in res_m.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
         target_model = next((m for m in available if "flash" in m), available[0])
-
-        prompt = (f"Ты — элитный аналитик здоровья. Разбери показатели: "
-                  f"HRV {morning_row[5]}, Пульс {morning_row[4]}, Сон {morning_row[8]}ч, "
-                  f"Body Battery {morning_row[6]}. "
-                  f"Фитнес-возраст {morning_row[10]} при реальном 62 года! "
-                  f"Дай краткий прогноз и одну колкую ироничную шутку.")
-
+        
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
         res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
-        ai_advice = "ИИ временно недоступен, но ты всё равно молодец."
+        ai_advice = f"Ошибка ИИ: {e}"
 
-# --- 4. ЗАПИСЬ И TELEGRAM (ЕДИНЫЙ БЛОК) ---
+# --- 4. ЗАПИСЬ И TELEGRAM ---
 try:
-    creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-    ss = gspread.authorize(credentials).open("Garmin_Data")
-    
+    # 1. Запись в таблицы
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     
+    # 2. Activities (с выравниванием даты)
     act_sheet = ss.worksheet("Activities")
     existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
     for act in activities_to_log:
         if act["id"] not in existing_ids:
+            # Добавляем строку
             act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
+            # Выравниваем ПЕРВУЮ колонку (дату) по левому краю в новой строке
+            new_row_idx = len(act_sheet.get_all_values())
+            act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
     
-    clean_ai = ai_advice.replace('*', '')
-    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Info", clean_ai])
+    # 3. Отправка в Telegram и Лог (только если есть что сказать)
+    if ai_advice and ai_advice != "SKIP":
+        clean_ai = ai_advice.replace('*', '')
+        log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
+        
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+            status = "🚴‍♂️" if report_type == "Activity" else "🌅"
+            msg = f"{status} *Garmin {report_type}*\n\n{clean_ai}"
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                          json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
     
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        msg = (f"📊 *Garmin Sync Complete*\n\n"
-               f"💓 *HRV:* {hrv or '--'}\n"
-               f"🧬 *Fit Age:* {fit_age or '--'}\n"
-               f"🌙 *Сон:* {slp_h or '--'}ч\n\n"
-               f"🤖 {clean_ai}")
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-    print(f"✅ Финиш: Время={morning_ts}, Вес={weight}, Score={slp_sc}")
-    print("🚀 Победа! Всё в таблице и в ТГ.")
+    print("🚀 Всё четко: выровнено, проверено, отправлено!")
 except Exception as e:
     print(f"Final Error: {e}")
