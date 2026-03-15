@@ -116,15 +116,14 @@ except:
     fit_age = "62"
         
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
-# A:Date(1), B:Weight(2), C:Fat(3), D:Muscle(4), E:RHR(5), F:HRV(6), G:BB(7), H:Score(8), I:Hours(9), J:Age(10), K:FitAge(11)
 morning_row = [
     f"'{morning_ts}", 
     weight, 
-    fat,        # Теперь здесь данные из actual_entry.get('bodyFat')
-    muscle,     # Теперь здесь данные из actual_entry.get('muscleMass')
+    fat, 
+    muscle, 
     r_hr, 
     hrv, 
-    summary.get("bodyBatteryHighestValue", ""), 
+    summary.get("bodyBatteryMostRecentValue", ""), # Актуальный заряд на утро
     slp_sc, 
     slp_h, 
     62, 
@@ -135,125 +134,93 @@ steps = summary.get('totalSteps', 0)
 cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
 daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
 
-# --- 2. ACTIVITIES (Финальная сборка под твои столбцы A-P) ---
+# --- 2. ACTIVITIES ---
 activities_to_log = []
 try:
-    # Берем последние 5, чтобы не перегружать память
     latest_activities = gar.get_activities(0, 5) or []
-    
     for a in latest_activities:
         start_local = a.get("startTimeLocal", "")
-        # Оставляем только СЕГОДНЯ (фильтр на 15.03)
-        if not start_local.startswith(today_str): 
-            continue
+        if not start_local.startswith(today_str): continue
         
         act_id = str(a.get("activityId"))
-        
-        # Вытягиваем сложные метрики мощности
         np_val = a.get('normPower') or a.get('weightedAveragePower', "")
         if_val = a.get('intensityFactor')
         tss_val = a.get('trainingStressScore')
         avg_pwr = a.get('avgPower', "")
         
-        # Считаем VI (Индекс вариативности)
         vi_val = ""
         if np_val and avg_pwr and float(avg_pwr) > 0:
             vi_val = round(float(np_val) / float(avg_pwr), 2)
 
-        # Твои столбцы один в один:
         row_data = [
-            start_local.replace("T", " ")[:16],      # A: Дата
-            a.get('activityType', {}).get('typeKey', ''), # B: Вид спорта
-            round(a.get('duration', 0) / 3600, 2),   # C: Длительность (час)
-            round(a.get('distance', 0) / 1000, 2),   # D: Дистанция (км)
-            a.get('averageHR', ""),                  # E: Средний пульс
-            a.get('maxHR', ""),                      # F: Макс пульс
-            round(float(if_val), 3) if if_val else "", # G: IF (Intensity Factor)
-            round(float(a.get('activityTrainingLoad', 0)), 1), # H: Load (Нагрузка)
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), # I: TE (Эффект)
-            a.get('calories', ""),                   # J: Калории
-            avg_pwr,                                 # K: Ср. Мощность
-            a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "", # L: Каденс
-            round(float(np_val), 1) if np_val else "", # M: NP (Норм. мощность)
-            round(float(tss_val), 1) if tss_val else "", # N: TSS
-            vi_val,                                  # O: VI (Вариативность)
-            act_id                                   # P: ID (для проверки дублей)
+            start_local.replace("T", " ")[:16], 
+            a.get('activityType', {}).get('typeKey', ''), 
+            round(a.get('duration', 0) / 3600, 2), 
+            round(a.get('distance', 0) / 1000, 2),
+            a.get('averageHR', ""), 
+            a.get('maxHR', ""), 
+            round(float(if_val), 3) if if_val else "", 
+            round(float(a.get('activityTrainingLoad', 0)), 1),
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), 
+            a.get('calories', ""),
+            avg_pwr, 
+            a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "",
+            round(float(np_val), 1) if np_val else "", 
+            round(float(tss_val), 1) if tss_val else "", 
+            vi_val, 
+            act_id
         ]
-        
         activities_to_log.append({"id": act_id, "row": row_data})
 except Exception as e:
     print(f"Activity Error: {e}")
-# --- 6. ЗАПИСЬ ---
-creds_dict = json.loads(GOOGLE_CREDS_JSON)
-ss = gspread.authorize(Credentials.from_service_account_info(creds_dict, 
-     scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])).open("Garmin_Data")
 
-update_or_append(ss.worksheet("Morning"), today_str, morning_row)
-update_or_append(ss.worksheet("Daily"), today_str, daily_row)
-
-print(f"✅ Финиш: Время={morning_ts}, Вес={weight}, Score={slp_sc}, Calories={cals}")
-
-# --- 3. AI BLOCK (Берем данные из morning_row) ---
+# --- 3. AI BLOCK ---
 ai_advice = "ИИ анализирует..."
 if GEMINI_API_KEY:
     try:
-        # 1. Подбор модели
         res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
         available = [m["name"] for m in res_m.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
         target_model = next((m for m in available if "flash" in m), available[0])
 
-        # 2. Промпт (Берем данные из morning_row по индексам столбцов)
-        # Индексы из твоего morning_row: 5=HRV, 4=Пульс, 8=Сон, 7=Score, 6=BodyBattery, 10=FitAge
         prompt = (f"Ты — элитный аналитик здоровья. Разбери показатели: "
                   f"HRV {morning_row[5]}, Пульс {morning_row[4]}, Сон {morning_row[8]}ч, "
                   f"Body Battery {morning_row[6]}. "
                   f"Фитнес-возраст {morning_row[10]} при реальном 62 года! "
                   f"Дай краткий прогноз и одну колкую ироничную шутку.")
 
-        # 3. Запрос к Gemini
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
         res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        
     except Exception as e:
-        print(f"AI Error: {e}")
         ai_advice = "ИИ временно недоступен, но ты всё равно молодец."
-        
-# --- 4. ЗАПИСЬ И TELEGRAM ---
-try:
-    if not GOOGLE_CREDS_JSON:
-        raise ValueError("GOOGLE_CREDS_JSON is None! Проверь секреты.")
 
-    # Используем переменную из блока CONFIG
+# --- 4. ЗАПИСЬ И TELEGRAM (ЕДИНЫЙ БЛОК) ---
+try:
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    credentials = Credentials.from_service_account_info(
-        creds_dict, 
-        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    )
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(credentials).open("Garmin_Data")
     
-    # 1. Лист Morning (используем нашу функцию обновления)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     
-    # 2. Лист Activities (колонки A-P из прошлого шага)
     act_sheet = ss.worksheet("Activities")
     existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
     for act in activities_to_log:
         if act["id"] not in existing_ids:
             act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
     
-    # 3. AI Log & Telegram
     clean_ai = ai_advice.replace('*', '')
     ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Info", clean_ai])
     
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         msg = (f"📊 *Garmin Sync Complete*\n\n"
-               f"💓 *HRV:* {hrv}\n"
-               f"🧬 *Fit Age:* {fit_age}\n"
-               f"🌙 *Сон:* {slp_h}ч\n\n"
+               f"💓 *HRV:* {hrv or '--'}\n"
+               f"🧬 *Fit Age:* {fit_age or '--'}\n"
+               f"🌙 *Сон:* {slp_h or '--'}ч\n\n"
                f"🤖 {clean_ai}")
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                       json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+    print(f"✅ Финиш: Время={morning_ts}, Вес={weight}, Score={slp_sc}")
     print("🚀 Победа! Всё в таблице и в ТГ.")
 except Exception as e:
     print(f"Final Error: {e}")
