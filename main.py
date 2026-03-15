@@ -86,28 +86,28 @@ for d in [today_str, yesterday_str]:
     except:
         continue
 
-# --- 4. FITNESS AGE (Проверенный путь v1beta) ---
+# --- 4. FITNESS AGE (Упрощенный вызов) ---
 fit_age = ""
 if GEMINI_API_KEY and hrv:
     try:
-        # Корректный URL для 1.5-flash
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # Прямой URL без лишних префиксов в модели
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "contents": [{
-                "parts": [{"text": f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай ТОЛЬКО одно число."}]
+                "parts": [{"text": f"User age 62, HRV {hrv}, Resting Heart Rate {r_hr}. Estimate biological fitness age. Return ONLY a number."}]
             }]
         }
         res = requests.post(url, json=payload, timeout=15).json()
         
-        # Проверка структуры ответа
-        if 'candidates' in res and res['candidates']:
-            raw_text = res["candidates"][0]["content"]["parts"][0]["text"]
-            fit_age = ''.join(filter(str.isdigit, raw_text))
+        if 'candidates' in res:
+            text = res["candidates"][0]["content"]["parts"][0]["text"]
+            fit_age = ''.join(filter(str.isdigit, text))
         else:
-            print(f"Gemini API Response Error: {res}")
+            # Если опять 404, мы хотя бы увидим это сразу
+            print(f"Gemini Debug: {res}")
             fit_age = "Err_API"
     except Exception as e:
-        print(f"General error in Gemini block: {e}")
+        print(f"Gemini Error: {e}")
         fit_age = "Err_Gen"
         
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
