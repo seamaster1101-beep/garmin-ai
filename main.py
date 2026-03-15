@@ -51,20 +51,6 @@ try:
 except Exception as e:
     print(f"Sleep data error: {e}")
 
-# 2. Fitness Age (Gemini) — добавляем жесткую проверку
-fit_age = ""
-if GEMINI_API_KEY and hrv:
-    try:
-        prompt = f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай ТОЛЬКО одно число."
-        res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}", 
-            json={"contents": [{"parts": [{"text": prompt}]}]}, 
-            timeout=15 # Увеличил таймаут
-        ).json()
-        text_resp = res["candidates"][0]["content"]["parts"][0]["text"].strip()
-        fit_age = ''.join(filter(str.isdigit, text_resp))
-    except:
-        fit_age = "Calc..." # Чтобы ты видел, что запрос был, но не прошел
 
 # --- СТРОКА ДЛЯ ЗАПИСИ (Ничего не сдвигаем!) ---
 # A:Date, B:Weight, C:Fat, D:Muscle, E:RHR, F:HRV, G:BB, H:Score, I:Hours, J:Age, K:FitAge
@@ -80,6 +66,22 @@ morning_row = [
     62,               # J
     fit_age           # K (Fitness Age)
 ]
+
+# 2. Fitness Age (Gemini) — добавляем жесткую проверку
+fit_age = ""
+if GEMINI_API_KEY and hrv:
+    try:
+        prompt = f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай ТОЛЬКО одно число."
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}", 
+            json={"contents": [{"parts": [{"text": prompt}]}]}, 
+            timeout=15 # Увеличил таймаут
+        ).json()
+        text_resp = res["candidates"][0]["content"]["parts"][0]["text"].strip()
+        fit_age = ''.join(filter(str.isdigit, text_resp))
+    except:
+        fit_age = "Calc..." # Чтобы ты видел, что запрос был, но не прошел
+
 # --- 2. DAILY BLOCK (Твоя логика без изменений) ---
 steps = summary.get('totalSteps', 0)
 cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
