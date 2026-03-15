@@ -86,20 +86,22 @@ for d in [today_str, yesterday_str]:
     except:
         continue
 
-# --- 4. FITNESS AGE (Финальная попытка) ---
+# --- 4. FITNESS AGE (Проверенный путь v1beta) ---
 fit_age = ""
 if GEMINI_API_KEY and hrv:
     try:
-        # Используем стабильную версию API и проверенную модель
-        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+        # Корректный URL для 1.5-flash
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {
-            "contents": [{"parts": [{"text": f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст цифрой."}]}]
+            "contents": [{
+                "parts": [{"text": f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай ТОЛЬКО одно число."}]
+            }]
         }
         res = requests.post(url, json=payload, timeout=15).json()
         
-        if 'candidates' in res:
+        # Проверка структуры ответа
+        if 'candidates' in res and res['candidates']:
             raw_text = res["candidates"][0]["content"]["parts"][0]["text"]
-            # Вынимаем только цифры
             fit_age = ''.join(filter(str.isdigit, raw_text))
         else:
             print(f"Gemini API Response Error: {res}")
