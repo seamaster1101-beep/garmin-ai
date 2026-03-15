@@ -193,38 +193,31 @@ update_or_append(ss.worksheet("Daily"), today_str, daily_row)
 
 print(f"✅ Финиш: Время={morning_ts}, Вес={weight}, Score={slp_sc}, Calories={cals}")
 
-# --- 3. AI BLOCK (ФИНАЛЬНЫЙ ФИКС) ---
+# --- 3. AI BLOCK (Берем данные из morning_row) ---
 ai_advice = "ИИ анализирует..."
 if GEMINI_API_KEY:
     try:
         # 1. Подбор модели
         res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
-        models_data = res_m.json()
-        available = [m["name"] for m in models_data.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+        available = [m["name"] for m in res_m.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
         target_model = next((m for m in available if "flash" in m), available[0])
 
-        # 2. Промпт (убедись, что эти переменные созданы в начале скрипта)
-        # Мы берем данные, которые ты только что записал в morning_row
-        prompt = (f"Ты — элитный аналитик здоровья. Разбери утренние показатели: "
-                  f"HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч (Score {slp_sc}), Body Battery {bb}. "
-                  f"Особый акцент: Фитнес-возраст {fit_age} при фактическом 62 года! "
-                  f"Дай прогноз на день и одну короткую, колкую шутку.")
+        # 2. Промпт (Берем данные из morning_row по индексам столбцов)
+        # Индексы из твоего morning_row: 5=HRV, 4=Пульс, 8=Сон, 7=Score, 6=BodyBattery, 10=FitAge
+        prompt = (f"Ты — элитный аналитик здоровья. Разбери показатели: "
+                  f"HRV {morning_row[5]}, Пульс {morning_row[4]}, Сон {morning_row[8]}ч, "
+                  f"Body Battery {morning_row[6]}. "
+                  f"Фитнес-возраст {morning_row[10]} при реальном 62 года! "
+                  f"Дай краткий прогноз и одну колкую ироничную шутку.")
 
-        # 3. Запрос
+        # 3. Запрос к Gemini
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
         res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+        ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         
-        # Проверка ответа
-        res_json = res_ai.json()
-        if "candidates" in res_json:
-            ai_advice = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-        else:
-            print(f"AI Debug: {res_json}") # Поможет понять, если API ключ капризничает
-            ai_advice = "ИИ задумался о смысле жизни."
-            
     except Exception as e:
         print(f"AI Error: {e}")
-        ai_advice = "ИИ временно недоступен."
+        ai_advice = "ИИ временно недоступен, но ты всё равно молодец."
         
 # --- 4. ЗАПИСЬ И TELEGRAM ---
 try:
