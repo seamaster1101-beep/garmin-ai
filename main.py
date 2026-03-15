@@ -86,23 +86,27 @@ for d in [today_str, yesterday_str]:
     except:
         continue
 
-# --- 4. FITNESS AGE ---
+# --- 4. FITNESS AGE (Улучшенный) ---
 fit_age = ""
 if GEMINI_API_KEY and hrv:
     try:
-        prompt = f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст. Выдай ТОЛЬКО одно число."
-        res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}", 
-            json={"contents": [{"parts": [{"text": prompt}]}]}, 
-            timeout=15
-        ).json()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{"parts": [{"text": f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст цифрой."}]}],
+            "safetySettings": [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}] # Убираем ложные срабатывания фильтров
+        }
+        res = requests.post(url, json=payload, timeout=15).json()
         
-        # Извлекаем текст и чистим от всего, кроме цифр
-        raw_text = res["candidates"][0]["content"]["parts"][0]["text"]
-        fit_age = ''.join(filter(str.isdigit, raw_text))
+        if 'candidates' in res:
+            raw_text = res["candidates"][0]["content"]["parts"][0]["text"]
+            fit_age = ''.join(filter(str.isdigit, raw_text))
+        else:
+            # Если опять будет ошибка, мы увидим причину в логах GitHub Actions
+            print(f"Gemini API Response Error: {res}")
+            fit_age = "?" 
     except Exception as e:
-        fit_age = "Err" # Если увидишь Err в таблице - значит API Gemini сбоит
-        print(f"Gemini error: {e}")
+        print(f"General error in Gemini block: {e}")
+        fit_age = "Err"
 
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
 # A:Date(1), B:Weight(2), C:Fat(3), D:Muscle(4), E:RHR(5), F:HRV(6), G:BB(7), H:Score(8), I:Hours(9), J:Age(10), K:FitAge(11)
