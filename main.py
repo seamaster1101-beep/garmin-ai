@@ -14,31 +14,40 @@ try:
     gar.login()
     today_str = datetime.now().strftime("%Y-%m-%d")
     
-    # 1. СБОР ДАННЫХ
+    # 1. ПОЛУЧЕНИЕ ДАННЫХ (Как было утром)
     stats = gar.get_user_summary(today_str)
     sleep = gar.get_sleep_data(today_str)
     hrv_data = gar.get_hrv_data(today_str)
+    user_settings = gar.get_settings()
     
-    # Время для Morning
-    wake_time = sleep.get('dailySleepDTO', {}).get('sleepEndTimeLocal') if sleep else None
-    display_time = wake_time.replace('T', ' ')[:16] if wake_time else datetime.now().strftime("%Y-%m-%d %H:%M")
+    # --- ВРЕМЯ ПРОБУЖДЕНИЯ (Приоритет 100%) ---
+    wake_time = sleep.get('dailySleepDTO', {}).get('sleepEndTimeLocal')
+    if wake_time:
+        # Формат: 2026-03-15 07:22
+        display_time = wake_time.replace('T', ' ')[:16]
+    else:
+        display_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # --- ЛИСТ MORNING ---
-    # Берем вес напрямую, как это работало раньше
     weight = round(stats.get('weight', 0) / 1000, 1) if stats.get('weight') else ""
     rhr = stats.get('restingHeartRate', "")
     bb = stats.get('bodyBatteryMostRecentValue', "")
     hrv = hrv_data.get('hrvSummary', {}).get('lastNightAvg', "") if hrv_data else ""
     slp_score = sleep.get('dailySleepDTO', {}).get('score', "") if sleep else ""
-    slp_h = round(sleep.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) / 3600, 1) if sleep else ""
+    slp_sec = sleep.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) if sleep else 0
+    slp_h = round(slp_sec / 3600, 1) if slp_sec > 0 else ""
     
-    morning_row = [display_time, weight, "", "", rhr, hrv, bb, slp_score, slp_h, "40", "Restored"]
+    # Авто-возраст
+    birth_year = int(user_settings.get('birthDate', '1984-01-01')[:4])
+    age = datetime.now().year - birth_year
+
+    morning_row = [display_time, weight, "", "", rhr, hrv, bb, slp_score, slp_h, age, "Final Fix"]
 
     # --- ЛИСТ DAILY ---
-    # Возвращаем калории и дистанцию (делим метры на 1000)
     steps = stats.get('totalSteps', "")
-    distance_km = round(stats.get('totalDistanceMeters', 0) / 1000, 2)
-    calories = stats.get('totalCalories', "")
+    dist_m = stats.get('totalDistanceMeters', 0)
+    distance_km = round(dist_m / 1000, 2) if dist_m else ""
+    calories = stats.get('totalCalories', "") # Вернули калории
     
     daily_row = [today_str, steps, distance_km, calories, rhr, bb]
 
@@ -63,7 +72,7 @@ try:
             ]
             activities_to_log.append({"id": act_id, "row": row})
 
-    # 2. ЗАПИСЬ
+    # 2. ЗАПИСЬ В ТАБЛИЦУ
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(creds).open("Garmin_Data")
@@ -79,7 +88,7 @@ try:
             if act["id"] not in existing_ids:
                 ws_a.append_row(act["row"])
 
-    print("Success: Back to stable.")
+    print(f"Done. Wake time used: {display_time}")
 
 except Exception as e:
-    print(f"Error: {e}")
+    print(f"Critical Error: {e}")
