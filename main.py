@@ -86,28 +86,28 @@ for d in [today_str, yesterday_str]:
     except:
         continue
 
-# --- 4. FITNESS AGE (Улучшенный) ---
+# --- 4. FITNESS AGE (Финальная попытка) ---
 fit_age = ""
 if GEMINI_API_KEY and hrv:
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # Используем стабильную версию API и проверенную модель
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
         payload = {
-            "contents": [{"parts": [{"text": f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст цифрой."}]}],
-            "safetySettings": [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}] # Убираем ложные срабатывания фильтров
+            "contents": [{"parts": [{"text": f"User 62y, HRV {hrv}, RHR {r_hr}. Оцени фитнес-возраст цифрой."}]}]
         }
         res = requests.post(url, json=payload, timeout=15).json()
         
         if 'candidates' in res:
             raw_text = res["candidates"][0]["content"]["parts"][0]["text"]
+            # Вынимаем только цифры
             fit_age = ''.join(filter(str.isdigit, raw_text))
         else:
-            # Если опять будет ошибка, мы увидим причину в логах GitHub Actions
             print(f"Gemini API Response Error: {res}")
-            fit_age = "?" 
+            fit_age = "Err_API"
     except Exception as e:
         print(f"General error in Gemini block: {e}")
-        fit_age = "Err"
-
+        fit_age = "Err_Gen"
+        
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
 # A:Date(1), B:Weight(2), C:Fat(3), D:Muscle(4), E:RHR(5), F:HRV(6), G:BB(7), H:Score(8), I:Hours(9), J:Age(10), K:FitAge(11)
 morning_row = [
