@@ -61,9 +61,13 @@ try:
     morning_ts = raw_ts.replace('T', ' ')[:16] if raw_ts else datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # 3. Вес и Сводка
-    w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
-    weights = w_data.get('dateWeightList', [])
-    weight = round(float(max(weights, key=lambda x: x.get('sampleTime', 0)).get('weight', 0)) / 1000, 1) if weights else ""
+    weight = ""
+    try:
+        w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
+        weights = w_data.get('dateWeightList', [])
+        if weights:
+            weight = round(float(max(weights, key=lambda x: x.get('sampleTime', 0)).get('weight', 0)) / 1000, 1)
+    except: pass
     
     r_hr = stats.get("restingHeartRate") or ""
     hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
@@ -76,17 +80,16 @@ try:
     daily_row = [today_str, stats.get('totalSteps', 0), round(stats.get('totalDistanceMeters', 0)/1000, 2), cals, r_hr, stats.get("bodyBatteryMostRecentValue", "")]
 
     # --- AI ANALYSIS (Fitness Age) ---
-    fitness_age_result = "Calculating..."
+    fitness_age_result = "..."
     ai_advice = ""
     if GEMINI_API_KEY:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
             prompt = (f"Атлет: {real_age} лет. Данные: вес {weight}, HRV {hrv}, покой HR {r_hr}, сон {slp_h}ч. "
-                      f"Определи его Fitness Age на основе этих данных и дай короткий совет.")
+                      f"Оцени Fitness Age одной фразой (например, 'Ваш Fitness Age: 55 лет'). Затем дай короткий совет.")
             res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=15).json()
             full_text = res_ai["candidates"][0]["content"]["parts"][0]["text"].strip()
-            # Пытаемся выцепить цифру из ответа для колонки Fitness Age
-            fitness_age_result = full_text.split('.')[0] # Первое предложение обычно содержит оценку
+            fitness_age_result = full_text.split('\n')[0][:30] # Берем только первую строку
             ai_advice = full_text
         except: fitness_age_result = "AI Error"
 
@@ -100,7 +103,7 @@ try:
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     
-    # Activities (Вело)
+    # Activities
     latest_acts = gar.get_activities(0, 3)
     ws_a = ss.worksheet("Activities")
     existing_ids = {r[12] for r in ws_a.get_all_values() if len(r) > 12}
@@ -113,10 +116,10 @@ try:
 
     # Telegram
     if TELEGRAM_BOT_TOKEN:
-        msg = f"📊 *Athlete Sync ({real_age} years)*\n\n🕒 Пробуждение: {morning_ts}\n🔥 Калории: {cals}\n🧬 Fitness Age: {fitness_age_result}\n\n🤖 {ai_advice}"
+        msg = f"✅ *Sync Completed ({real_age} y.o.)*\n\n🕒 Wake: {morning_ts}\n🧬 Fitness Age: {fitness_age_result}\n\n🤖 {ai_advice.replace('*', '')}"
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
 
-    print(f"✅ Успех! Возраст: {real_age}, Fitness Age: {fitness_age_result}")
+    print(f"✅ Успех! Age: {real_age}")
 
 except Exception as e:
     print(f"Error: {e}")
