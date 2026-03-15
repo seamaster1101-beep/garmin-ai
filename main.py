@@ -132,6 +132,55 @@ steps = summary.get('totalSteps', 0)
 cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
 daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
 
+# --- ВРЕМЕННЫЙ ТЕСТ НА ВЧЕРАШНИХ ДАННЫХ ---
+yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+try:
+    latest_activities = gar.get_activities(0, 10) or [] # Возьмем чуть больше (10), чтобы точно зацепить вчера
+    for a in latest_activities:
+        start_local = a.get("startTimeLocal", "")
+        
+        # ВРЕМЕННО: пропускаем и сегодня, и вчера
+        if not (start_local.startswith(today_str) or start_local.startswith(yesterday_str)): 
+            continue
+        
+        act_id = a.get("activityId")
+        
+        # Метрики мощности (пробуем разные ключи)
+        if_val = a.get('intensityFactor')
+        tss_val = a.get('trainingStressScore')
+        np_val = a.get('normPower') or a.get('weightedAveragePower')
+        
+        avg_pwr = a.get('avgPower')
+        vi_val = ""
+        if np_val and avg_pwr and float(avg_pwr) > 0:
+            vi_val = round(float(np_val) / float(avg_pwr), 2)
+
+        # Формируем ряд (A-P)
+        row_data = [
+            start_local.replace("T", " ")[:16], 
+            a.get('activityType', {}).get('typeKey', ''), 
+            round(a.get('duration', 0) / 3600, 2), 
+            round(a.get('distance', 0) / 1000, 2),
+            a.get('averageHR', ""), 
+            a.get('maxHR', ""), 
+            round(float(if_val), 3) if if_val else "", 
+            round(float(a.get('activityTrainingLoad', 0)), 1),
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), 
+            a.get('calories', ""),
+            avg_pwr or "", 
+            a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "",
+            round(float(np_val), 1) if np_val else "", 
+            round(float(tss_val), 1) if tss_val else "", 
+            vi_val, 
+            str(act_id)
+        ]
+        
+        activities_to_log.append({"id": str(act_id), "row": row_data})
+        print(f"DEBUG ACT: Found {a.get('activityType', {}).get('typeKey')} ID: {act_id} NP: {np_val}")
+except Exception as e:
+    print(f"Test Activity Error: {e}")
+
 # --- 6. ЗАПИСЬ ---
 creds_dict = json.loads(GOOGLE_CREDS_JSON)
 ss = gspread.authorize(Credentials.from_service_account_info(creds_dict, 
