@@ -16,7 +16,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 def update_or_append(ws, date_key, row_data):
     try:
         cells = ws.col_values(1)
-        # Ищем совпадение только по дате (первые 10 символов YYYY-MM-DD)
         date_only = date_key[:10]
         found_idx = -1
         for i, val in enumerate(cells):
@@ -46,12 +45,6 @@ try:
     try: sleep = gar.get_sleep_data(today_str)
     except: sleep = {}
 
-    # Определяем время (Весы -> Сон -> Текущее)
-    last_weight_time = comp.get('totalDailyLeaf', {}).get('calendarDate') # Это обычно полночь, не катит
-    # Лучше вытащим время из последней записи веса
-    weight_val = comp.get('totalDailyLeaf', {}).get('weight', 0)
-    
-    # По умолчанию время - сейчас, но попробуем найти время пробуждения
     wake_time = sleep.get('dailySleepDTO', {}).get('sleepEndTimeLocal')
     if wake_time:
         display_time = datetime.fromisoformat(wake_time).strftime("%Y-%m-%d %H:%M")
@@ -69,16 +62,60 @@ try:
     slp_score = sleep.get('dailySleepDTO', {}).get('score', "")
     slp_h = round(sleep.get('dailySleepDTO', {}).get('sleepTimeSeconds', 0) / 3600, 1) if sleep.get('dailySleepDTO') else ""
     
-    # Возраст (из профиля)
     user_settings = gar.get_user_settings()
     birth_date = user_settings.get('birthDate', '1984-01-01')
     age = datetime.now().year - int(birth_date[:4])
 
-    # Строка Morning (A-K)
     morning_row = [display_time, weight, fat, muscle, rhr, hrv, bb, slp_score, slp_h, age, "AI Calculation"]
 
     # 2. Активности
     all_acts = gar.get_activities(0, 5)
     activities_to_log = []
     for a in all_acts:
-        start
+        start = a.get('startTimeLocal', '')
+        if not start.startswith(today_str): continue
+        a_id = a.get('activityId')
+        try:
+            det = gar.get_activity_details(a_id)
+            summary = det.get('summaryDTO', {})
+            np = summary.get('normPower', "")
+            tss = summary.get('trainingStressScore', "")
+        except:
+            np, tss = "", ""
+
+        row = [start, a.get('activityType', {}).get('typeKey'), 
+               round(a.get('duration', 0)/3600, 2), round(a.get('distance', 0)/1000, 2),
+               a.get('averageHR'), a.get('maxHR'), a.get('intensityFactor'),
+               a.get('trainingLoad'), a.get('trainingEffect'), a.get('calories'),
+               a.get('averagePower'), a.get('averageCadence'), np, tss, "", str(a_id)]
+        activities_to_log.append({"id": str(a_id), "row": row})
+
+    # --- ЗАПИСЬ В ТАБЛИЦУ ---
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(creds).open("Garmin_Data")
+    
+    update_or_append(ss.worksheet("Morning"), display_time, morning_row)
+    
+    act_ws = ss.worksheet("Activities")
+    # Проверка на наличие данных в таблице перед получением ID
+    all_rows = act_ws.get_all_values()
+    exist = {r[15] for r in all_rows if len(r) > 15}
+    for act in activities_to_log:
+        if act["id"] not in exist: act_ws.append_row(act["row"])
+    
+    # 3. AI
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        prompt = f"Атлет {age} лет. Вес {weight}, Жир {fat}%, Мышцы {muscle}. HRV {hrv}, Сон {slp_h}ч. Едет 50км вел. Оцени его Fitness Age и дай совет."
+        res = model.generate_content(prompt)
+        ai_advice = res.text
+        
+        ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Report", ai_advice])
+        if TELEGRAM_BOT_TOKEN:
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                          json={"chat_id": TELEGRAM_CHAT_ID, "text": f"🚵‍♂️ *Ride Ready*\n\n{ai_advice}", "parse_mode": "Markdown"})
+    except Exception as ai_e: print(f"AI Error: {ai_e}")
+
+except Exception as e: print(f"Global Error: {e}")
