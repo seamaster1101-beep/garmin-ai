@@ -188,3 +188,76 @@ update_or_append(ss.worksheet("Morning"), today_str, morning_row)
 update_or_append(ss.worksheet("Daily"), today_str, daily_row)
 
 print(f"✅ Финиш: Время={morning_ts}, Вес={weight}, Score={slp_sc}, Calories={cals}")
+
+# --- 3. AI BLOCK (Умный подбор модели + Fitness Age) ---
+ai_advice = "Данные не готовы"
+if GEMINI_API_KEY:
+    try:
+        # 1. Авто-подбор модели
+        res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
+        models_list = res_m.json().get("models", [])
+        available = [m["name"] for m in models_list if "generateContent" in m.get("supportedGenerationMethods", [])]
+        
+        # Берем flash или первую доступную
+        target_model = next((m for m in available if "flash" in m), available[0])
+
+        # 2. Формируем промпт
+        if activities_to_log:
+            act = activities_to_log[0]
+            # Берем данные из нашего нового row_data (NP - это 13-й элемент, индекс 12)
+            np_text = f", NP {act['row'][12]}Вт" if act['row'][12] else ""
+            prompt = (f"Ты — Athlete Intelligence. Разбери тренировку: {act['row'][1]} (вид), {act['row'][3]}км, "
+                      f"пульс {act['row'][4]}, мощность {act['row'][10]}Вт{np_text}. "
+                      f"Дай короткий проф. анализ и одну едкую шутку атлету.")
+        else:
+            prompt = (f"Ты — элитный биохакер. Данные: HRV {hrv}, Пульс {r_hr}, Фитнес-возраст {fit_age} (при реальном 62!), "
+                      f"Сон {slp_h}ч, BB {bb_morning}. Дай прогноз на день и ироничный совет.")
+
+        # 3. Запрос к ИИ
+        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
+        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+        ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        
+    except Exception as e: 
+        print(f"AI Error: {e}")
+        ai_advice = "ИИ временно прилег отдохнуть."
+
+# --- 4. WRITE TO SHEETS & TELEGRAM ---
+try:
+    creds_dict = json.loads(GOOGLE_SHEETS_CREDS) # Используем твою переменную из env
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(credentials).open("Garmin_Data")
+    
+    # Запись в Morning и Daily
+    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
+    
+    # Запись тренировок
+    act_sheet = ss.worksheet("Activities")
+    # ВАЖНО: ID активности теперь в 16-й колонке (индекс 15)
+    existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
+    for act in activities_to_log:
+        if act["id"] not in existing_ids:
+            act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
+    
+    # Лог ИИ
+    ss.worksheet("AI_Log").append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), "Info", ai_advice.replace('*', '')])
+    
+    # Отправка в Telegram
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        status = "🚴‍♂️" if activities_to_log else "🌅"
+        # Добавляем Fitness Age в отчет
+        msg = (f"{status} *Garmin Sync*\n\n"
+               f"💓 *HRV:* {hrv or '--'}\n"
+               f"📉 *RHR:* {r_hr or '--'}\n"
+               f"🧬 *Fit Age:* {fit_age}\n"
+               f"🌙 *Сон:* {slp_h or '--'}ч (Score: {slp_sc or '--'})\n"
+               f"⚖️ *Вес:* {weight or '--'}кг\n\n"
+               f"🤖 {ai_advice.replace('*', '')}")
+        
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+    
+    print("✅ Всё синхронизировано и Telegram уведомлен!")
+except Exception as e: 
+    print(f"Final Write Error: {e}")
