@@ -230,35 +230,46 @@ if GEMINI_API_KEY and ai_advice != "SKIP":
 
 # --- 4. ЗАПИСЬ И TELEGRAM ---
 try:
-    # 1. Запись в таблицы
+    # 1. Запись в таблицы (Morning и Daily)
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     
-    # 2. Activities (с выравниванием даты)
+    # 2. Activities (с проверкой дубликатов по ID)
     act_sheet = ss.worksheet("Activities")
     existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
     for act in activities_to_log:
         if act["id"] not in existing_ids:
-            # Добавляем строку
             act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
-            # Выравниваем ПЕРВУЮ колонку (дату) по левому краю в новой строке
             new_row_idx = len(act_sheet.get_all_values())
             act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
     
-    # 3. Отправка в Telegram и Лог (только если есть что сказать)
+    # 3. Отправка в Telegram и Лог
     if ai_advice and ai_advice != "SKIP":
+        # Убираем звездочки, чтобы не ломать текст без Markdown
         clean_ai = ai_advice.replace('*', '')
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
-        # ПРОВЕРЬ ТУТ: TELEGRAM_TOKEN (без _BOT_)
+        print(f"Попытка отправки в TG... Тип: {report_type}")
+        
         if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
             status = "🚴‍♂️" if report_type == "Activity" else "🌅"
             msg = f"{status} Garmin {report_type}\n\n{clean_ai}"
             
-            # И ТУТ ТОЖЕ: TELEGRAM_TOKEN
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                          json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+            try:
+                tg_res = requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                    json={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+                    timeout=10
+                )
+                if tg_res.status_code == 200:
+                    print("✅ Сообщение успешно улетело в Telegram!")
+                else:
+                    print(f"❌ Ошибка Telegram API: {tg_res.status_code} - {tg_res.text}")
+            except Exception as tg_err:
+                print(f"❌ Ошибка при самом запросе к TG: {tg_err}")
+        else:
+            print("⚠️ Переменные TELEGRAM_TOKEN или TELEGRAM_CHAT_ID не найдены!")
     
-    print("🚀 Всё четко: выровнено, проверено, отправлено!")
+    print("🚀 Всё четко: данные в таблицах, проверки пройдены!")
 except Exception as e:
-    print(f"Final Error: {e}")
+    print(f"🚨 Финальная ошибка: {e}")
