@@ -250,11 +250,14 @@ try:
         clean_ai = ai_advice.replace('*', '')
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        # ПРОВЕРЬ ТУТ: TELEGRAM_TOKEN (без _BOT_)
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
             status = "🚴‍♂️" if report_type == "Activity" else "🌅"
-            msg = f"{status} *Garmin {report_type}*\n\n{clean_ai}"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                          json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+            msg = f"{status} Garmin {report_type}\n\n{clean_ai}"
+            
+            # И ТУТ ТОЖЕ: TELEGRAM_TOKEN
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                          json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
     
     print("🚀 Всё четко: выровнено, проверено, отправлено!")
 except Exception as e:
