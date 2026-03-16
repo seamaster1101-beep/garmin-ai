@@ -174,7 +174,7 @@ try:
 except Exception as e:
     print(f"Activity Error: {e}")
 
-# --- 3. AI BLOCK (Адекватный наставник) ---
+# --- 3. AI BLOCK (Адекватный наставник - Исправленный) ---
 ai_advice = ""
 report_type = ""
 
@@ -191,30 +191,40 @@ morning_done_today = any(today_str in row[0] and "Morning" in row[1] for row in 
 if activities_to_log:
     report_type = "Activity"
     act = activities_to_log[0]['row']
-    # НОВЫЙ ПРОМПТ: Сбалансированный тренер
-    prompt = (f"Ты — опытный спортивный коуч и эксперт по велоспорту. Проведи конструктивный разбор сессии: "
+    prompt = (f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
               f"{act[1]} (тип), {act[3]}км, мощность {act[10]}Вт (NP {act[12]}Вт), TSS {act[13]}, IF {act[6]}. "
               f"Твой стиль: профессиональный, мотивирующий, но честный. "
-              f"Если тренировка короткая, отметь пользу даже небольшого объема (поддержание тонуса), но укажи, "
-              f"какой работы не хватило для прогресса. Оцени зоны мощности. "
-              f"В конце дай краткий совет на завтра. Без грубости, но с акцентом на дисциплину.")
+              f"Если тренировка короткая, отметь пользу поддержания тонуса, но укажи, что нужно для прогресса. "
+              f"В конце дай краткий совет на завтра. Без грубости.")
 
 elif not morning_done_today:
     report_type = "Morning"
-    # НОВЫЙ ПРОМПТ: Внимательный врач
-    prompt = (f"Ты — твой личный спортивный врач. HRV {morning_row[5]}, Пульс {morning_row[4]}, "
-              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]} (реальный 62). "
-              f"Дай краткую оценку состояния на сегодня. Если ресурсы низкие, посоветуй бережный режим. "
-              f"Если высокие — похвали за восстановление. Твоя цель — долголетие и здоровье атлета.")
+    prompt = (f"Ты — личный спортивный врач. HRV {morning_row[5]}, Пульс {morning_row[4]}, "
+              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]}. "
+              f"Дай краткую оценку состояния. Твоя цель — долголетие и здоровье атлета.")
 else:
     ai_advice = "SKIP"
 
-# Запрос к Gemini
+# Запрос к Gemini (Универсальный метод)
 if GEMINI_API_KEY and ai_advice != "SKIP":
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # Сначала узнаем, какая модель доступна
+        res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
+        models_data = res_m.json()
+        available = [m["name"] for m in models_data.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+        # Выбираем flash или самую первую доступную
+        target_model = next((m for m in available if "flash" in m), available[0])
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
         res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        
+        # Проверяем структуру ответа перед тем как лезть в ['candidates']
+        data = res_ai.json()
+        if "candidates" in data and data["candidates"]:
+            ai_advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        else:
+            ai_advice = f"ИИ не дал ответа. Причина: {data.get('promptFeedback', 'Неизвестна')}"
+            
     except Exception as e:
         ai_advice = f"Ошибка ИИ: {e}"
 
