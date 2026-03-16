@@ -230,11 +230,11 @@ if GEMINI_API_KEY and ai_advice != "SKIP":
 
 # --- 4. ЗАПИСЬ И TELEGRAM ---
 try:
-    # 1. Запись в таблицы (Morning и Daily)
+    # 1. Запись в таблицы
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     
-    # 2. Activities (с проверкой дубликатов по ID)
+    # 2. Activities
     act_sheet = ss.worksheet("Activities")
     existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
     for act in activities_to_log:
@@ -245,31 +245,27 @@ try:
     
     # 3. Отправка в Telegram и Лог
     if ai_advice and ai_advice != "SKIP":
-        # Убираем звездочки, чтобы не ломать текст без Markdown
         clean_ai = ai_advice.replace('*', '')
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
-        print(f"Попытка отправки в TG... Тип: {report_type}")
+        # ВНИМАНИЕ: Используем TELEGRAM_BOT_TOKEN, как на твоем скрине!
+        # Убедись, что в начале скрипта есть строка: 
+        # TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
         
-        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             status = "🚴‍♂️" if report_type == "Activity" else "🌅"
             msg = f"{status} Garmin {report_type}\n\n{clean_ai}"
             
-            try:
-                tg_res = requests.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                    json={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
-                    timeout=10
-                )
-                if tg_res.status_code == 200:
-                    print("✅ Сообщение успешно улетело в Telegram!")
-                else:
-                    print(f"❌ Ошибка Telegram API: {tg_res.status_code} - {tg_res.text}")
-            except Exception as tg_err:
-                print(f"❌ Ошибка при самом запросе к TG: {tg_err}")
+            tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            tg_res = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
+            
+            if tg_res.status_code == 200:
+                print("✅ Telegram: Сообщение доставлено!")
+            else:
+                print(f"❌ Telegram: Ошибка {tg_res.status_code}. Ответ: {tg_res.text}")
         else:
-            print("⚠️ Переменные TELEGRAM_TOKEN или TELEGRAM_CHAT_ID не найдены!")
-    
-    print("🚀 Всё четко: данные в таблицах, проверки пройдены!")
+            print("⚠️ Ошибка: Токен или ID чата пусты! Проверь переменные в начале скрипта.")
+
+    print("🚀 Всё четко: выровнено, проверено, отправлено!")
 except Exception as e:
     print(f"🚨 Финальная ошибка: {e}")
