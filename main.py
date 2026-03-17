@@ -278,12 +278,7 @@ try:
 try:
     # 1. Запись в таблицы
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
-    m_sheet = ss.worksheet("Morning")
-    m_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
-
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
-    d_sheet = ss.worksheet("Daily")
-    d_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
     
     # 2. Activities
     act_sheet = ss.worksheet("Activities")
@@ -294,7 +289,7 @@ try:
             new_row_idx = len(act_sheet.get_all_values())
             act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
     
-    # 3. Отправка в Telegram и Лог
+    # 3. Отправка в Telegram
     if ai_advice and ai_advice != "SKIP":
         clean_ai = ai_advice.replace('*', '') 
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
@@ -303,27 +298,21 @@ try:
             if report_type == "Activity":
                 header = "🚴‍♂️ *НОВАЯ ТРЕНИРОВКА*"
                 act = activities_to_log[0]['row']
-                stats = f"📊 `{act[1]} | {act[3]}км | NP {act[12]}W | TSS {act[13]}`"
+                stats = f"📊 `{act[1]} | {act[3]}км | NP {act[12]}W`"
             else:
                 header = "🌅 *GARMIN MORNING*"
-                m = morning_row
-                stats = f"📈 `HRV: {m[5]} | RHR: {m[4]} | BB: {m[6]} | FitAge: {m[10]}`"
+                stats = f"📈 `HRV: {morning_row[5]} | RHR: {morning_row[4]} | BB: {morning_row[6]}`"
 
             msg = f"{header}\n{stats}\n\n{clean_ai}"
             
             tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            tg_res = requests.post(tg_url, json={
+            requests.post(tg_url, json={
                 "chat_id": TELEGRAM_CHAT_ID, 
                 "text": msg, 
                 "parse_mode": "Markdown"
             }, timeout=15)
-            
-            if tg_res.status_code == 200:
-                print("✅ Telegram: Сообщение доставлено!")
-            else:
-                print(f"❌ Telegram Ошибка: {tg_res.text}")
 
-    print("🚀 Всё четко: выровнено, проверено, отправлено!")
+    print("🚀 Всё четко: отправлено!")
 
 except Exception as e:
     print(f"🚨 Финальная ошибка: {e}")
