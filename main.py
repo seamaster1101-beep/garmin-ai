@@ -25,7 +25,7 @@ def update_or_append(sheet, date_str, row_data):
                 found_idx = i + 1
                 break
         if found_idx != -1:
-            sheet.update(f"A{found_idx}", [row_data], value_input_option='USER_ENTERED')
+            sheet.update(range_name=f"A{found_idx}", values=[row_data], value_input_option='USER_ENTERED')
         else:
             sheet.append_row(row_data, value_input_option='USER_ENTERED')
     except Exception as e: print(f"Err: {e}")
