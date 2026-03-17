@@ -115,13 +115,19 @@ try:
 except:
     fit_age = "62"
         
-# --- 5. ФОРМИРОВАНИЕ СТРОК ---
-# Пиковое значение батарейки за утро
-morning_bb = summary.get("bodyBatteryHighestValue", summary.get("bodyBatteryMostRecentValue", ""))
-real_age = 62 # Твой паспортный возраст
+# --- 5. ФОРМИРОВАНИЕ СТРОК (Улучшенная версия) ---
 
-daily_row = [today_str] + [""] * 10
+# Собираем данные для Daily, даже если нет тренировок
+steps = summary.get("steps", "")
+distance_daily = round(summary.get("distance", 0) / 1000, 2) if summary.get("distance") else ""
+calories = summary.get("calories", "")
+# r_hr и morning_bb у нас уже есть выше по коду
 
+# Формируем полную строку для Daily (чтобы не была пустой)
+# Порядок: Дата, Шаги, Дистанция, Калории, Пульс, Батарейка
+daily_row = [today_str, steps, distance_daily, calories, r_hr, morning_bb]
+
+# Morning row оставляем как есть
 morning_row = [
     f"'{morning_ts}", 
     weight, 
@@ -130,15 +136,11 @@ morning_row = [
     r_hr, 
     hrv, 
     morning_bb, 
-    slp_sc, 
+    slp_score, 
     slp_h, 
     real_age, 
     fit_age
 ]
-
-# В Блоке №3 (где prompt для Morning), давай уточним инструкцию для ИИ:
-# Найти строку prompt для Morning и убедиться, что там есть фраза:
-# "Учти, что Fit Age {fit_age} при реальном возрасте {real_age} — это показатель омоложения, если он ниже паспортного."
 
 # --- 2. ACTIVITIES ---
 activities_to_log = []
@@ -240,7 +242,14 @@ if GEMINI_API_KEY and ai_advice != "SKIP":
 try:
     # 1. Запись в таблицы
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    # Выравниваем дату в Morning
+    m_sheet = ss.worksheet("Morning")
+    m_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
+
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
+    # Выравниваем дату в Daily
+    d_sheet = ss.worksheet("Daily")
+    d_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
     
     # 2. Activities
     act_sheet = ss.worksheet("Activities")
