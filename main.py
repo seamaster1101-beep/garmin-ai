@@ -282,14 +282,14 @@ try:
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             # 1. Формируем заголовок и компактную панель цифр
             if report_type == "Activity":
-                header = "🚴‍♂️ **НОВАЯ ТРЕНИРОВКА**"
+                header = "**НОВАЯ ТРЕНИРОВКА** 🚴‍♂️🏋️🚶"
                 act = activities_to_log[0]['row']
                 # Панель: Дистанция | Мощность | TSS
                 stats = f"📊 `{act[3]}км | NP {act[12]}W | TSS {act[13]}`"
             else:
-                header = "🌅 **GOOD MORNING CAPTAIN**"
+                header = "**ДОБРОЕ УТРО КАПИТАН!** 🌞☕⛵⚓"
                 # Панель: HRV | RHR | BB
-                stats = f"📈 `HRV: {morning_row[5]} | RHR: {morning_row[4]} | BB: {morning_row[6]}`"
+                stats = f"`📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}`"
 
             # 2. Собираем итоговое сообщение
             msg = f"{header}\n{stats}\n\n{clean_ai}"
