@@ -115,19 +115,19 @@ try:
 except:
     fit_age = "62"
         
-# --- 5. ФОРМИРОВАНИЕ СТРОК (Улучшенная версия) ---
+# --- 5. ФОРМИРОВАНИЕ СТРОК (Исправленный порядок) ---
 
-# Собираем данные для Daily, даже если нет тренировок
+# 1. Сначала вычисляем все отдельные значения
+morning_bb = summary.get("bodyBatteryHighestValue", summary.get("bodyBatteryMostRecentValue", ""))
+real_age = 62 
+
 steps = summary.get("steps", "")
 distance_daily = round(summary.get("distance", 0) / 1000, 2) if summary.get("distance") else ""
 calories = summary.get("calories", "")
-# r_hr и morning_bb у нас уже есть выше по коду
 
-# Формируем полную строку для Daily (чтобы не была пустой)
-# Порядок: Дата, Шаги, Дистанция, Калории, Пульс, Батарейка
+# 2. Теперь собираем строки (теперь все переменные выше уже определены)
 daily_row = [today_str, steps, distance_daily, calories, r_hr, morning_bb]
 
-# Morning row оставляем как есть
 morning_row = [
     f"'{morning_ts}", 
     weight, 
@@ -136,7 +136,7 @@ morning_row = [
     r_hr, 
     hrv, 
     morning_bb, 
-    slp_score, 
+    slp_sc, 
     slp_h, 
     real_age, 
     fit_age
