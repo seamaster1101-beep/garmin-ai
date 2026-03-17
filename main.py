@@ -115,18 +115,11 @@ try:
 except:
     fit_age = "62"
         
-# --- 5. ФОРМИРОВАНИЕ СТРОК (Исправленный порядок) ---
+# --- 5. ФОРМИРОВАНИЕ СТРОК (Финальная версия) ---
 
-# 1. Сначала вычисляем все отдельные значения
-morning_bb = summary.get("bodyBatteryHighestValue", summary.get("bodyBatteryMostRecentValue", ""))
+# 1. Данные для Morning (Фиксируем утренний пик)
+morning_bb_max = summary.get("bodyBatteryHighestValue", summary.get("bodyBatteryMostRecentValue", ""))
 real_age = 62 
-
-steps = summary.get("steps", "")
-distance_daily = round(summary.get("distance", 0) / 1000, 2) if summary.get("distance") else ""
-calories = summary.get("calories", "")
-
-# 2. Теперь собираем строки (теперь все переменные выше уже определены)
-daily_row = [today_str, steps, distance_daily, calories, r_hr, morning_bb]
 
 morning_row = [
     f"'{morning_ts}", 
@@ -135,11 +128,26 @@ morning_row = [
     muscle, 
     r_hr, 
     hrv, 
-    morning_bb, 
+    morning_bb_max, # Здесь МАКСИМУМ
     slp_sc, 
     slp_h, 
     real_age, 
     fit_age
+]
+
+# 2. Данные для Daily (Актуальное состояние на сейчас)
+steps = summary.get("steps", "")
+distance_daily = round(summary.get("distance", 0) / 1000, 2) if summary.get("distance") else ""
+calories = summary.get("calories", "")
+current_bb = summary.get("bodyBatteryMostRecentValue", "") # Здесь АКТУАЛЬНЫЙ заряд
+
+daily_row = [
+    f"'{today_str}", # Одинарная кавычка для выравнивания даты
+    steps, 
+    distance_daily, 
+    calories, 
+    r_hr, 
+    current_bb # В Daily пишем живой заряд, а не утренний максимум
 ]
 
 # --- 2. ACTIVITIES ---
