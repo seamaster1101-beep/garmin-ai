@@ -196,84 +196,45 @@ try:
 except Exception as e:
     print(f"Activity Error: {e}")
 
-# --- 3. AI BLOCK (Адекватный наставник - Исправленный) ---
+# --- 3. AI BLOCK (Универсальный и надежный) ---
 ai_advice = ""
 report_type = ""
 
-# Авторизация и проверка логов
-creds_dict = json.loads(GOOGLE_CREDS_JSON)
-credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-ss = gspread.authorize(credentials).open("Garmin_Data")
-log_sheet = ss.worksheet("AI_Log")
-last_logs = log_sheet.get_all_values()
+try:
+    # Авторизация и проверка логов
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(credentials).open("Garmin_Data")
+    log_sheet = ss.worksheet("AI_Log")
+    last_logs = log_sheet.get_all_values()
 
-# Проверка утреннего отчета
-morning_done_today = any(today_str in row[0] and "Morning" in row[1] for row in last_logs)
+    # Проверка утреннего отчета
+    morning_done_today = any(today_str in row[0] and "Morning" in row[1] for row in last_logs)
 
-if activities_to_log:
-    report_type = "Activity"
-    act = activities_to_log[0]['row']
-    prompt = (f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
-              f"{act[1]} (тип), {act[3]}км, мощность {act[10]}Вт (NP {act[12]}Вт), TSS {act[13]}, IF {act[6]}. "
-              f"Твой стиль: профессиональный, мотивирующий, но честный. "
-              f"Если тренировка короткая, отметь пользу поддержания тонуса, но укажи, что нужно для прогресса. "
-              f"В конце дай краткий совет на завтра. Без грубости.")
+    if activities_to_log:
+        report_type = "Activity"
+        act = activities_to_log[0]['row']
+        prompt = (f"Ты — коуч. Разбери: {act[1]}, {act[3]}км, NP {act[12]}W, TSS {act[13]}. "
+                  f"Дай краткий совет. Без грубости.")
+    elif not morning_done_today:
+        report_type = "Morning"
+        prompt = (f"Ты — врач. HRV {morning_row[5]}, Пульс {morning_row[4]}, BB {morning_row[6]}, "
+                  f"Сон {morning_row[8]}ч, Fit Age {morning_row[10]}. "
+                  f"Дай прогноз на день.")
+    else:
+        ai_advice = "SKIP"
 
-elif not morning_done_today:
-    report_type = "Morning"
-    prompt = (f"Ты — личный спортивный врач. HRV {morning_row[5]}, Пульс {morning_row[4]}, "
-              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]}, "
-              f"Реальный возраст {real_age}. "
-              f"Дай краткую оценку состояния. Учти: если Fit Age ниже реального — это отличный показатель омоложения, похвали за это. "
-              f"Твоя цель — долголетие и здоровье атлета.")
-else:
-    ai_advice = "SKIP"
-
-# Запрос к Gemini (Универсальный метод)
-if GEMINI_API_KEY and ai_advice != "SKIP":
-    try:
-        # Сначала узнаем, какая модель доступна
+    if GEMINI_API_KEY and ai_advice != "SKIP":
         res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
-        models_data = res_m.json()
-        available = [m["name"] for m in models_data.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        # Выбираем flash или самую первую доступную
+        available = [m["name"] for m in res_m.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
         target_model = next((m for m in available if "flash" in m), available[0])
-        
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
         res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        
-        # Проверяем структуру ответа перед тем как лезть в ['candidates']
-        data = res_ai.json()
-        if "candidates" in data and data["candidates"]:
-            ai_advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        else:
-            ai_advice = f"ИИ не дал ответа. Причина: {data.get('promptFeedback', 'Неизвестна')}"
-            
-    except Exception as e:
-        ai_advice = f"Ошибка ИИ: {e}"
+        ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-# --- 4. ЗАПИСЬ И TELEGRAM ---
-try:
-    # 1. Запись в таблицы
-    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
-    # Выравниваем дату в Morning
-    m_sheet = ss.worksheet("Morning")
-    m_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
+except Exception as e:
+    ai_advice = f"AI Error: {e}"
 
-    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
-    # Выравниваем дату в Daily
-    d_sheet = ss.worksheet("Daily")
-    d_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
-    
-    # 2. Activities
-    act_sheet = ss.worksheet("Activities")
-    existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
-    for act in activities_to_log:
-        if act["id"] not in existing_ids:
-            act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
-            new_row_idx = len(act_sheet.get_all_values())
-            act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
-    
 # --- 4. ЗАПИСЬ И TELEGRAM ---
 try:
     # 1. Запись в таблицы
@@ -286,8 +247,8 @@ try:
     for act in activities_to_log:
         if act["id"] not in existing_ids:
             act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
-            new_row_idx = len(act_sheet.get_all_values())
-            act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
+            idx = len(act_sheet.get_all_values())
+            act_sheet.format(f"A{idx}", {"horizontalAlignment": "LEFT"})
     
     # 3. Отправка в Telegram
     if ai_advice and ai_advice != "SKIP":
@@ -296,23 +257,14 @@ try:
         
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             if report_type == "Activity":
-                header = "🚴‍♂️ *НОВАЯ ТРЕНИРОВКА*"
-                act = activities_to_log[0]['row']
-                stats = f"📊 `{act[1]} | {act[3]}км | NP {act[12]}W`"
+                h, s = "🚴‍♂️ *ТРЕНИРОВКА*", f"📊 `{activities_to_log[0]['row'][3]}км | NP {activities_to_log[0]['row'][12]}W`"
             else:
-                header = "🌅 *GARMIN MORNING*"
-                stats = f"📈 `HRV: {morning_row[5]} | RHR: {morning_row[4]} | BB: {morning_row[6]}`"
+                h, s = "🌅 *MORNING*", f"📈 `HRV: {morning_row[5]} | RHR: {morning_row[4]} | BB: {morning_row[6]}`"
 
-            msg = f"{header}\n{stats}\n\n{clean_ai}"
-            
-            tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            requests.post(tg_url, json={
-                "chat_id": TELEGRAM_CHAT_ID, 
-                "text": msg, 
-                "parse_mode": "Markdown"
-            }, timeout=15)
+            msg = f"{h}\n{s}\n\n{clean_ai}"
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                          json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
 
-    print("🚀 Всё четко: отправлено!")
-
+    print("🚀 Успешно отправлено!")
 except Exception as e:
-    print(f"🚨 Финальная ошибка: {e}")
+    print(f"🚨 Ошибка: {e}")
