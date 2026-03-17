@@ -287,7 +287,7 @@ try:
                 # Панель: Дистанция | Мощность | TSS
                 stats = f"📊 `{act[3]}км | NP {act[12]}W | TSS {act[13]}`"
             else:
-                header = "🌅 **MORNING**"
+                header = "🌅 **GOOD MORNING CAPTAIN**"
                 # Панель: HRV | RHR | BB
                 stats = f"📈 `HRV: {morning_row[5]} | RHR: {morning_row[4]} | BB: {morning_row[6]}`"
 
