@@ -116,8 +116,9 @@ except:
     fit_age = "62"
         
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
-# Используем HighestValue для Morning, чтобы видеть пик заряда после сна
+# Пиковое значение батарейки за утро
 morning_bb = summary.get("bodyBatteryHighestValue", summary.get("bodyBatteryMostRecentValue", ""))
+real_age = 62 # Твой паспортный возраст
 
 morning_row = [
     f"'{morning_ts}", 
@@ -126,16 +127,16 @@ morning_row = [
     muscle, 
     r_hr, 
     hrv, 
-    morning_bb,  # Теперь здесь будет максимум за утро
+    morning_bb, 
     slp_sc, 
     slp_h, 
-    62, 
+    real_age, 
     fit_age
 ]
 
-steps = summary.get('totalSteps', 0)
-cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
-daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+# В Блоке №3 (где prompt для Morning), давай уточним инструкцию для ИИ:
+# Найти строку prompt для Morning и убедиться, что там есть фраза:
+# "Учти, что Fit Age {fit_age} при реальном возрасте {real_age} — это показатель омоложения, если он ниже паспортного."
 
 # --- 2. ACTIVITIES ---
 activities_to_log = []
