@@ -115,10 +115,10 @@ try:
 except:
     fit_age = "62"
         
-# --- 5. ФОРМИРОВАНИЕ СТРОК (Финальная версия) ---
+# --- 5. ФОРМИРОВАНИЕ СТРОК (Версия на базе рабочего кода 15/03) ---
 
-# 1. Данные для Morning (Фиксируем утренний пик)
-morning_bb_max = summary.get("bodyBatteryHighestValue", summary.get("bodyBatteryMostRecentValue", ""))
+# 1. Значения для Morning (Максимальный заряд за утро)
+morning_bb_max = summary.get("bodyBatteryHighestValue") or summary.get("bodyBatteryMostRecentValue", "")
 real_age = 62 
 
 morning_row = [
@@ -128,35 +128,34 @@ morning_row = [
     muscle, 
     r_hr, 
     hrv, 
-    morning_bb_max, # Здесь МАКСИМУМ
+    morning_bb_max, # Сюда пишем МАКСИМУМ
     slp_sc, 
     slp_h, 
     real_age, 
     fit_age
 ]
 
-# 2. Дневные данные для Daily (с поиском данных, если summary пустой)
-# Достаем шаги и калории через альтернативные ключи
-steps = summary.get("steps") or summary.get("totalSteps") or ""
-calories = summary.get("calories") or summary.get("totalCalories") or ""
+# 2. Значения для Daily (Твой старый проверенный метод)
+# Берем totalSteps, как в рабочем коде
+steps = summary.get('totalSteps', 0)
 
-# Дистанция (переводим метры в КМ)
-raw_dist = summary.get("distance") or summary.get("totalDistance") or 0
-distance_daily = round(float(raw_dist) / 1000, 2) if raw_dist else ""
+# Дистанция: расчет через шаги (0.000762 - твой проверенный коэффициент)
+daily_dist = round(steps * 0.000762, 2)
 
-# Батарейка НА ДАННЫЙ МОМЕНТ (Current)
-# Если Highest и MostRecent одинаковы, попробуем достать именно последнее
-current_bb = summary.get("bodyBatteryMostRecentValue") or ""
+# Калории: Активные + Базовый метаболизм (BMR)
+cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
+
+# Актуальный заряд (на момент запуска скрипта)
+current_bb = summary.get("bodyBatteryMostRecentValue", "")
 
 daily_row = [
     f"'{today_str}", 
     steps, 
-    distance_daily, 
-    calories, 
+    daily_dist, 
+    cals, 
     r_hr, 
-    current_bb  # Тут должен быть текущий заряд (например, 38 как на скрине)
+    current_bb # В Daily пишем актуальный заряд
 ]
-
 # --- 2. ACTIVITIES ---
 activities_to_log = []
 try:
