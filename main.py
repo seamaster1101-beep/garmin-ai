@@ -116,6 +116,9 @@ except:
     fit_age = "62"
         
 # --- 5. ФОРМИРОВАНИЕ СТРОК ---
+# Используем HighestValue для Morning, чтобы видеть пик заряда после сна
+morning_bb = summary.get("bodyBatteryHighestValue", summary.get("bodyBatteryMostRecentValue", ""))
+
 morning_row = [
     f"'{morning_ts}", 
     weight, 
@@ -123,7 +126,7 @@ morning_row = [
     muscle, 
     r_hr, 
     hrv, 
-    summary.get("bodyBatteryMostRecentValue", ""), # Актуальный заряд на утро
+    morning_bb,  # Теперь здесь будет максимум за утро
     slp_sc, 
     slp_h, 
     62, 
