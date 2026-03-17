@@ -229,7 +229,7 @@ try:
         available = [m["name"] for m in res_m.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
         target_model = next((m for m in available if "flash" in m), available[0])
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
-        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
         ai_advice = res_ai.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 except Exception as e:
