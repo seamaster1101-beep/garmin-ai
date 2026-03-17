@@ -274,7 +274,7 @@ try:
             new_row_idx = len(act_sheet.get_all_values())
             act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
     
-    # --- 4. ЗАПИСЬ И TELEGRAM ---
+# --- 4. ЗАПИСЬ И TELEGRAM ---
 try:
     # 1. Запись в таблицы
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
