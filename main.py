@@ -120,6 +120,8 @@ except:
 morning_bb = summary.get("bodyBatteryHighestValue", summary.get("bodyBatteryMostRecentValue", ""))
 real_age = 62 # Твой паспортный возраст
 
+daily_row = [today_str] + [""] * 10
+
 morning_row = [
     f"'{morning_ts}", 
     weight, 
@@ -204,8 +206,10 @@ if activities_to_log:
 elif not morning_done_today:
     report_type = "Morning"
     prompt = (f"Ты — личный спортивный врач. HRV {morning_row[5]}, Пульс {morning_row[4]}, "
-              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]}. "
-              f"Дай краткую оценку состояния. Твоя цель — долголетие и здоровье атлета.")
+              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]}, "
+              f"Реальный возраст {real_age}. "
+              f"Дай краткую оценку состояния. Учти: если Fit Age ниже реального — это отличный показатель омоложения, похвали за это. "
+              f"Твоя цель — долголетие и здоровье атлета.")
 else:
     ai_advice = "SKIP"
 
