@@ -274,29 +274,56 @@ try:
             new_row_idx = len(act_sheet.get_all_values())
             act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
     
+    # --- 4. ЗАПИСЬ И TELEGRAM ---
+try:
+    # 1. Запись в таблицы
+    update_or_append(ss.worksheet("Morning"), today_str, morning_row)
+    m_sheet = ss.worksheet("Morning")
+    m_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
+
+    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
+    d_sheet = ss.worksheet("Daily")
+    d_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
+    
+    # 2. Activities
+    act_sheet = ss.worksheet("Activities")
+    existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
+    for act in activities_to_log:
+        if act["id"] not in existing_ids:
+            act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
+            new_row_idx = len(act_sheet.get_all_values())
+            act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
+    
     # 3. Отправка в Telegram и Лог
     if ai_advice and ai_advice != "SKIP":
-        clean_ai = ai_advice.replace('*', '')
+        clean_ai = ai_advice.replace('*', '') 
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
-        # ВНИМАНИЕ: Используем TELEGRAM_BOT_TOKEN, как на твоем скрине!
-        # Убедись, что в начале скрипта есть строка: 
-        # TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-        
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            status = "🚴‍♂️" if report_type == "Activity" else "🌅"
-            msg = f"{status} Garmin {report_type}\n\n{clean_ai}"
+            if report_type == "Activity":
+                header = "🚴‍♂️ *НОВАЯ ТРЕНИРОВКА*"
+                act = activities_to_log[0]['row']
+                stats = f"📊 `{act[1]} | {act[3]}км | NP {act[12]}W | TSS {act[13]}`"
+            else:
+                header = "🌅 *GARMIN MORNING*"
+                m = morning_row
+                stats = f"📈 `HRV: {m[5]} | RHR: {m[4]} | BB: {m[6]} | FitAge: {m[10]}`"
+
+            msg = f"{header}\n{stats}\n\n{clean_ai}"
             
             tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            tg_res = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
+            tg_res = requests.post(tg_url, json={
+                "chat_id": TELEGRAM_CHAT_ID, 
+                "text": msg, 
+                "parse_mode": "Markdown"
+            }, timeout=15)
             
             if tg_res.status_code == 200:
                 print("✅ Telegram: Сообщение доставлено!")
             else:
-                print(f"❌ Telegram: Ошибка {tg_res.status_code}. Ответ: {tg_res.text}")
-        else:
-            print("⚠️ Ошибка: Токен или ID чата пусты! Проверь переменные в начале скрипта.")
+                print(f"❌ Telegram Ошибка: {tg_res.text}")
 
     print("🚀 Всё четко: выровнено, проверено, отправлено!")
+
 except Exception as e:
     print(f"🚨 Финальная ошибка: {e}")
