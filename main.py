@@ -31,8 +31,39 @@ def update_or_append(sheet, date_str, row_data):
     except Exception as e: print(f"Err: {e}")
 
 # --- LOGIN ---
-gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-gar.login()
+# --- LOGIN (FIXED: session reuse + anti-429) ---
+import garth
+import time
+
+session_dir = "./.garth"
+
+try:
+    # Пытаемся восстановить сессию
+    garth.resume(session_dir)
+    gar = Garmin()
+    print("✅ Сессия восстановлена")
+except Exception:
+    print("⚠️ Сессия не найдена, выполняем логин...")
+
+    # Пробуем логин с защитой от 429
+    for attempt in range(3):
+        try:
+            gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+            gar.login()
+
+            # Сохраняем сессию
+            garth.save(session_dir)
+
+            print("✅ Успешный логин, сессия сохранена")
+            break
+
+        except Exception as e:
+            if "429" in str(e):
+                wait_time = 60 * (attempt + 1)
+                print(f"⏳ 429 Too Many Requests. Ждём {wait_time} сек...")
+                time.sleep(wait_time)
+            else:
+                raise
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 
@@ -276,26 +307,38 @@ try:
     
     # 3. Отправка в Telegram и Лог
     if ai_advice and ai_advice != "SKIP":
-        clean_ai = ai_advice.replace('*', '')
+        clean_ai = ai_advice.replace('*', '')  # Убираем лишние символы
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
-        # ВНИМАНИЕ: Используем TELEGRAM_BOT_TOKEN, как на твоем скрине!
-        # Убедись, что в начале скрипта есть строка: 
-        # TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-        
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            status = "🚴‍♂️" if report_type == "Activity" else "🌅"
-            msg = f"{status} Garmin {report_type}\n\n{clean_ai}"
+            # 1. Формируем заголовок и компактную панель цифр
+            if report_type == "Activity":
+                header = "**НОВАЯ ТРЕНИРОВКА** 🚴‍♂️🏋️🚶"
+                act = activities_to_log[0]['row']
+                # Панель: Дистанция | Мощность | TSS
+                stats = f"📊 `{act[3]}км | NP {act[12]}W | TSS {act[13]}`"
+            else:
+                header = "**ДОБРОЕ УТРО КАПИТАН!** 🌞☕⛵⚓"
+                # Панель: HRV | RHR | BB
+                stats = f"`📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}`"
+
+            # 2. Собираем итоговое сообщение
+            msg = f"{header}\n{stats}\n\n{clean_ai}"
             
+            # 3. Отправка с поддержкой Markdown
             tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            tg_res = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
+            tg_res = requests.post(tg_url, json={
+                "chat_id": TELEGRAM_CHAT_ID, 
+                "text": msg, 
+                "parse_mode": "Markdown"
+            }, timeout=15)
             
             if tg_res.status_code == 200:
                 print("✅ Telegram: Сообщение доставлено!")
             else:
                 print(f"❌ Telegram: Ошибка {tg_res.status_code}. Ответ: {tg_res.text}")
         else:
-            print("⚠️ Ошибка: Токен или ID чата пусты! Проверь переменные в начале скрипта.")
+            print("⚠️ Ошибка: Токен или ID чата пусты!")
 
     print("🚀 Всё четко: выровнено, проверено, отправлено!")
 except Exception as e:
