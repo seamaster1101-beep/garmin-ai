@@ -30,11 +30,20 @@ def update_or_append(sheet, date_str, row_data):
             sheet.append_row(row_data, value_input_option='USER_ENTERED')
     except Exception as e: print(f"Err: {e}")
 
-# --- LOGIN ---
-gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-gar.login()
-now = datetime.now()
-today_str = now.strftime("%Y-%m-%d")
+# --- LOGIN WITH SESSION CACHE ---
+import garth
+session_dir = "./.garth"
+
+try:
+    garth.resume(session_dir)
+    gar = Garmin()
+    gar.login() # Это подхватит сессию из garth автоматически
+    print("✅ Сессия восстановлена из кэша")
+except:
+    gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+    gar.login()
+    garth.save(session_dir)
+    print("🔑 Произведен полный логин, сессия сохранена")
 
 # --- 1. ПЕРВИЧНЫЕ ДАННЫЕ (Объявляем всё здесь) ---
 summary = gar.get_user_summary(today_str) or {}
