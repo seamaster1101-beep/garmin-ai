@@ -30,20 +30,11 @@ def update_or_append(sheet, date_str, row_data):
             sheet.append_row(row_data, value_input_option='USER_ENTERED')
     except Exception as e: print(f"Err: {e}")
 
-# --- LOGIN WITH SESSION CACHE ---
-import garth
-session_dir = "./.garth"
-
-try:
-    garth.resume(session_dir)
-    gar = Garmin()
-    gar.login() # Это подхватит сессию из garth автоматически
-    print("✅ Сессия восстановлена из кэша")
-except:
-    gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-    gar.login()
-    garth.save(session_dir)
-    print("🔑 Произведен полный логин, сессия сохранена")
+# --- LOGIN ---
+gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+gar.login()
+now = datetime.now()
+today_str = now.strftime("%Y-%m-%d")
 
 # --- 1. ПЕРВИЧНЫЕ ДАННЫЕ (Объявляем всё здесь) ---
 summary = gar.get_user_summary(today_str) or {}
@@ -291,14 +282,14 @@ try:
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             # 1. Формируем заголовок и компактную панель цифр
             if report_type == "Activity":
-                header = "**НОВАЯ ТРЕНИРОВКА** 🚴‍♂️🏋️🚶"
+                header = "🚴‍♂️ **НОВАЯ ТРЕНИРОВКА**"
                 act = activities_to_log[0]['row']
                 # Панель: Дистанция | Мощность | TSS
                 stats = f"📊 `{act[3]}км | NP {act[12]}W | TSS {act[13]}`"
             else:
-                header = "**ДОБРОЕ УТРО КАПИТАН!** 🌞☕⛵⚓"
+                header = "🌅 **GOOD MORNING CAPTAIN**"
                 # Панель: HRV | RHR | BB
-                stats = f"`📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}`"
+                stats = f"📈 `HRV: {morning_row[5]} | RHR: {morning_row[4]} | BB: {morning_row[6]}`"
 
             # 2. Собираем итоговое сообщение
             msg = f"{header}\n{stats}\n\n{clean_ai}"
