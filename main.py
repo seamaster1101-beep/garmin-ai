@@ -276,38 +276,26 @@ try:
     
     # 3. Отправка в Telegram и Лог
     if ai_advice and ai_advice != "SKIP":
-        clean_ai = ai_advice.replace('*', '')  # Убираем лишние символы
+        clean_ai = ai_advice.replace('*', '')
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
+        # ВНИМАНИЕ: Используем TELEGRAM_BOT_TOKEN, как на твоем скрине!
+        # Убедись, что в начале скрипта есть строка: 
+        # TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+        
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            # 1. Формируем заголовок и компактную панель цифр
-            if report_type == "Activity":
-                header = "🚴‍♂️ **НОВАЯ ТРЕНИРОВКА**"
-                act = activities_to_log[0]['row']
-                # Панель: Дистанция | Мощность | TSS
-                stats = f"📊 `{act[3]}км | NP {act[12]}W | TSS {act[13]}`"
-            else:
-                header = "🌅 **GOOD MORNING CAPTAIN**"
-                # Панель: HRV | RHR | BB
-                stats = f"📈 `HRV: {morning_row[5]} | RHR: {morning_row[4]} | BB: {morning_row[6]}`"
-
-            # 2. Собираем итоговое сообщение
-            msg = f"{header}\n{stats}\n\n{clean_ai}"
+            status = "🚴‍♂️" if report_type == "Activity" else "🌅"
+            msg = f"{status} Garmin {report_type}\n\n{clean_ai}"
             
-            # 3. Отправка с поддержкой Markdown
             tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            tg_res = requests.post(tg_url, json={
-                "chat_id": TELEGRAM_CHAT_ID, 
-                "text": msg, 
-                "parse_mode": "Markdown"
-            }, timeout=15)
+            tg_res = requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
             
             if tg_res.status_code == 200:
                 print("✅ Telegram: Сообщение доставлено!")
             else:
                 print(f"❌ Telegram: Ошибка {tg_res.status_code}. Ответ: {tg_res.text}")
         else:
-            print("⚠️ Ошибка: Токен или ID чата пусты!")
+            print("⚠️ Ошибка: Токен или ID чата пусты! Проверь переменные в начале скрипта.")
 
     print("🚀 Всё четко: выровнено, проверено, отправлено!")
 except Exception as e:
