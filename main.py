@@ -148,7 +148,7 @@ try:
     latest_activities = gar.get_activities(0, 5) or []
     for a in latest_activities:
         start_local = a.get("startTimeLocal", "")
-        if not start_local.startswith(today_str): continue
+        #if not start_local.startswith(today_str): continue
         
         act_id = str(a.get("activityId"))
         np_val = a.get('normPower') or a.get('weightedAveragePower', "")
