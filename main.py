@@ -306,6 +306,8 @@ try:
     if power_candidates:
         best_power = max(power_candidates)
         ftp_est = round(best_power * 0.95, 0)
+except Exception as e:
+    print(f"Analytics (CTL/ATL) Error: {e}")
 
 # --- READINESS SCORE ---
     try:
