@@ -309,7 +309,7 @@ try:
 
 # --- READINESS SCORE ---
     try:
-        # 1. HRV (int(float()) лечит проблему с "45.0")
+        # 1. HRV
         if hrv:
             hrv_val = int(float(hrv))
             if hrv_val > 50: readiness_score += 2
