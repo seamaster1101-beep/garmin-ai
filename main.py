@@ -41,35 +41,45 @@ import time
 session_dir = "./.garth"
 gar = None
 
-# 1. Пытаемся поднять сессию (самый быстрый и безопасный путь)
+# 1. Пытаемся поднять сессию (самый безопасный путь без запросов к SSO)
 if os.path.exists(session_dir) and os.listdir(session_dir):
     try:
+        print("✅ Найдена сохраненная сессия. Пробуем тихий вход...")
         garth.resume(session_dir)
         gar = Garmin()
-        gar.login() # Если сессия жива, это пройдет мгновенно
-        print("✅ Сессия восстановлена из кэша")
+        gar.garth = garth.client
+        # Проверка работоспособности сессии
+        gar.get_full_name()
+        print("🚀 Успех! Сессия восстановлена из кэша.")
     except Exception as e:
-        print(f"⚠️ Сессия не подошла: {e}")
+        print(f"⚠️ Сессия из кэша не подошла: {e}")
         gar = None
 
-# 2. Если кэша нет или он протух — заходим по паролю
+# 2. Если тихий вход не сработал — пробуем штатный логин (через библиотеку)
 if gar is None:
-    for attempt in range(2): # 2 попытки вполне хватит
+    print("🔑 Пробуем вход по логину и паролю...")
+    for attempt in range(2):
         try:
-            print(f"🔑 Попытка входа {attempt+1}...")
             gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-            gar.login()
-            garth.save(session_dir)
-            print("💾 Вход успешен, сессия сохранена!")
+            # Пытаемся залогиниться, скармливая папку для сохранения
+            gar.login(session_dir) 
+            print("💾 Вход успешен, токены обновлены!")
             break
         except Exception as e:
-            if "429" in str(e) and attempt == 0:
-                print("⏳ Поймали 429. Ждем 60 сек и пробуем последний раз...")
-                time.sleep(60)
+            if "429" in str(e):
+                if attempt == 0:
+                    print("⏳ Поймали 429. Ждем 60 сек перед финальной попыткой...")
+                    time.sleep(60)
+                else:
+                    print("🚨 Garmin заблокировал вход (429).")
+                    raise e
             else:
-                print(f"❌ Не удалось войти: {e}")
-                raise
+                print(f"❌ Ошибка авторизации: {e}")
+                raise e
 
+if not gar:
+    raise Exception("Критическая ошибка: не удалось подключиться к Garmin.")
+    
 # --- 1. ПЕРВИЧНЫЕ ДАННЫЕ ---
 summary = gar.get_user_summary(today_str) or {}
 hrv_res = gar.get_hrv_data(today_str) or {}
