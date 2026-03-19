@@ -13,7 +13,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_SHEETS_CREDS")
+GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
 # СРАЗУ ОПРЕДЕЛЯЕМ ВРЕМЯ (до логина!)
 now = datetime.now()
@@ -199,6 +199,15 @@ try:
         activities_to_log.append({"id": act_id, "row": row_data})
 except Exception as e:
     print(f"Activity Error: {e}")
+
+# --- ИНИЦИАЛИЗАЦИЯ ТАБЛИЦЫ ДЛЯ АНАЛИТИКИ ---
+try:
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(credentials).open("Garmin_Data")
+    print("✅ Таблица открыта для анализа")
+except Exception as e:
+    print(f"⚠️ Ошибка инициализации таблицы: {e}")
 
 # --- ANALYTICS: CTL / ATL / TSB + READINESS ---
 
