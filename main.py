@@ -55,7 +55,7 @@ try:
             
             # Тот самый "контрольный выстрел":
             # Если сессия плохая, этот запрос вызовет ошибку и мы уйдем в блок 'except'
-            gar.get_display_name()
+            gar.get_full_name()
             print(f"🚀 Сессия подтверждена для пользователя: {gar.display_name}")
             
         except Exception as e:
@@ -433,7 +433,7 @@ try:
             new_row_idx = len(act_sheet.get_all_values())
             act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
     
-    # --- 3. ОТПРАВКА В TELEGRAM И ЛОГ (ФИНАЛ) ---
+    # --- 3. ОТПРАВКА В TELEGRAM И ЛОГ (ФИНАЛ С КОНТРОЛЕМ ДЛИНЫ) ---
     if ai_advice and ai_advice != "SKIP":
         # Очистка: убираем лишние символы для таблицы
         clean_ai = ai_advice.replace('*', '').strip()
@@ -443,7 +443,6 @@ try:
             # 1. Формируем заголовок и панель (HTML)
             if report_type == "Activity":
                 header = "<b>НОВАЯ ТРЕНИРОВКА</b> 🚴‍♂️🏋️🚶"
-                # Берем последнюю добавленную тренировку дня для сводки
                 act = activities_to_log[-1]['row']
                 stats = f"📊 <code>{act[3]}км | NP {act[12]}W | TSS {act[13]}</code>"
             else:
@@ -463,7 +462,15 @@ try:
             if ftp_est:
                 analytics_block += f"\n🚴 <b>Est. FTP:</b> <code>{ftp_est} W</code>"
 
-            msg = f"{header}\n{stats}{analytics_block}\n\n{clean_ai}"
+            # --- ВОТ ЗДЕСЬ ДОБАВЛЕНА МАГИЯ ОБРЕЗКИ ---
+            intro = f"{header}\n{stats}{analytics_block}\n\n"
+            
+            # Если всё вместе длиннее 4000 символов, подрезаем только текст ИИ
+            if len(intro + clean_ai) > 4000:
+                allowed_len = 4000 - len(intro)
+                clean_ai = clean_ai[:allowed_len] + "...\n\n<i>(текст обрезан из-за лимита TG)</i>"
+            
+            msg = f"{intro}{clean_ai}"
             
             # 3. Отправка с поддержкой HTML
             tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -479,8 +486,8 @@ try:
                     print("✅ Telegram: Сообщение доставлено!")
                 else:
                     print(f"❌ Telegram Error {tg_res.status_code}: {tg_res.text}")
-                    # Попытка №2: Без разметки вообще (если HTML сломался)
-                    requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+                    # Попытка №2: Если даже так не лезет, шлем только начало
+                    requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg[:4000]})
             except Exception as e:
                 print(f"🚨 Ошибка отправки: {e}")
         else:
