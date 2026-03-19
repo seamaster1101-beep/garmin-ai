@@ -354,14 +354,11 @@ try:
 except Exception as e:
     print(f"Analytics Error: {e}")
 
-# --- 3. AI BLOCK (Адекватный наставник - Исправленный) ---
+# --- 3. AI BLOCK (Адекватный наставник) ---
 ai_advice = ""
 report_type = ""
 
-# Авторизация и проверка логов
-creds_dict = json.loads(GOOGLE_CREDS_JSON)
-credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-ss = gspread.authorize(credentials).open("Garmin_Data")
+# Теперь используем уже открытый ss (из начала скрипта)
 log_sheet = ss.worksheet("AI_Log")
 last_logs = log_sheet.get_all_values()
 
@@ -370,17 +367,15 @@ morning_done_today = any(today_str in row[0] and "Morning" in row[1] for row in 
 
 if activities_to_log:
     report_type = "Activity"
-    # Берем последнюю тренировку (индекс -1)
-    act = activities_to_log[-1]['row']
+    # Так как мы сделали .reverse(), индекс [0] теперь — самая свежая тренировка
+    act = activities_to_log[0]['row']
     
-    # ОБНОВЛЕННЫЙ ПРОМПТ:
     prompt = (f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
               f"Тип: {act[1]}, Дистанция: {act[3]}км, Мощность: {act[10]}Вт (NP: {act[12]}Вт), "
               f"TSS: {act[13]}, IF: {act[6]}. "
               f"ВАЖНО: Используй предоставленные цифры NP и TSS как свершившийся факт нагрузки, "
               f"даже если это силовая тренировка. "
               f"Твой стиль: профессиональный, мотивирующий, но честный. "
-              f"Если тренировка короткая, отметь пользу поддержания тонуса, но укажи, что нужно для прогресса. "
               f"В конце дай краткий совет на завтра. Без грубости.")
 
 elif not morning_done_today:
@@ -388,10 +383,12 @@ elif not morning_done_today:
     prompt = (f"Ты — личный спортивный врач. HRV {morning_row[5]}, Пульс {morning_row[4]}, "
               f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]}, "
               f"Реальный возраст {real_age}. "
-              f"Дай краткую оценку состояния. Учти: если Fit Age ниже реального — это отличный показатель омоложения, похвали за это. "
+              f"Дай краткую оценку состояния. Учти: если Fit Age ниже реального — это отлично. "
               f"Твоя цель — долголетие и здоровье атлета.")
 else:
     ai_advice = "SKIP"
+
+# ... (дальше твой код с запросом к Gemini и отправкой в Telegram остается без изменений)
 
 # Запрос к Gemini (Универсальный метод)
 if GEMINI_API_KEY and ai_advice != "SKIP":
@@ -448,7 +445,7 @@ try:
             # 1. Формируем заголовок и панель (HTML)
             if report_type == "Activity":
                 header = "<b>НОВАЯ ТРЕНИРОВКА</b> 🚴‍♂️🏋️🚶"
-                act = activities_to_log[-1]['row']
+                act = activities_to_log[0]['row']
                 stats = f"📊 <code>{act[3]}км | NP {act[12]}W | TSS {act[13]}</code>"
             else:
                 header = "<b>ДОБРОЕ УТРО КАПИТАН!</b> 🌞☕⛵⚓"
@@ -461,7 +458,7 @@ try:
                 analytics_block = (
                     f"\n\n📊 <b>Аналитика формы:</b>\n"
                     f"<code>CTL: {ctl} | ATL: {atl} | TSB: {tsb}</code>{fit_age_info}\n"
-                    f" readiness: {readiness_score} — <i>{readiness_text}</i>"
+                    f"📊 <b>Readiness:</b> <code>{readiness_score}</code> — <i>{readiness_text}</i>"
                 )
 
             if ftp_est:
