@@ -16,6 +16,9 @@ GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
+now = datetime.now()
+today_str = now.strftime("%Y-%m-%d")
+
 def update_or_append(sheet, date_str, row_data):
     try:
         col_values = sheet.col_values(1)
@@ -29,39 +32,61 @@ def update_or_append(sheet, date_str, row_data):
             sheet.update(range_name=f"A{found_idx}", values=[row_data], value_input_option='USER_ENTERED')
         else:
             sheet.append_row(row_data, value_input_option='USER_ENTERED')
-    except Exception as e: print(f"Err gspread: {e}")
+    except Exception as e: 
+        print(f"Err gspread update: {e}")
 
-# --- LOGIN (Hybrid) ---
+# --- ЛОГИН GARMIN ---
 session_dir = "./.garth"
 gar = None
+
 if os.path.exists(session_dir) and os.listdir(session_dir):
     try:
+        print("✅ Найдена сохраненная сессия. Пробуем тихий вход...")
         garth.resume(session_dir)
-        gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+        gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD) 
         gar.garth = garth.client
-        # Самый надежный способ инициализировать сессию без пароля:
-        gar.login() 
-        print(f"✅ Сессия восстановлена для: {gar.display_name}")
+        gar.display_name = garth.client.username
+        print(f"🚀 Успех! Сессия восстановлена.")
     except Exception as e:
-        print(f"⚠️ Сессия не подошла, сбрасываем: {e}")
+        print(f"⚠️ Сессия из кэша не подошла: {e}")
         gar = None
 
 if gar is None:
-    try:
-        gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-        gar.login(session_dir)
-        print(f"🔑 Вход по паролю выполнен для: {gar.display_name}")
-    except Exception as e:
-        if "429" in str(e): print("🚨 Бан 429! Жди."); exit(1)
-        raise e
+    print("🔑 Пробуем вход по логину и паролю...")
+    for attempt in range(2):
+        try:
+            gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+            gar.login(session_dir) 
+            print("💾 Вход успешен!")
+            break
+        except Exception as e:
+            if "429" in str(e):
+                time.sleep(60)
+            else: raise e
 
-# --- 1. DATA COLLECTION ---
-summary = gar.get_user_summary(today_str) or {}
+# --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
+try:
+    if not GOOGLE_CREDS_JSON:
+        raise ValueError("Секрет GOOGLE_CREDS пуст!")
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    ss = gspread.authorize(credentials).open("Garmin_Data")
+    print("✅ Таблица Google подключена!")
+except Exception as e:
+    print(f"🚨 Ошибка Google: {e}")
+    raise e
+
+# --- СБОР ДАННЫХ ---
+try:
+    summary = gar.get_user_summary(today_str) or {}
+except:
+    summary = {}
+
 hrv_res = gar.get_hrv_data(today_str) or {}
 hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 r_hr = summary.get("restingHeartRate") or ""
 
-# Weight S2
+# ВЕС
 weight, fat, muscle = "", "", ""
 try:
     w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
@@ -74,107 +99,104 @@ try:
         if raw_m: muscle = round(float(raw_m) / 1000, 1)
 except: pass
 
-# Sleep
+# СОН
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-morning_ts, slp_sc, slp_h = f"{today_str} 08:00", "", ""
+morning_ts = f"{today_str} 08:00"
+slp_sc, slp_h = "", ""
 for d in [today_str, yesterday_str]:
     try:
         sleep_data = gar.get_sleep_data(d) or {}
         dto = sleep_data.get("dailySleepDTO") or {}
         if dto and dto.get("sleepTimeSeconds", 0) > 0:
             slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
-            scores = dto.get("sleepScores") or {}
-            slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
-            raw_ts = dto.get("sleepEndTimestampLocal")
-            morning_ts = datetime.fromtimestamp(raw_ts/1000).strftime("%Y-%m-%d %H:%M") if isinstance(raw_ts, (int, float)) else str(raw_ts).replace("T", " ")[:16]
+            slp_sc = dto.get("sleepScore") or ""
+            if dto.get("sleepEndTimestampLocal"):
+                morning_ts = str(dto.get("sleepEndTimestampLocal")).replace("T", " ")[:16]
             break
     except: continue
 
-# Fitness Age
-real_age = 62
-try:
-    calc = real_age + (int(r_hr)-55)*0.4 + (float(fat or 22)-22)*0.5 - (int(hrv or 45)-45)*0.1
-    fit_age = round(max(45, min(real_age + 5, calc)), 1)
-except: fit_age = "62"
-
 morning_bb_max = summary.get("bodyBatteryHighestValue") or summary.get("bodyBatteryMostRecentValue", "")
-morning_row = [f"'{morning_ts}", weight, fat, muscle, r_hr, hrv, morning_bb_max, slp_sc, slp_h, real_age, fit_age]
-steps = summary.get('totalSteps', 0)
-daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0)), r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+morning_row = [f"'{morning_ts}", weight, fat, muscle, r_hr, hrv, morning_bb_max, slp_sc, slp_h, 62, "62"]
 
-# Activities
+steps = summary.get('totalSteps', 0)
+daily_dist = round(steps * 0.000762, 2)
+cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0))
+daily_row = [f"'{today_str}", steps, daily_dist, cals, r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+
+# ACTIVITIES
 activities_to_log = []
 try:
     latest = gar.get_activities(0, 5) or []
     for a in latest:
-        if not a.get("startTimeLocal", "").startswith(today_str): continue
         act_id = str(a.get("activityId"))
-        np = a.get('normPower') or a.get('weightedAveragePower', "")
-        avg_p = a.get('avgPower', "")
-        vi = round(float(np)/float(avg_p), 2) if np and avg_p and float(avg_p)>0 else ""
-        row = [
-            a.get("startTimeLocal").replace("T", " ")[:16], a.get('activityType', {}).get('typeKey', ''),
-            round(a.get('duration', 0)/3600, 2), round(a.get('distance', 0)/1000, 2), a.get('averageHR', ""), a.get('maxHR', ""),
-            round(float(a.get('intensityFactor', 0)), 3), round(float(a.get('activityTrainingLoad', 0)), 1),
-            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""), avg_p,
-            a.get('averageBikingCadence') or "", round(float(np), 1) if np else "", 
-            round(float(a.get('trainingStressScore', 0)), 1), vi, f"'{act_id}"
+        row_data = [
+            a.get("startTimeLocal", "").replace("T", " ")[:16], a.get('activityType', {}).get('typeKey', ''), 
+            round(a.get('duration', 0) / 3600, 2), round(a.get('distance', 0) / 1000, 2),
+            a.get('averageHR', ""), a.get('maxHR', ""), 
+            round(float(a.get('intensityFactor', 0)), 3) if a.get('intensityFactor') else "", 
+            round(float(a.get('activityTrainingLoad', 0)), 1),
+            round(float(a.get('aerobicTrainingEffect', 0)), 1), a.get('calories', ""),
+            a.get('avgPower', ""), a.get('averageBikingCadence', ""),
+            round(float(a.get('normPower', 0)), 1) if a.get('normPower') else "", 
+            round(float(a.get('trainingStressScore', 0)), 1) if a.get('trainingStressScore') else "", 
+            "", f"'{act_id}"
         ]
-        activities_to_log.append({"id": act_id, "row": row})
-except: pass
+        activities_to_log.append({"id": act_id, "row": row_data})
+except Exception as e: print(f"Act Err: {e}")
 
-# --- 2. GOOGLE & ANALYTICS ---
-creds_dict = json.loads(GOOGLE_CREDS_JSON)
-credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-ss = gspread.authorize(credentials).open("Garmin_Data")
-act_sheet = ss.worksheet("Activities")
-tss_list = [float(str(r[13]).replace(',', '.')) for r in act_sheet.get_all_values()[1:] if len(r) > 13 and r[13]]
-
+# ANALYTICS
 ctl = atl = tsb = 0
-if tss_list:
-    def ewma(data, d):
-        alpha = 2/(d+1); v = data[0]
-        for x in data[1:]: v = alpha * x + (1 - alpha) * v
-        return v
-    ctl, atl = round(ewma(tss_list, 42), 1), round(ewma(tss_list, 7), 1)
-    tsb = round(ctl - atl, 1)
+readiness_text = "Норма"
+try:
+    act_sheet = ss.worksheet("Activities")
+    rows = act_sheet.get_all_values()[1:]
+    tss_list = [float(r[13]) for r in rows if len(r) > 13 and r[13]]
+    if tss_list:
+        def ewma(data, days):
+            alpha = 2 / (days + 1)
+            val = data[0]
+            for x in data[1:]: 
+                val = alpha * x + (1 - alpha) * val
+            return val
+        ctl = round(ewma(tss_list, 42), 1)
+        atl = round(ewma(tss_list, 7), 1)
+        tsb = round(ctl - atl, 1)
+except Exception as e: print(f"Analytics Err: {e}")
 
-# --- 3. AI BLOCK ---
-ai_advice, report_type = "SKIP", ""
+# AI
+ai_advice = "SKIP"
 log_sheet = ss.worksheet("AI_Log")
-morning_done = any(today_str in r[0] and "Morning" in r[1] for r in log_sheet.get_all_values()[-15:])
+morning_done = any(today_str in r[0] and "Morning" in r[1] for r in log_sheet.get_all_values()[-10:])
 
 if activities_to_log:
     report_type = "Activity"
     act = activities_to_log[0]['row']
-    prompt = (f"Ты — опытный спортивный коуч. Разбери сессию: {act[1]}, {act[3]}км, NP {act[12]}Вт, TSS {act[13]}, IF {act[6]}. "
-              f"Будь честен, отметь пользу и дай краткий совет на завтра.")
+    prompt = f"Разбери заезд: {act[1]}, {act[3]}км, TSS {act[13]}. Будь краток."
 elif not morning_done:
     report_type = "Morning"
-    prompt = (f"Ты — спортивный врач. Состояние: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {morning_bb_max}, "
-              f"Fit Age {fit_age} (Реальный {real_age}). Дай краткую оценку готовности к нагрузкам.")
+    prompt = f"Утро: HRV {hrv}, Сон {slp_h}ч. Дай совет."
 else: prompt = None
 
 if GEMINI_API_KEY and prompt:
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
         ai_advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except: ai_advice = "Совет недоступен"
 
-# --- 4. FINAL WRITE ---
+# ЗАПИСЬ
 try:
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
-    exist = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
+    a_sheet = ss.worksheet("Activities")
+    exist = {r[15] for r in a_sheet.get_all_values() if len(r) > 15}
     for a in activities_to_log:
-        if a["id"] not in exist: act_sheet.append_row(a["row"], value_input_option='USER_ENTERED')
-    
+        if a["id"] not in exist: a_sheet.append_row(a["row"], value_input_option='USER_ENTERED')
+
     if ai_advice != "SKIP":
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, ai_advice])
-        header = "**НОВАЯ ТРЕНИРОВКА** 🚴‍♂️" if report_type == "Activity" else "**ДОБРОЕ УТРО** 🌞"
-        stats = f"📊 `{act[3]}км | TSS {act[13]}`" if report_type == "Activity" else f"`📈 HRV: {hrv} | 🔋 BB: {morning_bb_max}`"
-        msg = f"{header}\n{stats}\n📈 `CTL: {ctl} | TSB: {tsb}`\n\n{ai_advice.replace('*', '')}"
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-    print("🚀 Всё четко!")
+        msg = f"**{report_type}**\nCTL: {ctl} | TSB: {tsb}\n\n{ai_advice}"
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+    print("🚀 Успех!")
 except Exception as e: print(f"🚨 Ошибка: {e}")
