@@ -46,29 +46,33 @@ if os.path.exists(session_dir) and os.listdir(session_dir):
     try:
         print("✅ Найдена сохраненная сессия. Пробуем тихий вход...")
         garth.resume(session_dir)
-        gar = Garmin()
+        
+        # Создаем объект, передавая креды, но НЕ вызывая login()
+        gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD) 
         gar.garth = garth.client
-        # Проверка работоспособности сессии
-        gar.get_full_name()
-        print("🚀 Успех! Сессия восстановлена из кэша.")
+        
+        # --- КРИТИЧЕСКАЯ ПРАВКА ---
+        # Берем имя напрямую из загруженного garth, чтобы не было ошибки 403
+        gar.display_name = garth.client.username
+        
+        print(f"🚀 Успех! Сессия восстановлена для {gar.display_name}")
     except Exception as e:
         print(f"⚠️ Сессия из кэша не подошла: {e}")
         gar = None
 
-# 2. Если тихий вход не сработал — пробуем штатный логин (через библиотеку)
+# 2. Если тихий вход не сработал — пробуем штатный логин (пароль)
 if gar is None:
     print("🔑 Пробуем вход по логину и паролю...")
     for attempt in range(2):
         try:
             gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-            # Пытаемся залогиниться, скармливая папку для сохранения
             gar.login(session_dir) 
             print("💾 Вход успешен, токены обновлены!")
             break
         except Exception as e:
             if "429" in str(e):
                 if attempt == 0:
-                    print("⏳ Поймали 429. Ждем 60 сек перед финальной попыткой...")
+                    print("⏳ Поймали 429. Ждем 60 сек...")
                     time.sleep(60)
                 else:
                     print("🚨 Garmin заблокировал вход (429).")
