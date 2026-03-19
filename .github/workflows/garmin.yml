@@ -2,7 +2,7 @@ name: Garmin Daily Sync
 
 on:
   schedule:
-    - cron: '45 6 * * *'
+    - cron: '29 7 * * *'
   workflow_dispatch:
 
 jobs:
@@ -18,23 +18,21 @@ jobs:
         with:
           python-version: '3.11'
 
-      # --- НОВЫЙ БЛОК: ВОССТАНОВЛЕНИЕ СЕССИИ ---
+      # --- ВОССТАНОВЛЕНИЕ СЕССИИ ИЗ СЕКРЕТА (Base64) ---
       - name: Restore Garmin Session
-        uses: actions/cache@v3
-        with:
-          path: ./.garth
-          key: ${{ runner.os }}-garmin-session
+        run: |
+          echo "${{ secrets.GARMIN_SESSION_BASE64 }}" | base64 -d | tar -xz || echo "No session found"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install garminconnect gspread google-auth requests google-generativeai garth
+          pip install garminconnect gspread google-auth requests garth
 
       - name: Run main.py
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_CREDS }}
+          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
