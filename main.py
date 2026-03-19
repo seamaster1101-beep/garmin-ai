@@ -17,10 +17,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
 now = datetime.now()
-# today_str = now.strftime("%Y-%m-%d")
-# now = datetime.now() # Временно комментируем текущее время
-now = datetime.now() - timedelta(days=1) # Устанавливаем "вчера"
 today_str = now.strftime("%Y-%m-%d")
+# now = datetime.now() # Временно комментируем текущее время
+##now = datetime.now() - timedelta(days=1) # Устанавливаем "вчера"
+##today_str = now.strftime("%Y-%m-%d")
 
 def update_or_append(sheet, date_str, row_data):
     try:
@@ -370,9 +370,15 @@ morning_done_today = any(today_str in row[0] and "Morning" in row[1] for row in 
 
 if activities_to_log:
     report_type = "Activity"
-    act = activities_to_log[0]['row']
+    # Берем последнюю тренировку (индекс -1)
+    act = activities_to_log[-1]['row']
+    
+    # ОБНОВЛЕННЫЙ ПРОМПТ:
     prompt = (f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
-              f"{act[1]} (тип), {act[3]}км, мощность {act[10]}Вт (NP {act[12]}Вт), TSS {act[13]}, IF {act[6]}. "
+              f"Тип: {act[1]}, Дистанция: {act[3]}км, Мощность: {act[10]}Вт (NP: {act[12]}Вт), "
+              f"TSS: {act[13]}, IF: {act[6]}. "
+              f"ВАЖНО: Используй предоставленные цифры NP и TSS как свершившийся факт нагрузки, "
+              f"даже если это силовая тренировка. "
               f"Твой стиль: профессиональный, мотивирующий, но честный. "
               f"Если тренировка короткая, отметь пользу поддержания тонуса, но укажи, что нужно для прогресса. "
               f"В конце дай краткий совет на завтра. Без грубости.")
