@@ -327,20 +327,30 @@ try:
             header = "**ДОБРОЕ УТРО КАПИТАН! 🌞☕⛵⚓**"
             stats = f"`📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}`"
 
+        # --- БЛОК АНАЛИТИКИ (Исправлено) ---
         analytics_block = ""
+        
+        # Проверяем существование переменных перед использованием
+        # (Если ChatGPT считал их выше, они подтянутся)
+        try:
+            if 'ctl' in locals() and ctl != "" and atl != "":
+                analytics_block = (
+                    f"\n\n📈 Форма:\n"
+                    f"CTL: {ctl} | ATL: {atl} | TSB: {tsb}\n"
+                    f"➡️ Готовность: {readiness_score}\n"
+                    f"{readiness_text}\n"
+                )
+            if 'ftp_est' in locals() and ftp_est:
+                analytics_block += f"🚴 FTP (est): {ftp_est} W\n"
+        except:
+            pass # Если аналитика не посчиталась, просто пропускаем её
 
-if ctl != "" and atl != "":
-    analytics_block = (
-        f"\n📈 Форма:\n"
-        f"CTL: {ctl} | ATL: {atl} | TSB: {tsb}\n"
-        f"➡️ Готовность: {readiness_score}\n"
-        f"{readiness_text}\n"
-    )
+        msg = f"{header}\n{stats}{analytics_block}\n\n{clean_ai}"
 
-if ftp_est:
-    analytics_block += f"🚴 FTP (est): {ftp_est} W\n"
-
-msg = f"{header}\n{stats}{analytics_block}\n{clean_ai}"
+        # Отправка в Telegram
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, 
+                      timeout=15)
 
     print("🚀 Всё четко!")
 except Exception as e:
