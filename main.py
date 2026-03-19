@@ -174,6 +174,104 @@ try:
 except Exception as e:
     print(f"Activity Error: {e}")
 
+# --- ANALYTICS: CTL / ATL / TSB + READINESS ---
+
+ctl = atl = tsb = ""
+ftp_est = ""
+readiness_score = 0
+readiness_text = ""
+
+try:
+    act_sheet = ss.worksheet("Activities")
+    rows = act_sheet.get_all_values()[1:]  # без заголовка
+
+    tss_list = []
+    power_candidates = []
+
+    for r in rows[-60:]:  # последние ~2 месяца
+        try:
+            tss = float(r[13]) if r[13] else 0
+            avg_power = float(r[10]) if r[10] else 0
+            duration_h = float(r[2]) if r[2] else 0
+
+            tss_list.append(tss)
+
+            # кандидаты на FTP (достаточно длинные тренировки)
+            if duration_h >= 0.3 and avg_power > 0:
+                power_candidates.append(avg_power)
+
+        except:
+            continue
+
+    # --- EWMA функции ---
+    def ewma(data, alpha):
+        if not data:
+            return 0
+        result = data[0]
+        for x in data[1:]:
+            result = alpha * x + (1 - alpha) * result
+        return result
+
+    if tss_list:
+        ctl = round(ewma(tss_list, 2/(42+1)), 1)
+        atl = round(ewma(tss_list, 2/(7+1)), 1)
+        tsb = round(ctl - atl, 1)
+
+    # --- FTP estimate ---
+    if power_candidates:
+        best_power = max(power_candidates)
+        ftp_est = round(best_power * 0.95, 0)
+
+    # --- READINESS SCORE ---
+
+    # HRV
+    if hrv:
+        if int(hrv) > 50:
+            readiness_score += 2
+        elif int(hrv) < 40:
+            readiness_score -= 2
+
+    # Пульс покоя
+    if r_hr:
+        if int(r_hr) < 55:
+            readiness_score += 1
+        elif int(r_hr) > 60:
+            readiness_score -= 1
+
+    # Сон
+    if slp_h:
+        if float(slp_h) >= 7:
+            readiness_score += 1
+        elif float(slp_h) < 6:
+            readiness_score -= 1
+
+    # Body Battery
+    if morning_bb_max:
+        if int(morning_bb_max) > 70:
+            readiness_score += 1
+        elif int(morning_bb_max) < 40:
+            readiness_score -= 1
+
+    # Нагрузка (TSB)
+    if tsb != "":
+        if tsb < -15:
+            readiness_score -= 2
+        elif tsb > 5:
+            readiness_score += 1
+
+    # --- Интерпретация ---
+    if readiness_score >= 3:
+        readiness_text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
+    elif readiness_score >= 0:
+        readiness_text = "👍 Нормальная готовность — допустима умеренная нагрузка"
+    elif readiness_score >= -3:
+        readiness_text = "⚠️ Сниженная готовность — лучше лёгкая тренировка"
+    else:
+        readiness_text = "❌ Низкая готовность — восстановление или отдых"
+
+except Exception as e:
+    print(f"Analytics Error: {e}")
+
 # --- 7. AI BLOCK ---
 ai_advice = ""
 report_type = ""
@@ -229,9 +327,20 @@ try:
             header = "**ДОБРОЕ УТРО КАПИТАН! 🌞☕⛵⚓**"
             stats = f"`📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}`"
 
-        msg = f"{header}\n{stats}\n\n{clean_ai}"
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
+        analytics_block = ""
+
+if ctl != "" and atl != "":
+    analytics_block = (
+        f"\n📈 Форма:\n"
+        f"CTL: {ctl} | ATL: {atl} | TSB: {tsb}\n"
+        f"➡️ Готовность: {readiness_score}\n"
+        f"{readiness_text}\n"
+    )
+
+if ftp_est:
+    analytics_block += f"🚴 FTP (est): {ftp_est} W\n"
+
+msg = f"{header}\n{stats}{analytics_block}\n{clean_ai}"
 
     print("🚀 Всё четко!")
 except Exception as e:
