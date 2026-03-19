@@ -247,12 +247,7 @@ try:
 
     act_sheet = ss.worksheet("Activities")
     existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
-    
-    for act in activities_to_log:
-        if act["id"] not in existing_ids:
-            act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
-            print(f"✅ Тренировка {act['id']} добавлена в таблицу.")
-            
+               
 except Exception as e:
     print(f"Activity Error: {e}")
 
