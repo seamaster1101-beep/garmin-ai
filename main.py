@@ -39,8 +39,8 @@ if os.path.exists(session_dir) and os.listdir(session_dir):
         garth.resume(session_dir)
         gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         gar.garth = garth.client
-        # Исправляем получение display_name:
-        gar.display_name = garth.client.username or gar.get_full_name()
+        # ИСПРАВЛЕНО: используем атрибут garth напрямую
+        gar.display_name = garth.client.username 
         print(f"✅ Сессия восстановлена для: {gar.display_name}")
     except Exception as e:
         print(f"⚠️ Сессия не подошла: {e}")
@@ -50,21 +50,22 @@ if gar is None:
     try:
         gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         gar.login(session_dir)
-        gar.display_name = garth.client.username or gar.get_full_name()
+        gar.display_name = garth.client.username
         print(f"🔑 Вход по паролю для: {gar.display_name}")
     except Exception as e:
-        if "429" in str(e):
-            print("🚨 Бан 429. Ждем.")
-            exit(1)
+        if "429" in str(e): print("🚨 Бан 429! Жди."); exit(1)
         raise e
 
-# --- 1. СБОР ДАННЫХ ---
+now = datetime.now()
+today_str = now.strftime("%Y-%m-%d")
+
+# --- 1. DATA COLLECTION ---
 summary = gar.get_user_summary(today_str) or {}
 hrv_res = gar.get_hrv_data(today_str) or {}
 hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 r_hr = summary.get("restingHeartRate") or ""
 
-# Вес S2 (за последние 3 дня)
+# Weight S2
 weight, fat, muscle = "", "", ""
 try:
     w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
@@ -77,7 +78,7 @@ try:
         if raw_m: muscle = round(float(raw_m) / 1000, 1)
 except: pass
 
-# Сон
+# Sleep
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 morning_ts, slp_sc, slp_h = f"{today_str} 08:00", "", ""
 for d in [today_str, yesterday_str]:
@@ -93,7 +94,7 @@ for d in [today_str, yesterday_str]:
             break
     except: continue
 
-# Fitness Age (62 года)
+# Fitness Age
 real_age = 62
 try:
     calc = real_age + (int(r_hr)-55)*0.4 + (float(fat or 22)-22)*0.5 - (int(hrv or 45)-45)*0.1
@@ -105,7 +106,7 @@ morning_row = [f"'{morning_ts}", weight, fat, muscle, r_hr, hrv, morning_bb_max,
 steps = summary.get('totalSteps', 0)
 daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0)), r_hr, summary.get("bodyBatteryMostRecentValue", "")]
 
-# Тренировки
+# Activities
 activities_to_log = []
 try:
     latest = gar.get_activities(0, 5) or []
@@ -126,23 +127,23 @@ try:
         activities_to_log.append({"id": act_id, "row": row})
 except: pass
 
-# --- 2. GOOGLE & АНАЛИТИКА ---
+# --- 2. GOOGLE & ANALYTICS ---
 creds_dict = json.loads(GOOGLE_CREDS_JSON)
 credentials = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
 ss = gspread.authorize(credentials).open("Garmin_Data")
 act_sheet = ss.worksheet("Activities")
-tss_values = [float(str(r[13]).replace(',', '.')) for r in act_sheet.get_all_values()[1:] if len(r) > 13 and r[13]]
+tss_list = [float(str(r[13]).replace(',', '.')) for r in act_sheet.get_all_values()[1:] if len(r) > 13 and r[13]]
 
 ctl = atl = tsb = 0
-if tss_values:
+if tss_list:
     def ewma(data, d):
         alpha = 2/(d+1); v = data[0]
         for x in data[1:]: v = alpha * x + (1 - alpha) * v
         return v
-    ctl, atl = round(ewma(tss_values, 42), 1), round(ewma(tss_values, 7), 1)
+    ctl, atl = round(ewma(tss_list, 42), 1), round(ewma(tss_list, 7), 1)
     tsb = round(ctl - atl, 1)
 
-# --- 3. ИИ АНАЛИТИКА ---
+# --- 3. AI BLOCK ---
 ai_advice, report_type = "SKIP", ""
 log_sheet = ss.worksheet("AI_Log")
 morning_done = any(today_str in r[0] and "Morning" in r[1] for r in log_sheet.get_all_values()[-15:])
@@ -150,12 +151,12 @@ morning_done = any(today_str in r[0] and "Morning" in r[1] for r in log_sheet.ge
 if activities_to_log:
     report_type = "Activity"
     act = activities_to_log[0]['row']
-    prompt = (f"Ты — опытный коуч. Разбери: {act[1]}, {act[3]}км, NP {act[12]}Вт, TSS {act[13]}, IF {act[6]}. "
-              f"Будь честен, дай совет на завтра.")
+    prompt = (f"Ты — опытный спортивный коуч. Разбери сессию: {act[1]}, {act[3]}км, NP {act[12]}Вт, TSS {act[13]}, IF {act[6]}. "
+              f"Будь честен, отметь пользу и дай краткий совет на завтра.")
 elif not morning_done:
     report_type = "Morning"
     prompt = (f"Ты — спортивный врач. Состояние: HRV {hrv}, Пульс {r_hr}, Сон {slp_h}ч, BB {morning_bb_max}, "
-              f"Fit Age {fit_age} (Реальный {real_age}). Оцени готовность к нагрузке.")
+              f"Fit Age {fit_age} (Реальный {real_age}). Дай краткую оценку готовности к нагрузкам.")
 else: prompt = None
 
 if GEMINI_API_KEY and prompt:
@@ -165,7 +166,7 @@ if GEMINI_API_KEY and prompt:
         ai_advice = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except: ai_advice = "Совет недоступен"
 
-# --- 4. ЗАПИСЬ И ТЕЛЕГРАМ ---
+# --- 4. FINAL WRITE ---
 try:
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
     update_or_append(ss.worksheet("Daily"), today_str, daily_row)
@@ -179,5 +180,5 @@ try:
         stats = f"📊 `{act[3]}км | TSS {act[13]}`" if report_type == "Activity" else f"`📈 HRV: {hrv} | 🔋 BB: {morning_bb_max}`"
         msg = f"{header}\n{stats}\n📈 `CTL: {ctl} | TSB: {tsb}`\n\n{ai_advice.replace('*', '')}"
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-    print("🚀 Миссия выполнена!")
-except Exception as e: print(f"🚨 Финальная ошибка: {e}")
+    print("🚀 Всё четко!")
+except Exception as e: print(f"🚨 Ошибка: {e}")
