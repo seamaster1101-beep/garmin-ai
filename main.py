@@ -265,30 +265,43 @@ try:
     # 1. Сразу вытаскиваем существующие ID для финала скрипта
     existing_ids = {r[15] for r in all_rows if len(r) > 15}
     
-    # 2. Берем данные для анализа (без шапки)
+# 2. Берем данные для анализа (без шапки)
     rows = all_rows[1:] 
 
     tss_list = []
     power_candidates = []
 
-    for r in rows[-60:]:  # последние ~2 месяца
+    # ВАЖНО: Весь этот блок ниже должен быть сдвинут вправо!
+    for r in rows[-60:]:
         try:
-            # Проверяем длину строки, чтобы не вылететь по индексу
+            # 1. Базовая проверка длины
             if len(r) < 14: continue 
             
-            tss = float(r[13]) if r[13] else 0
-            avg_power = float(r[10]) if r[10] else 0
-            duration_h = float(r[2]) if r[2] else 0
+            # 2. Определяем спорт
+            sport = str(r[1]).lower() if len(r) > 1 else ""
 
+            # 3. Чистим и берем TSS (колонка 14)
+            raw_tss = str(r[13]).replace(',', '.').strip() if r[13] else "0"
+            tss = float(raw_tss) if raw_tss and raw_tss != "None" else 0
+            
+            # 4. Мощность берем только если она есть
+            raw_pwr = str(r[10]).replace(',', '.').strip() if r[10] else "0"
+            avg_power = float(raw_pwr) if raw_pwr and raw_pwr != "None" else 0
+            
+            raw_dur = str(r[2]).replace(',', '.').strip() if r[2] else "0"
+            duration_h = float(raw_dur)
+
+            # Добавляем TSS в любом случае
             tss_list.append(tss)
 
-            # Кандидаты на FTP
-            if duration_h >= 0.3 and avg_power > 0:
+            # Кандидаты на FTP — только если это вело и есть мощность
+            if "cycling" in sport and duration_h >= 0.3 and avg_power > 0:
                 power_candidates.append(avg_power)
-        except:
-            continue # Если строка битая, просто идем дальше
 
-    # --- EWMA функции ---
+        except Exception as e:
+            print(f"Строка пропущена из-за ошибки: {e}")
+            continue
+            
     def ewma(data, alpha):
         if not data:
             return 0
@@ -302,58 +315,63 @@ try:
         atl = round(ewma(tss_list, 2/(7+1)), 1)
         tsb = round(ctl - atl, 1)
 
+    else:
+        ctl = atl = tsb = 0
+
     # --- FTP estimate ---
     if power_candidates:
         best_power = max(power_candidates)
         ftp_est = round(best_power * 0.95, 0)
+    else:
+        ftp_est = "N/A" # Или оставь пустую строку ""
 except Exception as e:
     print(f"Analytics (CTL/ATL) Error: {e}")
 
 # --- READINESS SCORE ---
-    try:
-        # 1. HRV
-        if hrv:
-            hrv_val = int(float(hrv))
-            if hrv_val > 50: readiness_score += 2
-            elif hrv_val < 40: readiness_score -= 2
+try:
+    # 1. HRV
+    if hrv:
+        hrv_val = int(float(hrv))
+        if hrv_val > 50: readiness_score += 2
+        elif hrv_val < 40: readiness_score -= 2
 
-        # 2. Пульс покоя
-        if r_hr:
-            rhr_val = int(float(r_hr))
-            if rhr_val < 55: readiness_score += 1
-            elif rhr_val > 60: readiness_score -= 1
+    # 2. Пульс покоя
+    if r_hr:
+        rhr_val = int(float(r_hr))
+        if rhr_val < 55: readiness_score += 1
+        elif rhr_val > 60: readiness_score -= 1
 
-        # 3. Сон
-        if slp_h:
-            slp_val = float(slp_h)
-            if slp_val >= 7: readiness_score += 1
-            elif slp_val < 6: readiness_score -= 1
+    # 3. Сон
+    if slp_h:
+        slp_val = float(slp_h)
+        if slp_val >= 7: readiness_score += 1
+        elif slp_val < 6: readiness_score -= 1
 
-        # 4. Body Battery
-        if morning_bb_max:
-            bb_val = int(float(morning_bb_max))
-            if bb_val > 70: readiness_score += 1
-            elif bb_val < 40: readiness_score -= 1
+    # 4. Body Battery
+    if morning_bb_max:
+        bb_val = int(float(morning_bb_max))
+        if bb_val > 70: readiness_score += 1
+        elif bb_val < 40: readiness_score -= 1
 
-        # 5. Нагрузка (TSB)
-        if tsb != "":
-            if tsb < -15: readiness_score -= 2
-            elif tsb > 5: readiness_score += 1
+    # 5. Нагрузка (TSB)
+    if tsb != "":
+        if tsb < -15: readiness_score -= 2
+        elif tsb > 5: readiness_score += 1
 
-        # --- Интерпретация готовности ---
-        if readiness_score >= 3:
-            readiness_text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
-        elif readiness_score >= 0:
-            readiness_text = "👍 Нормальная готовность — допустима умеренная нагрузка"
-        elif readiness_score >= -3:
-            readiness_text = "⚠️ Сниженная готовность — лучше лёгкая тренировка"
-        else:
-            readiness_text = "❌ Низкая готовность — восстановление или отдых"
+    # --- Интерпретация готовности ---
+    if readiness_score >= 3:
+        readiness_text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
+    elif readiness_score >= 0:
+        readiness_text = "👍 Нормальная готовность — допустима умеренная нагрузка"
+    elif readiness_score >= -3:
+        readiness_text = "⚠️ Сниженная готовность — лучше лёгкая тренировка"
+    else:
+        readiness_text = "❌ Низкая готовность — восстановление или отдых"
 
-    except Exception as e:
-        print(f"Readiness Calculation Error: {e}")
+except Exception as e:
+    print(f"Readiness Calculation Error: {e}")
 
-# --- 3. AI BLOCK (Адекватный наставник) ---
+# --- 3. AI BLOCK ---
 ai_advice = ""
 report_type = ""
 # Теперь используем уже открытый ss (из начала скрипта)
