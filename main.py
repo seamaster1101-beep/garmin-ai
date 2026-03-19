@@ -35,34 +35,40 @@ def update_or_append(sheet, date_str, row_data):
     except Exception as e: 
         print(f"Err gspread update: {e}")
 
-# --- ЛОГИН GARMIN ---
+# --- ЛОГИН GARMIN (ФИНАЛЬНАЯ ВЕРСИЯ) ---
 session_dir = "./.garth"
 gar = None
 
-if os.path.exists(session_dir) and os.listdir(session_dir):
-    try:
-        print("✅ Найдена сохраненная сессия. Пробуем тихий вход...")
-        garth.resume(session_dir)
-        gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD) 
-        gar.garth = garth.client
-        gar.display_name = garth.client.username
-        print(f"🚀 Успех! Сессия восстановлена.")
-    except Exception as e:
-        print(f"⚠️ Сессия из кэша не подошла: {e}")
-        gar = None
-
-if gar is None:
-    print("🔑 Пробуем вход по логину и паролю...")
-    for attempt in range(2):
+try:
+    # Инициализируем объект клиента
+    gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+    
+    # Если есть папка с сессией, пробуем её "оживить"
+    if os.path.exists(session_dir) and os.listdir(session_dir):
         try:
-            gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-            gar.login(session_dir) 
-            print("💾 Вход успешен!")
-            break
+            print("✅ Файлы сессии найдены. Проверяем валидность...")
+            garth.resume(session_dir)
+            gar.garth = garth.client
+            
+            # Тот самый "контрольный выстрел":
+            # Если сессия плохая, этот запрос вызовет ошибку и мы уйдем в блок 'except'
+            gar.get_display_name()
+            print(f"🚀 Сессия подтверждена для пользователя: {gar.display_name}")
+            
         except Exception as e:
-            if "429" in str(e):
-                time.sleep(60)
-            else: raise e
+            print(f"⚠️ Сессия устарела или невалидна ({e}). Перезаходим по паролю...")
+            gar.login(session_dir) # Заходим заново и обновляем файлы в .garth
+            print("💾 Новая сессия сохранена.")
+    else:
+        # Если папки нет — обычный первый вход
+        print("🔑 Сессия не найдена. Первый вход по логину и паролю...")
+        gar.login(session_dir)
+        print("💾 Сессия создана и сохранена.")
+
+except Exception as e:
+    # Если даже по паролю не пустило (например, 429 Too Many Requests или неверный пас)
+    print(f"🚨 КРИТИЧЕСКАЯ ОШИБКА АВТОРИЗАЦИИ: {e}")
+    raise e
 
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
 try:
