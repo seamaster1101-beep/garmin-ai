@@ -1,20 +1,13 @@
-# Garmin
+# Garmin (обязательно оба!)
 garminconnect
-beautifulsoup4
-lxml
-requests
+garth
 
-# Google Sheets / API
+# Google Sheets
 gspread
 google-auth
-google-auth-oauthlib
-google-api-python-client
 
-# Telegram
-python-telegram-bot
+# Сеть (для Telegram и Gemini)
+requests
 
-# Gemini AI
-google-genai
-
-# Общие утилиты
+# Утилиты
 pytz
