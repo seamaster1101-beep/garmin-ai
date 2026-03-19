@@ -38,40 +38,39 @@ def update_or_append(sheet, date_str, row_data):
     except Exception as e: 
         print(f"Err gspread update: {e}")
 
-# --- ЛОГИН GARMIN (ФИНАЛЬНАЯ ВЕРСИЯ) ---
+# --- ЛОГИН GARMIN (ЖЕЛЕЗОБЕТОННАЯ ВЕРСИЯ) ---
 session_dir = "./.garth"
-gar = None
+gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
 
 try:
-    # Инициализируем объект клиента
-    gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-    
-    # Если есть папка с сессией, пробуем её "оживить"
     if os.path.exists(session_dir) and os.listdir(session_dir):
-        try:
-            print("✅ Файлы сессии найдены. Проверяем валидность...")
-            garth.resume(session_dir)
-            gar.garth = garth.client
-            
-            # Тот самый "контрольный выстрел":
-            # Если сессия плохая, этот запрос вызовет ошибку и мы уйдем в блок 'except'
-            gar.get_full_name()
-            print(f"🚀 Сессия подтверждена для пользователя: {gar.display_name}")
-            
-        except Exception as e:
-            print(f"⚠️ Сессия устарела или невалидна ({e}). Перезаходим по паролю...")
-            gar.login(session_dir) # Заходим заново и обновляем файлы в .garth
-            print("💾 Новая сессия сохранена.")
+        print("✅ Файлы сессии найдены. Проверяем...")
+        garth.resume(session_dir)
+        gar.garth = garth.client
+        
+        # Ключевая проверка: если имя пользователя None — сессия "прокисла"
+        if not gar.display_name:
+            print("⚠️ Сессия пустая (None). Перезаходим по паролю...")
+            gar.login(session_dir)
+        else:
+            print(f"🚀 Сессия подтверждена: {gar.display_name}")
     else:
-        # Если папки нет — обычный первый вход
-        print("🔑 Сессия не найдена. Первый вход по логину и паролю...")
+        print("🔑 Сессия не найдена. Первый вход...")
         gar.login(session_dir)
-        print("💾 Сессия создана и сохранена.")
+        print("💾 Сессия создана.")
 
 except Exception as e:
-    # Если даже по паролю не пустило (например, 429 Too Many Requests или неверный пас)
-    print(f"🚨 КРИТИЧЕСКАЯ ОШИБКА АВТОРИЗАЦИИ: {e}")
-    raise e
+    print(f"⚠️ Ошибка сессии ({e}). Пробуем принудительный логин...")
+    try:
+        gar.login(session_dir)
+    except Exception as e2:
+        print(f"🚨 КРИТИЧЕСКАЯ ОШИБКА АВТОРИЗАЦИИ: {e2}")
+        raise e2
+
+# ФИНАЛЬНЫЙ СТОП-КРАН: если после всех попыток имени нет — дальше не идем
+if not gar.display_name:
+    print("❌ Ошибка: Garmin вернул пустой профиль. Проверь лимиты запросов (429).")
+    raise ValueError("Display Name is None - Stopping script.")
 
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
 try:
