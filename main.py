@@ -31,7 +31,7 @@ def update_or_append(sheet, date_str, row_data):
             sheet.append_row(row_data, value_input_option='USER_ENTERED')
     except Exception as e: print(f"Err gspread: {e}")
 
-# --- LOGIN (Hybrid) - С ФИКСОМ 403 ---
+# --- LOGIN (Hybrid) ---
 session_dir = "./.garth"
 gar = None
 if os.path.exists(session_dir) and os.listdir(session_dir):
@@ -39,8 +39,8 @@ if os.path.exists(session_dir) and os.listdir(session_dir):
         garth.resume(session_dir)
         gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         gar.garth = garth.client
-        # Критически важная строка для предотвращения ошибки 403/None:
-        gar.display_name = gar.get_display_name()
+        # Исправляем получение display_name:
+        gar.display_name = garth.client.username or gar.get_full_name()
         print(f"✅ Сессия восстановлена для: {gar.display_name}")
     except Exception as e:
         print(f"⚠️ Сессия не подошла: {e}")
@@ -50,16 +50,13 @@ if gar is None:
     try:
         gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         gar.login(session_dir)
-        gar.display_name = gar.get_display_name()
-        print(f"🔑 Вход по паролю выполнен для: {gar.display_name}")
+        gar.display_name = garth.client.username or gar.get_full_name()
+        print(f"🔑 Вход по паролю для: {gar.display_name}")
     except Exception as e:
         if "429" in str(e):
-            print("🚨 Ошибка 429: Слишком много запросов. Garmin заблокировал IP. Жди 2-3 часа!")
+            print("🚨 Бан 429. Ждем.")
             exit(1)
         raise e
-
-now = datetime.now()
-today_str = now.strftime("%Y-%m-%d")
 
 # --- 1. СБОР ДАННЫХ ---
 summary = gar.get_user_summary(today_str) or {}
