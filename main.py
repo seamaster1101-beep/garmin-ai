@@ -25,10 +25,11 @@ today_str = now.strftime("%Y-%m-%d")
 def update_or_append(sheet, date_str, row_data):
     try:
         col_values = sheet.col_values(1)
-        search_date = date_str.split(' ')[0]
+        search_date = date_str.split(' ')[0] # Получаем только "ГГГГ-ММ-ДД"
         found_idx = -1
         for i, val in enumerate(col_values):
-            if search_date in str(val):
+            # Проверяем, что ячейка в таблице начинается с нашей даты
+            if str(val).startswith(search_date):
                 found_idx = i + 1
                 break
         if found_idx != -1:
@@ -245,9 +246,6 @@ try:
     # Разворачиваем список собранных тренировок перед записью в таблицу
     activities_to_log.reverse() 
 
-    act_sheet = ss.worksheet("Activities")
-    existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
-               
 except Exception as e:
     print(f"Activity Error: {e}")
 
@@ -257,28 +255,38 @@ ctl = atl = tsb = ""
 ftp_est = ""
 readiness_score = 0
 readiness_text = ""
+existing_ids = set() # Создаем заранее
 
 try:
     act_sheet = ss.worksheet("Activities")
-    rows = act_sheet.get_all_values()[1:]  # без заголовка
+    # ОДИН ЗАПРОС К GOOGLE: берем всё сразу
+    all_rows = act_sheet.get_all_values()
+    
+    # 1. Сразу вытаскиваем существующие ID для финала скрипта
+    existing_ids = {r[15] for r in all_rows if len(r) > 15}
+    
+    # 2. Берем данные для анализа (без шапки)
+    rows = all_rows[1:] 
 
     tss_list = []
     power_candidates = []
 
     for r in rows[-60:]:  # последние ~2 месяца
         try:
+            # Проверяем длину строки, чтобы не вылететь по индексу
+            if len(r) < 14: continue 
+            
             tss = float(r[13]) if r[13] else 0
             avg_power = float(r[10]) if r[10] else 0
             duration_h = float(r[2]) if r[2] else 0
 
             tss_list.append(tss)
 
-            # кандидаты на FTP (достаточно длинные тренировки)
+            # Кандидаты на FTP
             if duration_h >= 0.3 and avg_power > 0:
                 power_candidates.append(avg_power)
-
         except:
-            continue
+            continue # Если строка битая, просто идем дальше
 
     # --- EWMA функции ---
     def ewma(data, alpha):
@@ -299,55 +307,49 @@ try:
         best_power = max(power_candidates)
         ftp_est = round(best_power * 0.95, 0)
 
-    # --- READINESS SCORE ---
+# --- READINESS SCORE ---
+    try:
+        # 1. HRV (int(float()) лечит проблему с "45.0")
+        if hrv:
+            hrv_val = int(float(hrv))
+            if hrv_val > 50: readiness_score += 2
+            elif hrv_val < 40: readiness_score -= 2
 
-    # HRV
-    if hrv:
-        if int(hrv) > 50:
-            readiness_score += 2
-        elif int(hrv) < 40:
-            readiness_score -= 2
+        # 2. Пульс покоя
+        if r_hr:
+            rhr_val = int(float(r_hr))
+            if rhr_val < 55: readiness_score += 1
+            elif rhr_val > 60: readiness_score -= 1
 
-    # Пульс покоя
-    if r_hr:
-        if int(r_hr) < 55:
-            readiness_score += 1
-        elif int(r_hr) > 60:
-            readiness_score -= 1
+        # 3. Сон
+        if slp_h:
+            slp_val = float(slp_h)
+            if slp_val >= 7: readiness_score += 1
+            elif slp_val < 6: readiness_score -= 1
 
-    # Сон
-    if slp_h:
-        if float(slp_h) >= 7:
-            readiness_score += 1
-        elif float(slp_h) < 6:
-            readiness_score -= 1
+        # 4. Body Battery
+        if morning_bb_max:
+            bb_val = int(float(morning_bb_max))
+            if bb_val > 70: readiness_score += 1
+            elif bb_val < 40: readiness_score -= 1
 
-    # Body Battery
-    if morning_bb_max:
-        if int(morning_bb_max) > 70:
-            readiness_score += 1
-        elif int(morning_bb_max) < 40:
-            readiness_score -= 1
+        # 5. Нагрузка (TSB)
+        if tsb != "":
+            if tsb < -15: readiness_score -= 2
+            elif tsb > 5: readiness_score += 1
 
-    # Нагрузка (TSB)
-    if tsb != "":
-        if tsb < -15:
-            readiness_score -= 2
-        elif tsb > 5:
-            readiness_score += 1
+        # --- Интерпретация ---
+        if readiness_score >= 3:
+            readiness_text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
+        elif readiness_score >= 0:
+            readiness_text = "👍 Нормальная готовность — допустима умеренная нагрузка"
+        elif readiness_score >= -3:
+            readiness_text = "⚠️ Сниженная готовность — лучше лёгкая тренировка"
+        else:
+            readiness_text = "❌ Низкая готовность — восстановление или отдых"
 
-    # --- Интерпретация ---
-    if readiness_score >= 3:
-        readiness_text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
-    elif readiness_score >= 0:
-        readiness_text = "👍 Нормальная готовность — допустима умеренная нагрузка"
-    elif readiness_score >= -3:
-        readiness_text = "⚠️ Сниженная готовность — лучше лёгкая тренировка"
-    else:
-        readiness_text = "❌ Низкая готовность — восстановление или отдых"
-
-except Exception as e:
-    print(f"Analytics Error: {e}")
+    except Exception as e:
+        print(f"Readiness Calculation Error: {e}")
 
 # --- 3. AI BLOCK (Адекватный наставник) ---
 ai_advice = ""
@@ -362,23 +364,27 @@ morning_done_today = any(today_str in row[0] and "Morning" in row[1] for row in 
 
 if activities_to_log:
     report_type = "Activity"
-    # Так как мы сделали .reverse(), индекс [0] теперь — самая свежая тренировка
     act = activities_to_log[0]['row']
     
+    # Добавляем контекст формы и готовности в промпт
     prompt = (f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
               f"Тип: {act[1]}, Дистанция: {act[3]}км, Мощность: {act[10]}Вт (NP: {act[12]}Вт), "
               f"TSS: {act[13]}, IF: {act[6]}. "
-              f"ВАЖНО: Используй предоставленные цифры NP и TSS как свершившийся факт нагрузки, "
-              f"даже если это силовая тренировка. "
+              f"\nКонтекст атлета: Баланс нагрузки (TSB): {tsb}, "
+              f"Готовность (Readiness Score): {readiness_score}/5, Состояние: {readiness_text}. "
+              f"\nВАЖНО: Используй цифры NP и TSS как факт нагрузки. "
+              f"Учти текущий TSB: если он сильно отрицательный, похвали за работу, но предупреди об отдыхе. "
               f"Твой стиль: профессиональный, мотивирующий, но честный. "
               f"В конце дай краткий совет на завтра. Без грубости.")
 
 elif not morning_done_today:
     report_type = "Morning"
+    # Для утра ИИ теперь видит всю твою "физику"
     prompt = (f"Ты — личный спортивный врач. HRV {morning_row[5]}, Пульс {morning_row[4]}, "
-              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]}, "
-              f"Реальный возраст {real_age}. "
-              f"Дай краткую оценку состояния. Учти: если Fit Age ниже реального — это отлично. "
+              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]} (Реальный: {real_age}). "
+              f"\nАналитика формы: CTL (фитнес): {ctl}, ATL (усталость): {atl}, TSB (баланс): {tsb}. "
+              f"Готовность (Readiness Score): {readiness_score}/5. "
+              f"\nДай краткую оценку состояния. Учти: если TSB < -15, акцентируй внимание на восстановлении. "
               f"Твоя цель — долголетие и здоровье атлета.")
 else:
     ai_advice = "SKIP"
@@ -388,25 +394,44 @@ else:
 # Запрос к Gemini (Универсальный метод)
 if GEMINI_API_KEY and ai_advice != "SKIP":
     try:
-        # Сначала узнаем, какая модель доступна
-        res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}")
+        # 1. Получаем список моделей
+        res_m = requests.get(
+            f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", 
+            timeout=15
+        )
         models_data = res_m.json()
-        available = [m["name"] for m in models_data.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
-        # Выбираем flash или самую первую доступную
-        target_model = next((m for m in available if "flash" in m), available[0])
+        available = [
+            m["name"] for m in models_data.get("models", []) 
+            if "generateContent" in m.get("supportedGenerationMethods", [])
+        ]
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
-        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        
-        # Проверяем структуру ответа перед тем как лезть в ['candidates']
-        data = res_ai.json()
-        if "candidates" in data and data["candidates"]:
-            ai_advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if not available:
+            ai_advice = "⚠️ Ошибка: Доступные модели Gemini не найдены."
         else:
-            ai_advice = f"ИИ не дал ответа. Причина: {data.get('promptFeedback', 'Неизвестна')}"
+            # 2. Выбираем модель
+            target_model = next((m for m in available if "flash" in m), available[0])
+            
+            # 3. Запрос контента
+            url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
+            res_ai = requests.post(
+                url, 
+                json={"contents": [{"parts": [{"text": prompt}]}]}, 
+                timeout=30
+            )
+            
+            data = res_ai.json()
+            
+            # --- ПРОВЕРКА ОТВЕТА (только один раз и внутри else!) ---
+            if "candidates" in data and data["candidates"]:
+                ai_advice = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            else:
+                feedback = data.get('promptFeedback', {})
+                error_msg = data.get('error', {}).get('message')
+                reason = feedback.get('blockReason') or error_msg or "Ответ пуст (возможно, цензура)"
+                ai_advice = f"🤖 ИИ не дал совета. Причина: {reason}"
             
     except Exception as e:
-        ai_advice = f"Ошибка ИИ: {e}"
+        ai_advice = f"🚨 Ошибка блока ИИ: {str(e)}"
 
 # --- 4. ЗАПИСЬ И TELEGRAM ---
 try:
@@ -422,8 +447,6 @@ try:
     d_sheet.format("A:A", {"horizontalAlignment": "LEFT"})
     
     # 2. Activities
-    act_sheet = ss.worksheet("Activities")
-    existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
     for act in activities_to_log:
         if act["id"] not in existing_ids:
             act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
@@ -437,23 +460,44 @@ try:
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            # 1. Формируем заголовок и панель (HTML)
+            # 1. Формируем заголовок и панель (HTML) с иконками по «Фэншую»
             if report_type == "Activity":
-                header = "<b>НОВАЯ ТРЕНИРОВКА</b> 🚴‍♂️🏋️🚶"
                 act = activities_to_log[0]['row']
-                stats = f"📊 <code>{act[3]}км | NP {act[12]}W | TSS {act[13]}</code>"
+                act_type = str(act[1]).lower()
+                icon = "🚴‍♂️" if "cycling" in act_type else "🏋️‍♂️" if "strength" in act_type else "🏃‍♂️"
+                
+                header = f"<b>{icon} НОВАЯ ТРЕНИРОВКА</b>"
+
+                # --- ЛОГИКА ПАСХАЛКИ ДЛЯ TSS ---
+                try:
+                    tss_val = float(act[13]) if act[13] else 0
+                except:
+                    tss_val = 0
+                
+                # Если TSS > 100, добавляем корону, если > 70 — огонь, иначе просто график
+                tss_icon = "👑" if tss_val >= 100 else "🔥" if tss_val >= 70 else "📈"
+                
+                stats = f"📊 <code>{act[3]}км | ⚡ NP {act[12]}W | {tss_icon} TSS {act[13]}</code>"
             else:
-                header = "<b>ДОБРОЕ УТРО КАПИТАН!</b> 🌞☕⛵⚓"
+                # Утренний заголовок
+                header = "<b>🌞 ДОБРОЕ УТРО, КАПИТАН!</b>"
                 stats = f"<code>📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}</code>"
 
-            # 2. Собираем аналитический блок
+            # 2. Собираем аналитический блок с иконками
+            # Добавляем ДНК (🧬) к Fit Age для утреннего отчета
             fit_age_info = f" | 🧬 Fit Age: <code>{morning_row[10]}</code>" if report_type == "Morning" else ""
+            
+            # Создаем визуальный индикатор (прогресс-бар)
+            # Если score > 0, рисуем зеленые точки, если <= 0 — одну предупреждающую
+            rd_icon = ("🟢" * readiness_score) if readiness_score > 0 else ("🔴" * abs(readiness_score)) if readiness_score < 0 else "🟡"
+            
             analytics_block = ""
             if ctl != "" and atl != "":
                 analytics_block = (
                     f"\n\n📊 <b>Аналитика формы:</b>\n"
                     f"<code>CTL: {ctl} | ATL: {atl} | TSB: {tsb}</code>{fit_age_info}\n"
-                    f"📊 <b>Readiness:</b> <code>{readiness_score}</code> — <i>{readiness_text}</i>"
+                    f"🔋 <b>Readiness:</b> <code>{readiness_score}/5</code> {rd_icon}\n"
+                    f"💬 <i>{readiness_text}</i>"
                 )
 
             if ftp_est:
@@ -478,15 +522,24 @@ try:
             }
             
             try:
+                # Попытка №1: Стандартная отправка
                 tg_res = requests.post(tg_url, json=payload, timeout=15)
+                
                 if tg_res.status_code == 200:
                     print("✅ Telegram: Сообщение доставлено!")
                 else:
                     print(f"❌ Telegram Error {tg_res.status_code}: {tg_res.text}")
-                    # Попытка №2: Если даже так не лезет, шлем только начало
-                    requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg[:4000]})
+                    
+                    # Попытка №2: Если ошибка (например, текст слишком длинный или кривой HTML)
+                    # Шлем чистый текст без HTML-разметки, чтобы точно дошло
+                    fallback_payload = {
+                        "chat_id": TELEGRAM_CHAT_ID, 
+                        "text": f"⚠️ Ошибка оформления, шлю текст без разметки:\n\n{msg[:3900]}" 
+                    }
+                    requests.post(tg_url, json=fallback_payload, timeout=15)
+                    
             except Exception as e:
-                print(f"🚨 Ошибка отправки: {e}")
+                print(f"🚨 Критическая ошибка сети при отправке в TG: {e}")
         else:
             print("⚠️ Ошибка: Токен или ID чата пусты!")
 
