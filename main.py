@@ -338,7 +338,7 @@ try:
             if tsb < -15: readiness_score -= 2
             elif tsb > 5: readiness_score += 1
 
-        # --- Интерпретация ---
+        # --- Интерпретация готовности ---
         if readiness_score >= 3:
             readiness_text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
         elif readiness_score >= 0:
@@ -354,7 +354,6 @@ try:
 # --- 3. AI BLOCK (Адекватный наставник) ---
 ai_advice = ""
 report_type = ""
-
 # Теперь используем уже открытый ss (из начала скрипта)
 log_sheet = ss.worksheet("AI_Log")
 last_logs = log_sheet.get_all_values()
