@@ -85,7 +85,19 @@ if not gar:
     raise Exception("Критическая ошибка: не удалось подключиться к Garmin.")
     
 # --- 1. ПЕРВИЧНЫЕ ДАННЫЕ ---
-summary = gar.get_user_summary(today_str) or {}
+# Пытаемся взять сводку, если не дает — просто едем дальше
+try:
+    summary = gar.get_user_summary(today_str) or {}
+except Exception as e:
+    print(f"⚠️ Не удалось получить сводку дня (403), пропускаем: {e}")
+    summary = {}
+
+# То же самое для пульса и шагов, если они нужны
+try:
+    stats = gar.get_stats(today_str) or {}
+except Exception as e:
+    print(f"⚠️ Не удалось получить детальную статистику: {e}")
+    stats = {}
 hrv_res = gar.get_hrv_data(today_str) or {}
 hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 r_hr = summary.get("restingHeartRate") or ""
