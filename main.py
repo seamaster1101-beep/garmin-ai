@@ -39,25 +39,21 @@ if os.path.exists(session_dir) and os.listdir(session_dir):
         garth.resume(session_dir)
         gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         gar.garth = garth.client
-        # ИСПРАВЛЕНО: используем атрибут garth напрямую
-        gar.display_name = garth.client.username 
+        # Самый надежный способ инициализировать сессию без пароля:
+        gar.login() 
         print(f"✅ Сессия восстановлена для: {gar.display_name}")
     except Exception as e:
-        print(f"⚠️ Сессия не подошла: {e}")
+        print(f"⚠️ Сессия не подошла, сбрасываем: {e}")
         gar = None
 
 if gar is None:
     try:
         gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         gar.login(session_dir)
-        gar.display_name = garth.client.username
-        print(f"🔑 Вход по паролю для: {gar.display_name}")
+        print(f"🔑 Вход по паролю выполнен для: {gar.display_name}")
     except Exception as e:
         if "429" in str(e): print("🚨 Бан 429! Жди."); exit(1)
         raise e
-
-now = datetime.now()
-today_str = now.strftime("%Y-%m-%d")
 
 # --- 1. DATA COLLECTION ---
 summary = gar.get_user_summary(today_str) or {}
