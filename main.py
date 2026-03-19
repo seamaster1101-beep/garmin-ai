@@ -17,10 +17,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
 now = datetime.now()
-today_str = now.strftime("%Y-%m-%d")
-# now = datetime.now() # Временно комментируем текущее время
-# now = datetime.now() - timedelta(days=1) # Устанавливаем "вчера"
 # today_str = now.strftime("%Y-%m-%d")
+# now = datetime.now() # Временно комментируем текущее время
+now = datetime.now() - timedelta(days=1) # Устанавливаем "вчера"
+today_str = now.strftime("%Y-%m-%d")
 
 def update_or_append(sheet, date_str, row_data):
     try:
@@ -242,6 +242,18 @@ try:
             f"'{act_id}"
         ]
         activities_to_log.append({"id": act_id, "row": row_data})
+
+    # Разворачиваем список собранных тренировок перед записью в таблицу
+    activities_to_log.reverse() 
+
+    act_sheet = ss.worksheet("Activities")
+    existing_ids = {r[15] for r in act_sheet.get_all_values() if len(r) > 15}
+    
+    for act in activities_to_log:
+        if act["id"] not in existing_ids:
+            act_sheet.append_row(act["row"], value_input_option='USER_ENTERED')
+            print(f"✅ Тренировка {act['id']} добавлена в таблицу.")
+            
 except Exception as e:
     print(f"Activity Error: {e}")
 
@@ -421,51 +433,56 @@ try:
             new_row_idx = len(act_sheet.get_all_values())
             act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
     
-    # 3. Отправка в Telegram и Лог
+    # --- 3. ОТПРАВКА В TELEGRAM И ЛОГ (ФИНАЛ) ---
     if ai_advice and ai_advice != "SKIP":
-        clean_ai = ai_advice.replace('*', '')  # Убираем лишние символы
+        # Очистка: убираем лишние символы для таблицы
+        clean_ai = ai_advice.replace('*', '').strip()
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            # 1. Формируем заголовок и компактную панель цифр
+            # 1. Формируем заголовок и панель (HTML)
             if report_type == "Activity":
-                header = "**НОВАЯ ТРЕНИРОВКА** 🚴‍♂️🏋️🚶"
-                act = activities_to_log[0]['row']
-                # Панель: Дистанция | Мощность | TSS
-                stats = f"📊 `{act[3]}км | NP {act[12]}W | TSS {act[13]}`"
+                header = "<b>НОВАЯ ТРЕНИРОВКА</b> 🚴‍♂️🏋️🚶"
+                # Берем последнюю добавленную тренировку дня для сводки
+                act = activities_to_log[-1]['row']
+                stats = f"📊 <code>{act[3]}км | NP {act[12]}W | TSS {act[13]}</code>"
             else:
-                header = "**ДОБРОЕ УТРО КАПИТАН!** 🌞☕⛵⚓"
-                # Панель: HRV | RHR | BB
-                stats = f"`📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}`"
+                header = "<b>ДОБРОЕ УТРО КАПИТАН!</b> 🌞☕⛵⚓"
+                stats = f"<code>📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}</code>"
 
-            # 2. Собираем итоговое сообщение
+            # 2. Собираем аналитический блок
+            fit_age_info = f" | 🧬 Fit Age: <code>{morning_row[10]}</code>" if report_type == "Morning" else ""
             analytics_block = ""
-            fit_age_info = f" | 🧬 Fit Age: `{morning_row[10]}`" if report_type == "Morning" else ""
-
             if ctl != "" and atl != "":
                 analytics_block = (
-                    f"\n\n📊 **Аналитика формы:**\n"
-                    f"`CTL: {ctl} | ATL: {atl} | TSB: {tsb}`{fit_age_info}\n"
-                    f" readiness: {readiness_score} — _{readiness_text}_"
+                    f"\n\n📊 <b>Аналитика формы:</b>\n"
+                    f"<code>CTL: {ctl} | ATL: {atl} | TSB: {tsb}</code>{fit_age_info}\n"
+                    f" readiness: {readiness_score} — <i>{readiness_text}</i>"
                 )
 
             if ftp_est:
-                analytics_block += f"\n🚴 **Est. FTP:** `{ftp_est} W`"
+                analytics_block += f"\n🚴 <b>Est. FTP:</b> <code>{ftp_est} W</code>"
 
             msg = f"{header}\n{stats}{analytics_block}\n\n{clean_ai}"
             
-            # 3. Отправка с поддержкой Markdown
+            # 3. Отправка с поддержкой HTML
             tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            tg_res = requests.post(tg_url, json={
+            payload = {
                 "chat_id": TELEGRAM_CHAT_ID, 
                 "text": msg, 
-                "parse_mode": "Markdown"
-            }, timeout=15)
+                "parse_mode": "HTML"
+            }
             
-            if tg_res.status_code == 200:
-                print("✅ Telegram: Сообщение доставлено!")
-            else:
-                print(f"❌ Telegram: Ошибка {tg_res.status_code}. Ответ: {tg_res.text}")
+            try:
+                tg_res = requests.post(tg_url, json=payload, timeout=15)
+                if tg_res.status_code == 200:
+                    print("✅ Telegram: Сообщение доставлено!")
+                else:
+                    print(f"❌ Telegram Error {tg_res.status_code}: {tg_res.text}")
+                    # Попытка №2: Без разметки вообще (если HTML сломался)
+                    requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+            except Exception as e:
+                print(f"🚨 Ошибка отправки: {e}")
         else:
             print("⚠️ Ошибка: Токен или ID чата пусты!")
 
