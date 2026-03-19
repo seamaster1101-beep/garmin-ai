@@ -17,10 +17,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
 
 now = datetime.now()
-#today_str = now.strftime("%Y-%m-%d")
-# now = datetime.now() # Временно комментируем текущее время
-now = datetime.now() - timedelta(days=1) # Устанавливаем "вчера"
 today_str = now.strftime("%Y-%m-%d")
+# now = datetime.now() # Временно комментируем текущее время
+# now = datetime.now() - timedelta(days=1) # Устанавливаем "вчера"
+# today_str = now.strftime("%Y-%m-%d")
 
 def update_or_append(sheet, date_str, row_data):
     try:
