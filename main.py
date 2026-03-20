@@ -39,9 +39,16 @@ def update_or_append(sheet, date_str, row_data):
     except Exception as e: 
         print(f"Err gspread update: {e}")
 
-# --- ЛОГИН GARMIN (ЖЕЛЕЗОБЕТОННАЯ ВЕРСИЯ) ---
+# --- ЛОГИН GARMIN (ВЕРСИЯ С МАСКИРОВКОЙ) ---
+import time
+import random
+
 session_dir = "./.garth"
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+
+# ⏳ Маскировка: случайная пауза перед стартом (от 5 до 15 секунд)
+print(f"⏳ Маскировка запуска... Ожидание {random.randint(5, 15)} сек.")
+time.sleep(random.randint(5, 15))
 
 try:
     if os.path.exists(session_dir) and os.listdir(session_dir):
@@ -49,28 +56,31 @@ try:
         garth.resume(session_dir)
         gar.garth = garth.client
         
-        # Ключевая проверка: если имя пользователя None — сессия "прокисла"
         if not gar.display_name:
-            print("⚠️ Сессия пустая (None). Перезаходим по паролю...")
+            print("⚠️ Сессия пустая. Ждем 30 сек перед входом по паролю...")
+            time.sleep(30) # Даем серверу остыть
             gar.login(session_dir)
         else:
             print(f"🚀 Сессия подтверждена: {gar.display_name}")
     else:
         print("🔑 Сессия не найдена. Первый вход...")
         gar.login(session_dir)
-        print("💾 Сессия создана.")
 
 except Exception as e:
-    print(f"⚠️ Ошибка сессии ({e}). Пробуем принудительный логин...")
+    if "429" in str(e):
+        print("⚠️ Обнаружен лимит 429. Ждем 2 минуты перед ПОВТОРНОЙ попыткой...")
+        time.sleep(120) # Ключевая пауза при блокировке
+    else:
+        print(f"⚠️ Ошибка сессии ({e}). Пауза 10 сек...")
+        time.sleep(10)
+    
     try:
         gar.login(session_dir)
     except Exception as e2:
-        print(f"🚨 КРИТИЧЕСКАЯ ОШИБКА АВТОРИЗАЦИИ: {e2}")
+        print(f"🚨 КРИТИЧЕСКАЯ ОШИБКА: {e2}")
         raise e2
 
-# ФИНАЛЬНЫЙ СТОП-КРАН: если после всех попыток имени нет — дальше не идем
 if not gar.display_name:
-    print("❌ Ошибка: Garmin вернул пустой профиль. Проверь лимиты запросов (429).")
     raise ValueError("Display Name is None - Stopping script.")
 
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
@@ -353,20 +363,27 @@ try:
         if bb_val > 70: readiness_score += 1
         elif bb_val < 40: readiness_score -= 1
 
-    # 5. Нагрузка (TSB)
-    if tsb != "":
-        if tsb < -15: readiness_score -= 2
-        elif tsb > 5: readiness_score += 1
+    # 5. Нагрузка (TSB) — Спортивная логика (по совету ChatGPT)
+    if tsb != "" and tsb is not None:
+        tsb_val = float(tsb)
+        if tsb_val < -25: 
+            readiness_score -= 2  # Зона риска, нужен отдых
+        elif tsb_val < -10: 
+            readiness_score -= 1  # Рабочая нагрузка, все ок
+        elif tsb_val > 10: 
+            readiness_score += 1  # Состояние "свежести"
 
-    # --- Интерпретация готовности ---
-    if readiness_score >= 3:
-        readiness_text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
-    elif readiness_score >= 0:
-        readiness_text = "👍 Нормальная готовность — допустима умеренная нагрузка"
-    elif readiness_score >= -3:
-        readiness_text = "⚠️ Сниженная готовность — лучше лёгкая тренировка"
-    else:
-        readiness_text = "❌ Низкая готовность — восстановление или отдых"
+        # --- Интерпретация готовности (Исправлено) ---
+        if readiness_score >= 4:
+            readiness_text = "🔥 Отличная готовность — идеальный день для рекордов"
+        elif readiness_score >= 2:
+            readiness_text = "👍 Хорошая готовность — можно тренироваться в полную силу"
+        elif readiness_score >= 0:
+            readiness_text = "⚠️ Накоплена усталость — рекомендуется умеренная нагрузка"
+        elif readiness_score >= -2:
+            readiness_text = "📉 Низкая готовность — лучше ограничиться легкой активностью"
+        else:
+            readiness_text = "🚨 Критический уровень стресса — необходим полный отдых"
 
 except Exception as e:
     print(f"Readiness Calculation Error: {e}")
@@ -384,7 +401,15 @@ morning_done_today = any(today_str in row[0] and "Morning" in row[1] for row in 
 if activities_to_log:
     report_type = "Activity"
     act = activities_to_log[0]['row']
-    
+
+    # Проверка адекватности FTP (по совету ChatGPT)
+    ftp_status = ""
+    # Извлекаем NP из данных текущей тренировки
+    current_act_np = activities_to_log[0]['row'][12] 
+    if current_act_np and ftp_est and ftp_est != "N/A":
+        if float(current_act_np) > float(ftp_est):
+            ftp_status = "⚠️ Внимание: Твоя мощность выше расчетного FTP! Ты сильнее, чем думает система!\n"
+            
     # Добавляем контекст формы и готовности в промпт
     prompt = (f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
               f"Тип: {act[1]}, Дистанция: {act[3]}км, Мощность: {act[10]}Вт (NP: {act[12]}Вт), "
@@ -398,13 +423,19 @@ if activities_to_log:
 
 elif not morning_done_today:
     report_type = "Morning"
-    # Для утра ИИ теперь видит всю твою "физику"
-    prompt = (f"Ты — личный спортивный врач. HRV {morning_row[5]}, Пульс {morning_row[4]}, "
-              f"Сон {morning_row[8]}ч, BB {morning_row[6]}, Fit Age {morning_row[10]} (Реальный: {real_age}). "
-              f"\nАналитика формы: CTL (фитнес): {ctl}, ATL (усталость): {atl}, TSB (баланс): {tsb}. "
-              f"Готовность (Readiness Score): {readiness_score}/5. "
-              f"\nДай краткую оценку состояния. Учти: если TSB < -15, акцентируй внимание на восстановлении. "
-              f"Твоя цель — долголетие и здоровье атлета.")
+    # Умный промпт для ИИ-аналитика
+    prompt = (
+        f"Ты — элитный спортивный директор. Тон: профессиональный, без паники. "
+        f"Данные атлета: HRV {morning_row[5]}, Пульс {morning_row[4]}, Сон {morning_row[8]}ч, "
+        f"BB {morning_row[6]}, Fit Age {morning_row[10]}. "
+        f"Форма: CTL {ctl}, ATL {atl}, TSB {tsb}. "
+        f"Готовность: {readiness_score}/5. {ftp_status} "
+        f"\nИНСТРУКЦИЯ: "
+        f"1. HRV > 100 и RHR < 50 — это ПРИЗНАК СИЛЫ, не называй это ошибкой. "
+        f"2. Атлет весит 87 кг, но это МЫШЦЫ (жир ~12%). Не предлагай худеть. "
+        f"3. TSB до -25 — это нормальный тренировочный процесс. "
+        f"4. Оцени: нужно ли сегодня восстанавливаться или можно грузиться."
+    )
 else:
     ai_advice = "SKIP"
 
@@ -472,96 +503,61 @@ try:
             new_row_idx = len(act_sheet.get_all_values())
             act_sheet.format(f"A{new_row_idx}", {"horizontalAlignment": "LEFT"})
     
-    # --- 3. ОТПРАВКА В TELEGRAM И ЛОГ (ФИНАЛ С КОНТРОЛЕМ ДЛИНЫ) ---
+    # --- 3. ОТПРАВКА В TELEGRAM И ЛОГ ---
     if ai_advice and ai_advice != "SKIP":
-        # Очистка: убираем лишние символы для таблицы
         clean_ai = ai_advice.replace('*', '').strip()
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            # 1. Формируем заголовок и панель (HTML) с иконками по «Фэншую»
+            # 1. Заголовок и основные цифры
             if report_type == "Activity":
                 act = activities_to_log[0]['row']
                 act_type = str(act[1]).lower()
                 icon = "🚴‍♂️" if "cycling" in act_type else "🏋️‍♂️" if "strength" in act_type else "🏃‍♂️"
-                
                 header = f"<b>{icon} НОВАЯ ТРЕНИРОВКА</b>"
-
-                # --- ЛОГИКА ПАСХАЛКИ ДЛЯ TSS ---
+                
                 try:
                     tss_val = float(act[13]) if act[13] else 0
-                except:
-                    tss_val = 0
-                
-                # Если TSS > 100, добавляем корону, если > 70 — огонь, иначе просто график
+                except: tss_val = 0
                 tss_icon = "👑" if tss_val >= 100 else "🔥" if tss_val >= 70 else "📈"
                 
                 stats = f"📊 <code>{act[3]}км | ⚡ NP {act[12]}W | {tss_icon} TSS {act[13]}</code>"
             else:
-                # Утренний заголовок
                 header = "<b>🌞 ДОБРОЕ УТРО, КАПИТАН!</b>"
                 stats = f"<code>📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}</code>"
 
-            # 2. Собираем аналитический блок с иконками
-            # Добавляем ДНК (🧬) к Fit Age для утреннего отчета
+            # 2. Универсальный блок аналитики
             fit_age_info = f" | 🧬 Fit Age: <code>{morning_row[10]}</code>" if report_type == "Morning" else ""
-            
-            # Создаем визуальный индикатор (прогресс-бар)
-            # Если score > 0, рисуем зеленые точки, если <= 0 — одну предупреждающую
             rd_icon = ("🟢" * readiness_score) if readiness_score > 0 else ("🔴" * abs(readiness_score)) if readiness_score < 0 else "🟡"
             
-            analytics_block = ""
-            if ctl != "" and atl != "":
-                analytics_block = (
-                    f"\n\n📊 <b>Аналитика формы:</b>\n"
-                    f"<code>CTL: {ctl} | ATL: {atl} | TSB: {tsb}</code>{fit_age_info}\n"
-                    f"🔋 <b>Readiness:</b> <code>{readiness_score}/5</code> {rd_icon}\n"
-                    f"💬 <i>{readiness_text}</i>"
-                )
+            analytics_block = (
+                f"\n\n📊 <b>Аналитика формы:</b>\n"
+                f"<code>CTL: {ctl} | ATL: {atl} | TSB: {tsb}</code>{fit_age_info}\n"
+                f"{ftp_status if 'ftp_status' in locals() else ''}"
+                f"🔋 <b>Readiness:</b> <code>{readiness_score}/5</code> {rd_icon}\n"
+                f"💬 <i>{readiness_text}</i>"
+            )
 
-            if ftp_est:
+            if ftp_est and ftp_est != "N/A" and report_type == "Morning":
                 analytics_block += f"\n🚴 <b>Est. FTP:</b> <code>{ftp_est} W</code>"
 
-            # --- ВОТ ЗДЕСЬ ДОБАВЛЕНА МАГИЯ ОБРЕЗКИ ---
+            # 3. Сборка и обрезка
             intro = f"{header}\n{stats}{analytics_block}\n\n"
             
-            # Если всё вместе длиннее 4000 символов, подрезаем только текст ИИ
             if len(intro + clean_ai) > 4000:
                 allowed_len = 4000 - len(intro)
-                clean_ai = clean_ai[:allowed_len] + "...\n\n<i>(текст обрезан из-за лимита TG)</i>"
+                clean_ai = clean_ai[:allowed_len] + "...\n\n<i>(текст обрезан)</i>"
             
             msg = f"{intro}{clean_ai}"
             
-            # 3. Отправка с поддержкой HTML
+            # 4. Отправка
             tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            payload = {
-                "chat_id": TELEGRAM_CHAT_ID, 
-                "text": msg, 
-                "parse_mode": "HTML"
-            }
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
             
             try:
-                # Попытка №1: Стандартная отправка
                 tg_res = requests.post(tg_url, json=payload, timeout=15)
-                
-                if tg_res.status_code == 200:
-                    print("✅ Telegram: Сообщение доставлено!")
-                else:
-                    print(f"❌ Telegram Error {tg_res.status_code}: {tg_res.text}")
-                    
-                    # Попытка №2: Если ошибка (например, текст слишком длинный или кривой HTML)
-                    # Шлем чистый текст без HTML-разметки, чтобы точно дошло
-                    fallback_payload = {
-                        "chat_id": TELEGRAM_CHAT_ID, 
-                        "text": f"⚠️ Ошибка оформления, шлю текст без разметки:\n\n{msg[:3900]}" 
-                    }
-                    requests.post(tg_url, json=fallback_payload, timeout=15)
-                    
+                if tg_res.status_code != 200:
+                    # Fallback без HTML
+                    requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ Ошибка HTML. Текст:\n\n{msg[:3900]}"}, timeout=15)
             except Exception as e:
-                print(f"🚨 Критическая ошибка сети при отправке в TG: {e}")
-        else:
-            print("⚠️ Ошибка: Токен или ID чата пусты!")
-
-    print("🚀 Всё четко: выровнено, проверено, отправлено!")
-except Exception as e:
-    print(f"🚨 Финальная ошибка: {e}")
+                print(f"🚨 Ошибка сети TG: {e}")
