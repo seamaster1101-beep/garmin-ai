@@ -1,12 +1,13 @@
-# Garmin (обязательно оба!)
+# Garmin (авторизация и API)
 garminconnect
 garth
 
-# Google Sheets
+# Google Sheets (работа с таблицами)
 gspread
 google-auth
+google-auth-oauthlib
 
-# Сеть (для Telegram и Gemini)
+# Сеть (Telegram API и Gemini API)
 requests
 
 # Утилиты
