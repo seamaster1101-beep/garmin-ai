@@ -505,7 +505,7 @@ try:
     
     # --- 3. ОТПРАВКА В TELEGRAM И ЛОГ ---
     if ai_advice and ai_advice != "SKIP":
-        clean_ai = ai_advice.replace('*', '').strip()
+        clean_ai = ai_advice.replace('*', '').replace('<', '&lt;').replace('>', '&gt;').strip()
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
@@ -516,12 +516,27 @@ try:
                 icon = "🚴‍♂️" if "cycling" in act_type else "🏋️‍♂️" if "strength" in act_type else "🏃‍♂️"
                 header = f"<b>{icon} НОВАЯ ТРЕНИРОВКА</b>"
                 
+                # --- ОБНОВЛЕННЫЙ БЛОК ТРЕНИРОВКИ ---
                 try:
                     tss_val = float(act[13]) if act[13] else 0
-                except: tss_val = 0
+                except: 
+                    tss_val = 0
+                
                 tss_icon = "👑" if tss_val >= 100 else "🔥" if tss_val >= 70 else "📈"
                 
-                stats = f"📊 <code>{act[3]}км | ⚡ NP {act[12]}W | {tss_icon} TSS {act[13]}</code>"
+                parts = [f"{act[3]}км"]
+                
+                # Проверка мощности (NP)
+                if act[12] and str(act[12]).strip() not in ["0", "", "None"]:
+                    parts.append(f"⚡ NP {act[12]}W")
+                
+                # Проверка TSS
+                if tss_val > 0:
+                    parts.append(f"{tss_icon} TSS {int(tss_val)}")
+                
+                stats = f"📊 <code>{' | '.join(parts)}</code>"
+                # ----------------------------------
+
             else:
                 header = "<b>🌞 ДОБРОЕ УТРО, КАПИТАН!</b>"
                 stats = f"<code>📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}</code>"
