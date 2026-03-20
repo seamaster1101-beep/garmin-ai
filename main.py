@@ -557,7 +557,9 @@ try:
             try:
                 tg_res = requests.post(tg_url, json=payload, timeout=15)
                 if tg_res.status_code != 200:
-                    # Fallback без HTML
                     requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ Ошибка HTML. Текст:\n\n{msg[:3900]}"}, timeout=15)
             except Exception as e:
                 print(f"🚨 Ошибка сети TG: {e}")
+
+except Exception as e:
+    print(f"🚨 Ошибка выполнения финальной стадии: {e}")
