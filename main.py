@@ -374,13 +374,14 @@ try:
             readiness_score += 1  # Состояние "свежести"
 
         # --- Интерпретация готовности (Исправлено) ---
+        # --- ОБНОВЛЕННАЯ ЛОГИКА СТАТУСОВ ГОТОВНОСТИ ---
         if readiness_score >= 4:
             readiness_text = "🔥 Отличная готовность — идеальный день для рекордов"
-        elif readiness_score >= 2:
+        elif readiness_score == 3:
             readiness_text = "👍 Хорошая готовность — можно тренироваться в полную силу"
-        elif readiness_score >= 0:
-            readiness_text = "⚠️ Накоплена усталость — рекомендуется умеренная нагрузка"
-        elif readiness_score >= -2:
+        elif readiness_score >= 1:
+            readiness_text = "⚠️ Средняя готовность — рекомендуется умеренная нагрузка"
+        elif readiness_score >= -1:
             readiness_text = "📉 Низкая готовность — лучше ограничиться легкой активностью"
         else:
             readiness_text = "🚨 Критический уровень стресса — необходим полный отдых"
