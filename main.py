@@ -40,7 +40,7 @@ def update_or_append(sheet, date_str, row_data):
         print(f"Err gspread update: {e}")
 
 # --- ЛОГИН GARMIN (ВЕРСИЯ С МАСКИРОВКОЙ) ---
-import time
+#import time
 import random
 
 session_dir = "./.garth"
@@ -230,8 +230,11 @@ try:
         avg_pwr = a.get('avgPower', "")
         
         vi_val = ""
-        if np_val and avg_pwr and float(avg_pwr) > 0:
-            vi_val = round(float(np_val) / float(avg_pwr), 2)
+        try:
+            if np_val and avg_pwr and float(avg_pwr) > 0:
+                vi_val = round(float(np_val) / float(avg_pwr), 2)
+        except:
+            vi_val = ""
 
         row_data = [
             start_local.replace("T", " ")[:16], 
@@ -276,43 +279,37 @@ try:
     # 1. Сразу вытаскиваем существующие ID для финала скрипта
     existing_ids = {r[15] for r in all_rows if len(r) > 15}
     
-# 2. Берем данные для анализа (без шапки)
+    # 2. Берем данные для анализа (без шапки)
     rows = all_rows[1:] 
 
     tss_list = []
     power_candidates = []
 
-    # ВАЖНО: Весь этот блок ниже должен быть сдвинут вправо!
     for r in rows[-60:]:
         try:
-            # 1. Базовая проверка длины
-            if len(r) < 14: continue 
+            if len(r) < 14:
+                continue 
             
-            # 2. Определяем спорт
             sport = str(r[1]).lower() if len(r) > 1 else ""
 
-            # 3. Чистим и берем TSS (колонка 14)
             raw_tss = str(r[13]).replace(',', '.').strip() if r[13] else "0"
             tss = float(raw_tss) if raw_tss and raw_tss != "None" else 0
             
-            # 4. Мощность берем только если она есть
             raw_pwr = str(r[10]).replace(',', '.').strip() if r[10] else "0"
             avg_power = float(raw_pwr) if raw_pwr and raw_pwr != "None" else 0
             
             raw_dur = str(r[2]).replace(',', '.').strip() if r[2] else "0"
             duration_h = float(raw_dur)
 
-            # Добавляем TSS в любом случае
             tss_list.append(tss)
 
-            # Кандидаты на FTP — только если это вело и есть мощность
             if "cycling" in sport and duration_h >= 0.3 and avg_power > 0:
                 power_candidates.append(avg_power)
 
         except Exception as e:
-            print(f"Строка пропущена из-за ошибки: {e}")
+            print(f"Строка пропущена: {e}")
             continue
-            
+
     def ewma(data, alpha):
         if not data:
             return 0
@@ -325,105 +322,86 @@ try:
         ctl = round(ewma(tss_list, 2/(42+1)), 1)
         atl = round(ewma(tss_list, 2/(7+1)), 1)
         tsb = round(ctl - atl, 1)
-
     else:
         ctl = atl = tsb = 0
 
-    # --- FTP estimate ---
     if power_candidates:
-        best_power = max(power_candidates)
-        ftp_est = round(best_power * 0.95, 0)
+        ftp_est = round(max(power_candidates) * 0.95, 0)
     else:
-        ftp_est = "N/A" # Или оставь пустую строку ""
-except Exception as e:
-    print(f"Analytics (CTL/ATL) Error: {e}")
-
-# --- 2. РАСЧЕТ ГОТОВНОСТИ (УЛЬТИМАТИВНАЯ ВЕРСИЯ) ---
-        readiness_score = 0
+        ftp_est = "N/A"
         
-        try:
-            # 1. HRV (Твои пороги)
-            hrv_val = int(float(morning_row[5]))
-            if hrv_val > 70: readiness_score += 2
-            elif hrv_val > 50: readiness_score += 1
-            elif hrv_val < 45: readiness_score -= 2
-        except: pass
+# --- 2. РАСЧЕТ ГОТОВНОСТИ (УЛЬТИМАТИВНАЯ ВЕРСИЯ) ---
+    readiness_score = 0
+    
+    # 1. HRV
+    try:
+        hrv_val = int(float(morning_row[5])) if morning_row[5] not in ["", None] else 0
+        if hrv_val > 70: readiness_score += 2
+        elif hrv_val > 50: readiness_score += 1
+        elif hrv_val < 45: readiness_score -= 2
+    except: pass
 
-            # 2. Пульс покоя (RHR) — Из твоего старого блока
-        try:
-            rhr_val = int(float(morning_row[4]))
+    # 2. Пульс покоя (RHR)
+    try:
+        rhr_val = int(float(morning_row[4])) if morning_row[4] not in ["", None] else 0
+        if rhr_val > 0:
             if rhr_val < 55: readiness_score += 1
             elif rhr_val > 60: readiness_score -= 1
-        except: pass
+    except: pass
 
-        # 3. Сон
-        try:
-            sleep_hrs = float(morning_row[8]) if morning_row[8] != "" else 0
+    # 3. Сон
+    try:
+        sleep_hrs = float(morning_row[8]) if morning_row[8] not in ["", None] else 0
+        if sleep_hrs > 0:
             if sleep_hrs >= 7.5: readiness_score += 2
             elif sleep_hrs >= 6.5: readiness_score += 1
             elif sleep_hrs < 6.0: readiness_score -= 2
-        except: pass
+    except: pass
 
-        # 4. Body Battery — Из твоего старого блока
-        try:
-            bb_val = int(float(morning_row[6]))
+    # 4. Body Battery
+    try:
+        bb_val = int(float(morning_row[6])) if morning_row[6] not in ["", None] else 0
+        if bb_val > 0:
             if bb_val > 70: readiness_score += 1
             elif bb_val < 40: readiness_score -= 1
-        except: pass
+    except: pass
 
-        # 5. Контроль перегрузки (Load Ratio ATL/CTL)
-        try:
-            # Улучшенная проверка на пустые значения
-            c_val = float(ctl) if ctl and str(ctl).strip() not in ["", "N/A", "None"] else 0
-            a_val = float(atl) if atl and str(atl).strip() not in ["", "N/A", "None"] else 0
-            
-            if c_val > 0:
-                load_ratio = a_val / c_val
-                # Защита от резкого скачка (Пункт №3 твоего списка)
-                if load_ratio > 2.0: 
-                    readiness_score -= 1 
-        except: 
-            pass
+    # 5. Контроль перегрузки (Load Ratio ATL/CTL)
+    try:
+        c_val = float(ctl) if ctl and str(ctl).strip() not in ["", "N/A", "None"] else 0
+        a_val = float(atl) if atl and str(atl).strip() not in ["", "N/A", "None"] else 0
+        if c_val > 0:
+            load_ratio = a_val / c_val
+            if load_ratio > 2.0: readiness_score -= 1
+            elif load_ratio < 0.8: readiness_score += 1 
+    except: pass
 
-        # 6. ЖЕСТКИЙ ограничитель по TSB (Твой пункт №1 и №4)
-        try:
-            if tsb and str(tsb).strip() not in ["", "N/A", "None"]:
-                t_val = float(tsb)
-                
-                # Принудительное ограничение готовности при перегрузе
-                if t_val < -20:
-                    readiness_score = min(readiness_score, -2) 
-                elif t_val < -15:
-                    readiness_score = min(readiness_score, 0)
-        except: 
-            pass
+    # 6. ЖЕСТКИЙ ограничитель по TSB
+    try:
+        if tsb and str(tsb).strip() not in ["", "N/A", "None"]:
+            t_val = float(tsb)
+            if t_val < -25: readiness_score = -3
+            elif t_val < -20: readiness_score = min(readiness_score, -2)
+            elif t_val < -15: readiness_score = min(readiness_score, 0)
+    except: pass
 
-        # --- Интерпретация текста ---
-        if readiness_score >= 3:
-            readiness_text = "🔥 Отличная готовность — идеальный день для рекордов"
-        elif readiness_score >= 1:
-            readiness_text = "👍 Хорошая готовность — можно тренироваться умеренно"
-        elif readiness_score >= -1:
-            readiness_text = "⚠️ Средняя готовность — будь осторожен с нагрузкой"
-        else:
-            readiness_text = "🚨 Низкая готовность — необходим отдых или легкая активность"
+    # --- Интерпретация текста ---
+    if readiness_score >= 3:
+        readiness_text = "🔥 Отличная готовность — идеальный день для рекордов"
+    elif readiness_score >= 1:
+        readiness_text = "👍 Хорошая готовность — можно тренироваться умеренно"
+    elif readiness_score >= -1:
+        readiness_text = "⚠️ Средняя готовность — будь осторожен с нагрузкой"
+    else:
+        readiness_text = "🚨 Низкая готовность — необходим отдых или легкая активность"
 
-        # Улучшенный визуал иконок (Твой пункт №5)
-        if readiness_score >= 4:
-            rd_icon = "🔥🏆"  # Рекордный день
-        elif readiness_score >= 2:
-            rd_icon = "🟢🟢"  # Отличная форма
-        elif readiness_score >= 1:
-            rd_icon = "🟢🟡"  # Хорошо, но без фанатизма
-        elif readiness_score == 0:
-            rd_icon = "🟡"    # Нейтрально (баланс)
-        elif readiness_score >= -2:
-            rd_icon = "🟠"    # Усталость (нужно быть осторожным)
-        else:
-            rd_icon = "🔴"    # Стоп (перебор, отдых!)
-
-except Exception as e:
-    print(f"Readiness Calculation Error: {e}")
+    # Иконки
+    if readiness_score >= 4: rd_icon = "🔥🏆"
+    elif readiness_score >= 2: rd_icon = "🟢🟢"
+    elif readiness_score >= 1: rd_icon = "🟢🟡"
+    elif readiness_score == 0: rd_icon = "🟡"
+    elif readiness_score >= -2: rd_icon = "🟠"
+    else: rd_icon = "🔴"
 
 # --- 3. AI BLOCK ---
 ai_advice = ""
@@ -445,8 +423,11 @@ if activities_to_log:
     # Извлекаем NP из данных текущей тренировки
     current_act_np = activities_to_log[0]['row'][12] 
     if current_act_np and ftp_est and ftp_est != "N/A":
-        if float(current_act_np) > float(ftp_est):
-            ftp_status = "⚠️ Внимание: Твоя мощность выше расчетного FTP! Ты сильнее, чем думает система!\n"
+        try:
+            if float(current_act_np) > float(ftp_est):
+                ftp_status = "⚠️ Внимание: Твоя мощность выше расчетного FTP! Ты сильнее, чем думает система!\n"
+        except:
+            pass
             
     # Добавляем контекст формы и готовности в промпт
     prompt = (
