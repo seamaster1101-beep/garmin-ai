@@ -329,6 +329,12 @@ try:
         ftp_est = round(max(power_candidates) * 0.95, 0)
     else:
         ftp_est = "N/A"
+
+except Exception as e:
+    print(f"🚨 Ошибка в блоке аналитики: {e}")
+    # На случай ошибки задаем значения по умолчанию, чтобы Readiness не упал
+    ctl = atl = tsb = 0
+    ftp_est = "N/A"    
         
 # --- 2. РАСЧЕТ ГОТОВНОСТИ (УЛЬТИМАТИВНАЯ ВЕРСИЯ) ---
     readiness_score = 0
