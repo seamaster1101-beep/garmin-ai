@@ -1,8 +1,6 @@
 name: Garmin Daily Sync
 
 on:
-  #schedule:
-    #- cron: '29 7 * * *'
   workflow_dispatch:
 
 jobs:
@@ -18,7 +16,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # --- ВОССТАНОВЛЕНИЕ СЕССИИ ИЗ СЕКРЕТА (Base64) ---
       - name: Restore Garmin Session
         run: |
           echo "${{ secrets.GARMIN_SESSION_BASE64 }}" | base64 -d | tar -xz || echo "No session found"
@@ -26,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install garminconnect gspread google-auth requests garth
+          pip install garminconnect gspread google-auth requests garth jq
 
       - name: Run main.py
         env:
@@ -37,3 +34,53 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
+
+      - name: Save and Update Garmin Session
+        if: always()
+        run: |
+          if [ -d ".garth" ]; then
+            echo "✅ Сессия найдена, упаковываем..."
+            tar -czf session.tar.gz .garth
+            SESSION_BASE64=$(base64 -w 0 session.tar.gz)
+            
+            # Получаем публичный ключ репозитория для шифрования секрета
+            RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.MY_GITHUB_TOKEN }}" \
+              https://api.github.com/repos/${{ github.repository }}/actions/secrets/public-key)
+            PUBLIC_KEY=$(echo $RESPONSE | jq -r .key)
+            KEY_ID=$(echo $RESPONSE | jq -r .key_id)
+            
+            # Шифруем сессию (требование GitHub API)
+            ENCRYPTED_VALUE=$(echo -n "$SESSION_BASE64" | python3 -c "
+import base64
+from nacl import public
+def encrypt(public_key: str, secret_value: str) -> str:
+    public_key = public.PublicKey(base64.b64decode(public_key))
+    sealed_box = public.SealedBox(public_key)
+    encrypted = sealed_box.encrypt(secret_value.encode('utf-8'))
+    return base64.b64encode(encrypted).decode('utf-8')
+print(encrypt('$PUBLIC_KEY', '$SESSION_BASE64'))" 2>/dev/null || echo "NEED_INSTALL")
+
+            if [ "$ENCRYPTED_VALUE" == "NEED_INSTALL" ]; then
+              pip install pynacl > /dev/null
+              ENCRYPTED_VALUE=$(echo -n "$SESSION_BASE64" | python3 -c "
+import base64
+from nacl import public
+def encrypt(public_key: str, secret_value: str) -> str:
+    public_key = public.PublicKey(base64.b64decode(public_key))
+    sealed_box = public.SealedBox(public_key)
+    encrypted = sealed_box.encrypt(secret_value.encode('utf-8'))
+    return base64.b64encode(encrypted).decode('utf-8')
+print(encrypt('$PUBLIC_KEY', '$SESSION_BASE64'))")
+            fi
+
+            # Отправляем обновленный секрет обратно в GitHub
+            curl -s -X PUT \
+              -H "Authorization: Bearer ${{ secrets.MY_GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/repos/${{ github.repository }}/actions/secrets/GARMIN_SESSION_BASE64 \
+              -d "{\"encrypted_value\":\"$ENCRYPTED_VALUE\",\"key_id\":\"$KEY_ID\"}"
+            
+            echo "🚀 Секрет GARMIN_SESSION_BASE64 успешно обновлен!"
+          else
+            echo "❌ Сессия не найдена, обновлять нечего."
+          fi
