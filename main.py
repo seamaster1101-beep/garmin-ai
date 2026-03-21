@@ -391,6 +391,7 @@ except Exception as e:
 # --- 3. AI BLOCK ---
 ai_advice = ""
 report_type = ""
+ftp_status = ""
 # Теперь используем уже открытый ss (из начала скрипта)
 log_sheet = ss.worksheet("AI_Log")
 last_logs = log_sheet.get_all_values()
