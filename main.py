@@ -265,7 +265,8 @@ ctl = atl = tsb = ""
 ftp_est = ""
 readiness_score = 0
 readiness_text = ""
-existing_ids = set() # Создаем заранее
+rd_icon = "🟡"  # <-- Добавь эту строку здесь (базовое значение)
+existing_ids = set()
 
 try:
     act_sheet = ss.worksheet("Activities")
@@ -337,54 +338,89 @@ try:
 except Exception as e:
     print(f"Analytics (CTL/ATL) Error: {e}")
 
-# --- READINESS SCORE ---
-try:
-    # 1. HRV
-    if hrv:
-        hrv_val = int(float(hrv))
-        if hrv_val > 50: readiness_score += 2
-        elif hrv_val < 40: readiness_score -= 2
+# --- 2. РАСЧЕТ ГОТОВНОСТИ (УЛЬТИМАТИВНАЯ ВЕРСИЯ) ---
+        readiness_score = 0
+        
+        try:
+            # 1. HRV (Твои пороги)
+            hrv_val = int(float(morning_row[5]))
+            if hrv_val > 70: readiness_score += 2
+            elif hrv_val > 50: readiness_score += 1
+            elif hrv_val < 45: readiness_score -= 2
+        except: pass
 
-    # 2. Пульс покоя
-    if r_hr:
-        rhr_val = int(float(r_hr))
-        if rhr_val < 55: readiness_score += 1
-        elif rhr_val > 60: readiness_score -= 1
+            # 2. Пульс покоя (RHR) — Из твоего старого блока
+        try:
+            rhr_val = int(float(morning_row[4]))
+            if rhr_val < 55: readiness_score += 1
+            elif rhr_val > 60: readiness_score -= 1
+        except: pass
 
-    # 3. Сон
-    if slp_h:
-        slp_val = float(slp_h)
-        if slp_val >= 7: readiness_score += 1
-        elif slp_val < 6: readiness_score -= 1
+        # 3. Сон
+        try:
+            sleep_hrs = float(morning_row[8]) if morning_row[8] != "" else 0
+            if sleep_hrs >= 7.5: readiness_score += 2
+            elif sleep_hrs >= 6.5: readiness_score += 1
+            elif sleep_hrs < 6.0: readiness_score -= 2
+        except: pass
 
-    # 4. Body Battery
-    if morning_bb_max:
-        bb_val = int(float(morning_bb_max))
-        if bb_val > 70: readiness_score += 1
-        elif bb_val < 40: readiness_score -= 1
+        # 4. Body Battery — Из твоего старого блока
+        try:
+            bb_val = int(float(morning_row[6]))
+            if bb_val > 70: readiness_score += 1
+            elif bb_val < 40: readiness_score -= 1
+        except: pass
 
-    # 5. Нагрузка (TSB) — Спортивная логика (по совету ChatGPT)
-    if tsb != "" and tsb is not None:
-        tsb_val = float(tsb)
-        if tsb_val < -25: 
-            readiness_score -= 2  # Зона риска, нужен отдых
-        elif tsb_val < -10: 
-            readiness_score -= 1  # Рабочая нагрузка, все ок
-        elif tsb_val > 10: 
-            readiness_score += 1  # Состояние "свежести"
+        # 5. Контроль перегрузки (Load Ratio ATL/CTL)
+        try:
+            # Улучшенная проверка на пустые значения
+            c_val = float(ctl) if ctl and str(ctl).strip() not in ["", "N/A", "None"] else 0
+            a_val = float(atl) if atl and str(atl).strip() not in ["", "N/A", "None"] else 0
+            
+            if c_val > 0:
+                load_ratio = a_val / c_val
+                # Защита от резкого скачка (Пункт №3 твоего списка)
+                if load_ratio > 2.0: 
+                    readiness_score -= 1 
+        except: 
+            pass
 
-        # --- Интерпретация готовности (Исправлено) ---
-        # --- ОБНОВЛЕННАЯ ЛОГИКА СТАТУСОВ ГОТОВНОСТИ ---
-        if readiness_score >= 4:
+        # 6. ЖЕСТКИЙ ограничитель по TSB (Твой пункт №1 и №4)
+        try:
+            if tsb and str(tsb).strip() not in ["", "N/A", "None"]:
+                t_val = float(tsb)
+                
+                # Принудительное ограничение готовности при перегрузе
+                if t_val < -20:
+                    readiness_score = min(readiness_score, -2) 
+                elif t_val < -15:
+                    readiness_score = min(readiness_score, 0)
+        except: 
+            pass
+
+        # --- Интерпретация текста ---
+        if readiness_score >= 3:
             readiness_text = "🔥 Отличная готовность — идеальный день для рекордов"
-        elif readiness_score == 3:
-            readiness_text = "👍 Хорошая готовность — можно тренироваться в полную силу"
         elif readiness_score >= 1:
-            readiness_text = "⚠️ Средняя готовность — рекомендуется умеренная нагрузка"
+            readiness_text = "👍 Хорошая готовность — можно тренироваться умеренно"
         elif readiness_score >= -1:
-            readiness_text = "📉 Низкая готовность — лучше ограничиться легкой активностью"
+            readiness_text = "⚠️ Средняя готовность — будь осторожен с нагрузкой"
         else:
-            readiness_text = "🚨 Критический уровень стресса — необходим полный отдых"
+            readiness_text = "🚨 Низкая готовность — необходим отдых или легкая активность"
+
+        # Улучшенный визуал иконок (Твой пункт №5)
+        if readiness_score >= 4:
+            rd_icon = "🔥🏆"  # Рекордный день
+        elif readiness_score >= 2:
+            rd_icon = "🟢🟢"  # Отличная форма
+        elif readiness_score >= 1:
+            rd_icon = "🟢🟡"  # Хорошо, но без фанатизма
+        elif readiness_score == 0:
+            rd_icon = "🟡"    # Нейтрально (баланс)
+        elif readiness_score >= -2:
+            rd_icon = "🟠"    # Усталость (нужно быть осторожным)
+        else:
+            rd_icon = "🔴"    # Стоп (перебор, отдых!)
 
 except Exception as e:
     print(f"Readiness Calculation Error: {e}")
@@ -413,31 +449,39 @@ if activities_to_log:
             ftp_status = "⚠️ Внимание: Твоя мощность выше расчетного FTP! Ты сильнее, чем думает система!\n"
             
     # Добавляем контекст формы и готовности в промпт
-    prompt = (f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
-              f"Тип: {act[1]}, Дистанция: {act[3]}км, Мощность: {act[10]}Вт (NP: {act[12]}Вт), "
-              f"TSS: {act[13]}, IF: {act[6]}. "
-              f"\nКонтекст атлета: Баланс нагрузки (TSB): {tsb}, "
-              f"Готовность (Readiness Score): {readiness_score}/5, Состояние: {readiness_text}. "
-              f"\nВАЖНО: Используй цифры NP и TSS как факт нагрузки. "
-              f"Учти текущий TSB: если он сильно отрицательный, похвали за работу, но предупреди об отдыхе. "
-              f"Твой стиль: профессиональный, мотивирующий, но честный. "
-              f"В конце дай краткий совет на завтра. Без грубости.")
+    prompt = (
+            f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
+            f"Тип: {act[1]}, Дистанция: {act[3]}км, Мощность: {act[10]}Вт (NP: {act[12]}Вт), "
+            f"TSS: {act[13]}, IF: {act[6]}. "
+            f"\nКонтекст атлета: Баланс нагрузки (TSB): {tsb}, CTL: {ctl}, ATL: {atl}, "
+            f"Готовность (Readiness Score): {readiness_score}/5, Состояние: {readiness_text}. "
+            f"\nИНСТРУКЦИИ: "
+            f"1. Используй цифры NP и TSS как факт нагрузки. "
+            f"2. Если тип 'Walking' или данные мощности отсутствуют, не критикуй — оценивай это как восстановление или активность по шагам. "
+            f"3. Учти соотношение ATL/CTL: если нагрузка (ATL) в 2 раза выше базы (CTL), предупреди о риске травм. "
+            f"4. Fit Age используй только как индикатор стресса, не делай на нем основной акцент. "
+            f"5. Если TSB сильно отрицательный, похвали за дисциплину, но жестко настаивай на отдыхе. "
+            f"\nТвой стиль: профессиональный, мотивирующий, но честный. "
+            f"В конце дай краткий совет на завтра. Без грубости."
+        )
 
 elif not morning_done_today:
     report_type = "Morning"
     # Умный промпт для ИИ-аналитика
     prompt = (
-        f"Ты — элитный спортивный директор. Тон: профессиональный, без паники. "
-        f"Данные атлета: HRV {morning_row[5]}, Пульс {morning_row[4]}, Сон {morning_row[8]}ч, "
-        f"BB {morning_row[6]}, Fit Age {morning_row[10]}. "
-        f"Форма: CTL {ctl}, ATL {atl}, TSB {tsb}. "
-        f"Готовность: {readiness_score}/5. {ftp_status} "
-        f"\nИНСТРУКЦИЯ: "
-        f"1. HRV > 100 и RHR < 50 — это ПРИЗНАК СИЛЫ, не называй это ошибкой. "
-        f"2. Атлет весит 87 кг, но это МЫШЦЫ (жир ~12%). Не предлагай худеть. "
-        f"3. TSB до -25 — это нормальный тренировочный процесс. "
-        f"4. Оцени: нужно ли сегодня восстанавливаться или можно грузиться."
-    )
+            f"Ты — элитный спортивный директор. Тон: профессиональный, без паники. "
+            f"Данные атлета: HRV {morning_row[5]}, Пульс {morning_row[4]}, Сон {morning_row[8]}ч, "
+            f"BB {morning_row[6]}, Fit Age {morning_row[10]}. "
+            f"Форма: CTL {ctl}, ATL {atl}, TSB {tsb}. "
+            f"Готовность: {readiness_score}/5. {ftp_status} "
+            f"\nИНСТРУКЦИЯ: "
+            f"1. Это УТРЕННИЙ отчет о состоянии покоя. Не ищи данные тренировок. "
+            f"2. Атлету 62 года (в мае будет 63). Его HRV > 70 и RHR < 50 — это ПОКАЗАТЕЛИ ЭЛИТНОЙ ФОРМЫ для этого возраста. Хвали за это! "
+            f"3. Атлет весит 87 кг, но это МЫШЦЫ (жир ~12%). Не предлагай худеть. "
+            f"4. TSB до -25 — это нормальный процесс загрузки. "
+            f"5. Fit Age сейчас {morning_row[10]}. Учитывая реальный возраст (62), это отличный результат. Интерпретируй любые колебания только как временный стресс. "
+            f"6. Оцени: нужно ли сегодня восстанавливаться или можно грузиться."
+        )
 else:
     ai_advice = "SKIP"
 
@@ -470,6 +514,11 @@ if GEMINI_API_KEY and ai_advice != "SKIP":
                 json={"contents": [{"parts": [{"text": prompt}]}]}, 
                 timeout=30
             )
+            
+            # ПРОВЕРКА СТАТУСА ОТВЕТА
+            if res_ai.status_code != 200:
+                ai_advice = f"⚠️ Ошибка API Gemini (Код: {res_ai.status_code}). Анализ временно недоступен."
+                # Выходим из цикла попыток, так как есть ответ от сервера (хоть и с ошибкой)
             
             data = res_ai.json()
             
@@ -525,27 +574,23 @@ try:
                     tss_val = 0
                 
                 tss_icon = "👑" if tss_val >= 100 else "🔥" if tss_val >= 70 else "📈"
-                
                 parts = [f"{act[3]}км"]
                 
-                # Проверка мощности (NP)
                 if act[12] and str(act[12]).strip() not in ["0", "", "None"]:
                     parts.append(f"⚡ NP {act[12]}W")
                 
-                # Проверка TSS
                 if tss_val > 0:
                     parts.append(f"{tss_icon} TSS {int(tss_val)}")
                 
                 stats = f"📊 <code>{' | '.join(parts)}</code>"
-                # ----------------------------------
 
-            else:
+            else: # <--- ИСПРАВЛЕНО (добавлено двоеточие)
                 header = "<b>🌞 ДОБРОЕ УТРО, КАПИТАН!</b>"
                 stats = f"<code>📈 HRV: {morning_row[5]} | 💓 RHR: {morning_row[4]} | 🔋 BB: {morning_row[6]}</code>"
 
             # 2. Универсальный блок аналитики
             fit_age_info = f" | 🧬 Fit Age: <code>{morning_row[10]}</code>" if report_type == "Morning" else ""
-            rd_icon = ("🟢" * readiness_score) if readiness_score > 0 else ("🔴" * abs(readiness_score)) if readiness_score < 0 else "🟡"
+            
             
             analytics_block = (
                 f"\n\n📊 <b>Аналитика формы:</b>\n"
