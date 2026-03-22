@@ -63,6 +63,19 @@ except Exception as e:
     # Если это 429, мы хотя бы будем знать на каком этапе
     raise e
 
+# --- ФУНКЦИЯ ДЛЯ ТАБЛИЦ (ДОБАВЬ ЭТО) ---
+def update_or_append(sheet, date_str, row_data):
+    """Обновляет строку, если дата уже есть, или добавляет новую."""
+    try:
+        # Ищем ячейку с датой
+        cell = sheet.find(date_str)
+        # Если нашли — обновляем всю строку (A:Z в строке с датой)
+        sheet.update(range_name=f"A{cell.row}:Z{cell.row}", values=[row_data])
+        print(f"🔄 Данные за {date_str} обновлены в таблице.")
+    except gspread.exceptions.CellNotFound:
+        # Если не нашли — просто добавляем новую строку в конец
+        sheet.append_row(row_data)
+        print(f"➕ Добавлена новая запись за {date_str}.")
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
 
 try:
