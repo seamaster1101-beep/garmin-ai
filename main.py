@@ -1,17 +1,15 @@
 import base64
 import tarfile
-import random
 import os
 import json
 import requests
 import garth
 import time
+import random
 from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
-# --- ДОБАВЛЕНО ДЛЯ GEMINI ---
-import google.generativeai as genai 
 
 # --- CONFIG ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -20,57 +18,36 @@ GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
-GARMIN_SESSION = os.environ.get("GARMIN_SESSION") # Сюда прилетит секрет из YAML
-
-# Настройка Gemini API
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+GARMIN_SESSION_BASE64 = os.environ.get("GARMIN_SESSION_BASE64")
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 
-# --- ЛОГИН GARMIN (ПОБЕДА НАД 429 И 401) ---
+# --- ЛОГИН GARMIN ---
 session_dir = "./.garth"
 
-# 1. Распаковка сессии (если есть)
-if GARMIN_SESSION:
+if GARMIN_SESSION_BASE64:
     try:
-        # Убедимся, что данные декодируются корректно
         with open("session.tar.gz", "wb") as f:
-            f.write(base64.b64decode(GARMIN_SESSION))
+            f.write(base64.b64decode(GARMIN_SESSION_BASE64))
         with tarfile.open("session.tar.gz", "r:gz") as tar:
             tar.extractall()
-        print("✅ Сессия успешно извлечена из секретов GitHub")
+        print("✅ Сессия извлечена")
     except Exception as e:
-        print(f"⚠️ Ошибка распаковки сессии: {e}")
+        print(f"⚠️ Ошибка распаковки: {e}")
 
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
 
-# 2. Маскировка (случайная пауза)
-wait_time = random.randint(5, 15)
-print(f"⏳ Маскировка... Ожидание {wait_time} сек.")
-time.sleep(wait_time)
-
 try:
     if os.path.exists(session_dir) and os.listdir(session_dir):
-        print("✅ Файлы сессии найдены. Пробуем войти...")
         garth.resume(session_dir)
         gar.garth = garth.client
-        
-        # Проверка, жива ли сессия
-        if not gar.display_name:
-            print("⚠️ Сессия устарела. Пробуем обновить через login(session_dir)...")
-            gar.login(session_dir)
-        else:
-            print(f"🚀 Вход выполнен по сессии: {gar.display_name}")
+        print(f"🚀 Вход по сессии: {gar.display_name}")
     else:
-        print("🔑 Сессия не найдена. Первый вход по паролю...")
         gar.login(session_dir)
-
+        print("🔑 Вход по паролю")
 except Exception as e:
     print(f"🚨 Ошибка входа: {e}")
-    if "429" in str(e):
-        print("⚠️ Обнаружен лимит 429. Нужно подождать минимум 1 час.")
     raise e
 
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
