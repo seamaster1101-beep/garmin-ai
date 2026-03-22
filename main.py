@@ -418,7 +418,7 @@ log_sheet = ss.worksheet("AI_Log")
 last_logs = log_sheet.get_all_values()
 
 # Проверка утреннего отчета
-morning_done_today = any(today_str in row[0] and "Morning" in row[1] for row in last_logs)
+morning_done_today = any(len(row) > 1 and today_str in str(row[0]) and "Morning" in str(row[1]) for row in last_logs)
 
 if activities_to_log:
     report_type = "Activity"
