@@ -23,31 +23,44 @@ GARMIN_SESSION_BASE64 = os.environ.get("GARMIN_SESSION_BASE64")
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 
-# --- ЛОГИН GARMIN ---
-session_dir = "./.garth"
+# --- ЛОГИН GARMIN (ОБНОВЛЕННЫЙ) ---
+session_dir = os.path.abspath("./.garth")
 
 if GARMIN_SESSION_BASE64:
     try:
         with open("session.tar.gz", "wb") as f:
             f.write(base64.b64decode(GARMIN_SESSION_BASE64))
         with tarfile.open("session.tar.gz", "r:gz") as tar:
-            tar.extractall()
-        print("✅ Сессия извлечена")
+            tar.extractall(path=".")
+        print(f"✅ Сессия извлечена в: {session_dir}")
     except Exception as e:
         print(f"⚠️ Ошибка распаковки: {e}")
 
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
 
 try:
-    if os.path.exists(session_dir) and os.listdir(session_dir):
-        garth.resume(session_dir)
+    if os.path.exists(session_dir):
+        # Показываем, что внутри, чтобы понять, нет ли там лишних папок
+        print(f"📂 Содержимое папки сессии: {os.listdir(session_dir)}")
+        
+        # Принудительная загрузка
+        garth.client.load(session_dir)
         gar.garth = garth.client
-        print(f"🚀 Вход по сессии: {gar.display_name}")
+        
+        if gar.display_name:
+            print(f"🚀 Вход по сессии: {gar.display_name}")
+        else:
+            print("⚠️ Сессия загружена, но display_name пустой. Пробуем login()...")
+            gar.login(session_dir)
+            print(f"🚀 Вход после обновления: {gar.display_name}")
     else:
+        print("🔑 Сессия не найдена. Вход по паролю...")
         gar.login(session_dir)
-        print("🔑 Вход по паролю")
+        print(f"🚀 Вход выполнен: {gar.display_name}")
+
 except Exception as e:
     print(f"🚨 Ошибка входа: {e}")
+    # Если это 429, мы хотя бы будем знать на каком этапе
     raise e
 
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
