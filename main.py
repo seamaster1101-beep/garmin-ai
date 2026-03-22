@@ -181,7 +181,7 @@ morning_bb_max = summary.get("bodyBatteryHighestValue") or summary.get("bodyBatt
 real_age = 62 
 
 morning_row = [
-    morning_ts, 
+    f"'{morning_ts}", 
     weight, 
     fat, 
     muscle, 
@@ -208,7 +208,7 @@ cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories",
 current_bb = summary.get("bodyBatteryMostRecentValue", "")
 
 daily_row = [
-    today_str, 
+    f"'{today_str}", 
     steps, 
     daily_dist, 
     cals, 
@@ -549,7 +549,7 @@ try:
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             # 1. Заголовок и основные цифры
             if report_type == "Activity":
-                act = activities_to_log[0]['row']
+                act = activities_to_log[-1]['row']
                 act_type = str(act[1]).lower()
                 icon = "🚴‍♂️" if "cycling" in act_type else "🏋️‍♂️" if "strength" in act_type else "🏃‍♂️"
                 header = f"<b>{icon} НОВАЯ ТРЕНИРОВКА</b>"
