@@ -71,16 +71,16 @@ def update_or_append(sheet, date_str, row_data):
         cell = sheet.find(date_str)
         if cell:
             # Если нашли, обновляем
-            sheet.update(range_name=f"A{cell.row}:Z{cell.row}", values=[row_data])
-            print(f"🔄 Данные за {date_str} обновлены в таблице.")
+            sheet.update(range_name=f"A{cell.row}:Z{cell.row}", values=[row_data], value_input_option="USER_ENTERED")
+            print(f"🔄 Данные за {date_str} обновлены без апострофов.")
             return
     except Exception:
         # Если не нашли (любая ошибка), просто идем дальше к добавлению
         pass
     
     # Добавляем новую строку, если поиск не удался
-    sheet.append_row(row_data)
-    print(f"➕ Добавлена новая запись за {date_str}.")
+    sheet.append_row(row_data, value_input_option="USER_ENTERED")
+    print(f"➕ Добавлена новая запись за {date_str} (формат даты сохранен).")
         
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
 
