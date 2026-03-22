@@ -181,7 +181,7 @@ morning_bb_max = summary.get("bodyBatteryHighestValue") or summary.get("bodyBatt
 real_age = 62 
 
 morning_row = [
-    f"'{morning_ts}", 
+    morning_ts, 
     weight, 
     fat, 
     muscle, 
@@ -208,7 +208,7 @@ cals = int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories",
 current_bb = summary.get("bodyBatteryMostRecentValue", "")
 
 daily_row = [
-    f"'{today_str}", 
+    today_str, 
     steps, 
     daily_dist, 
     cals, 
@@ -422,7 +422,7 @@ morning_done_today = any(len(row) > 1 and today_str in str(row[0]) and "Morning"
 
 if activities_to_log:
     report_type = "Activity"
-    act = activities_to_log[0]['row']
+    act = activities_to_log[-1]['row']
 
     # Проверка адекватности FTP (по совету ChatGPT)
     ftp_status = ""
