@@ -72,7 +72,7 @@ def update_or_append(sheet, date_str, row_data):
         # Если нашли — обновляем всю строку (A:Z в строке с датой)
         sheet.update(range_name=f"A{cell.row}:Z{cell.row}", values=[row_data])
         print(f"🔄 Данные за {date_str} обновлены в таблице.")
-    except gspread.exceptions.CellNotFound:
+    except gspread.CellNotFound:
         # Если не нашли — просто добавляем новую строку в конец
         sheet.append_row(row_data)
         print(f"➕ Добавлена новая запись за {date_str}.")
