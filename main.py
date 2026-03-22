@@ -67,15 +67,16 @@ except Exception as e:
 def update_or_append(sheet, date_str, row_data):
     """Обновляет строку, если дата уже есть, или добавляет новую."""
     try:
-        # Ищем ячейку с датой
+        # Пробуем найти ячейку с датой
         cell = sheet.find(date_str)
-        # Если нашли — обновляем всю строку (A:Z в строке с датой)
-        sheet.update(range_name=f"A{cell.row}:Z{cell.row}", values=[row_data])
-        print(f"🔄 Данные за {date_str} обновлены в таблице.")
-    except gspread.CellNotFound:
-        # Если не нашли — просто добавляем новую строку в конец
+        if cell:
+            sheet.update(range_name=f"A{cell.row}:Z{cell.row}", values=[row_data])
+            print(f"🔄 Строка за {date_str} обновлена.")
+    except Exception:
+        # Если не нашли или любая другая ошибка поиска — просто добавляем в конец
         sheet.append_row(row_data)
-        print(f"➕ Добавлена новая запись за {date_str}.")
+        print(f"➕ Добавлена новая строка за {date_str}.")
+        
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
 
 try:
