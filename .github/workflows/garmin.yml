@@ -1,7 +1,7 @@
 name: Garmin Daily Sync
 
 on:
-  workflow_dispatch: # ТОЛЬКО ручной запуск по кнопке
+  workflow_dispatch: # ТОЛЬКО ручной запуск. Сам больше не дернется.
 
 jobs:
   garmin_sync:
@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Устанавливаем только то, что реально нужно для твоего кода
+          # Только база: коннект, таблицы и шифрование для обновления сессии
           pip install garminconnect gspread google-auth requests garth jq pynacl
 
       - name: Run main.py
@@ -49,6 +49,7 @@ jobs:
               https://api.github.com/repos/${{ github.repository }}/actions/secrets/public-key)
             PUBLIC_KEY=$(echo $RESPONSE | jq -r .key)
             KEY_ID=$(echo $RESPONSE | jq -r .key_id)
+            # Шифруем сессию для обновления секрета
             ENCRYPTED_VALUE=$(python3 -c "import base64; from nacl import public; pub = public.PublicKey(base64.b64decode('$PUBLIC_KEY')); print(base64.b64encode(public.SealedBox(pub).encrypt('$SESSION_BASE64'.encode())).decode())")
             curl -s -X PUT -H "Authorization: Bearer ${{ secrets.MY_GITHUB_TOKEN }}" \
               -H "Content-Type: application/json" \
