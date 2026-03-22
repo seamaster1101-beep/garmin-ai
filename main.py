@@ -1,3 +1,6 @@
+import base64
+import tarfile
+import random
 import os
 import json
 import requests
@@ -15,75 +18,54 @@ GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS")
+GARMIN_SESSION = os.environ.get("GARMIN_SESSION") # Сюда прилетит архив из GitHub Secrets
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
-# now = datetime.now() # Временно комментируем текущее время
-##now = datetime.now() - timedelta(days=1) # Устанавливаем "вчера"
-##today_str = now.strftime("%Y-%m-%d")
 
-def update_or_append(sheet, date_str, row_data):
-    try:
-        col_values = sheet.col_values(1)
-        search_date = date_str.split(' ')[0] # Получаем только "ГГГГ-ММ-ДД"
-        found_idx = -1
-        for i, val in enumerate(col_values):
-            # Проверяем, что ячейка в таблице начинается с нашей даты
-            if str(val).startswith(search_date):
-                found_idx = i + 1
-                break
-        if found_idx != -1:
-            sheet.update(range_name=f"A{found_idx}", values=[row_data], value_input_option='USER_ENTERED')
-        else:
-            sheet.append_row(row_data, value_input_option='USER_ENTERED')
-    except Exception as e: 
-        print(f"Err gspread update: {e}")
-
-# --- ЛОГИН GARMIN (ВЕРСИЯ С МАСКИРОВКОЙ) ---
-#import time
-import random
-
+# --- ЛОГИН GARMIN (ИСПРАВЛЕННЫЙ) ---
 session_dir = "./.garth"
+
+# Распаковка сессии из секрета (чтобы избежать 401 и 429)
+if GARMIN_SESSION:
+    try:
+        with open("session.tar.gz", "wb") as f:
+            f.write(base64.b64decode(GARMIN_SESSION))
+        with tarfile.open("session.tar.gz", "r:gz") as tar:
+            tar.extractall()
+        print("✅ Сессия успешно извлечена из секретов GitHub")
+    except Exception as e:
+        print(f"⚠️ Не удалось распаковать сессию: {e}")
+
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
 
-# ⏳ Маскировка: случайная пауза перед стартом (от 5 до 15 секунд)
-print(f"⏳ Маскировка запуска... Ожидание {random.randint(5, 15)} сек.")
+# Маскировка запуска
+print(f"⏳ Маскировка... Ожидание {random.randint(5, 15)} сек.")
 time.sleep(random.randint(5, 15))
 
 try:
     if os.path.exists(session_dir) and os.listdir(session_dir):
-        print("✅ Файлы сессии найдены. Проверяем...")
+        print("✅ Файлы сессии найдены. Используем garth...")
         garth.resume(session_dir)
         gar.garth = garth.client
         
         if not gar.display_name:
-            print("⚠️ Сессия пустая. Ждем 30 сек перед входом по паролю...")
-            time.sleep(30) # Даем серверу остыть
+            print("⚠️ Сессия не подхватилась. Пробуем gar.login(session_dir)...")
             gar.login(session_dir)
         else:
-            print(f"🚀 Сессия подтверждена: {gar.display_name}")
+            print(f"🚀 Вход выполнен по сессии: {gar.display_name}")
     else:
-        print("🔑 Сессия не найдена. Первый вход...")
+        print("🔑 Сессия не найдена. Вход по логину/паролю...")
         gar.login(session_dir)
 
 except Exception as e:
+    print(f"🚨 Ошибка входа: {e}")
     if "429" in str(e):
-        print("⚠️ Обнаружен лимит 429. Ждем 2 минуты перед ПОВТОРНОЙ попыткой...")
-        time.sleep(120) # Ключевая пауза при блокировке
-    else:
-        print(f"⚠️ Ошибка сессии ({e}). Пауза 10 сек...")
-        time.sleep(10)
-    
-    try:
-        gar.login(session_dir)
-    except Exception as e2:
-        print(f"🚨 КРИТИЧЕСКАЯ ОШИБКА: {e2}")
-        raise e2
-
-if not gar.display_name:
-    raise ValueError("Display Name is None - Stopping script.")
+        print("⚠️ Лимит запросов (429). Скрипт остановлен, попробуйте позже.")
+    raise e
 
 # --- ИНИЦИАЛИЗАЦИЯ GOOGLE ---
+
 try:
     if not GOOGLE_CREDS_JSON:
         raise ValueError("Секрет GOOGLE_CREDS пуст!")
