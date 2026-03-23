@@ -43,13 +43,15 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 display_date = now.strftime("%d.%m.%Y")
 
-# --- 3. ЛОГИН (ФИКС) ---
+# --- 3. ЛОГИН (ФИКС + ВЫВОД СЕССИИ) ---
 session_dir = os.path.abspath("./.garth")
 os.makedirs(session_dir, exist_ok=True)
+
 if GARMIN_SESSION_BASE64:
     try:
         with open("session.tar.gz", "wb") as f: f.write(base64.b64decode(GARMIN_SESSION_BASE64))
         with tarfile.open("session.tar.gz", "r:gz") as tar: tar.extractall(path=".")
+        print("✅ Попытка загрузки сессии из секрета...")
     except: pass
 
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
@@ -57,11 +59,25 @@ try:
     if os.path.exists(os.path.join(session_dir, "oauth1_token.json")):
         garth.client.load(session_dir)
         gar.garth = garth.client
+        print("🚀 Вход выполнен по существующей СЕССИИ")
     else:
+        print("🔑 Сессии нет. Пробуем вход по ПАРОЛЮ...")
         human_delay()
         safe_call(gar.login)
         garth.save(session_dir)
-except Exception as e: print(f"🚨 Login Error: {e}"); raise e
+        print("🚀 Вход по паролю успешен!")
+        
+        # ГЕНЕРИРУЕМ НОВЫЙ ТОКЕН ДЛЯ ТЕБЯ:
+        import io, tarfile
+        out = io.BytesIO()
+        with tarfile.open(fileobj=out, mode="w:gz") as tar:
+            tar.add(session_dir, arcname=".garth")
+        new_session_b64 = base64.b64encode(out.getvalue()).decode()
+        print(f"\n🔑 СКОПИРУЙ ЭТО В GARMIN_SESSION_BASE64:\n{new_session_b64}\n")
+
+except Exception as e: 
+    print(f"🚨 Login Error: {e}")
+    raise e
 
 # --- 4. СБОР ДАННЫХ (ТОЛЬКО ПРОВЕРЕННЫЕ МЕТОДЫ) ---
 human_delay()
