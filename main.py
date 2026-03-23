@@ -1,4 +1,4 @@
-import base64, tarfile, os, json, requests, garth, time, random
+import base64, tarfile, os, json, requests, garth, time, random, io
 from datetime import datetime, timedelta
 from garminconnect import Garmin
 import gspread
@@ -6,7 +6,7 @@ from google.oauth2.service_account import Credentials
 
 # --- 1. ЗАЩИТА И ПАУЗЫ ---
 def human_delay():
-    wait = random.uniform(6.5, 10.5)
+    wait = random.uniform(7.5, 12.5) # Чуть увеличил для надежности
     print(f"⏳ Пауза {round(wait, 1)} сек...")
     time.sleep(wait)
 
@@ -15,7 +15,7 @@ def safe_call(func, *args, **kwargs):
         try: return func(*args, **kwargs)
         except Exception as e:
             if "429" in str(e):
-                wait = 60 * (attempt + 1)
+                wait = 90 * (attempt + 1)
                 print(f"⚠️ Garmin 429. Ждем {wait}с...")
                 time.sleep(wait)
             else: raise e
@@ -26,9 +26,11 @@ def update_or_append(sheet, date_str, row_data):
         cell = sheet.find(date_str)
         if cell:
             sheet.update(range_name=f"A{cell.row}:Z{cell.row}", values=[row_data], value_input_option="USER_ENTERED")
+            print(f"🔄 Обновлено в {sheet.title}: {date_str}")
             return
     except: pass
     sheet.append_row(row_data, value_input_option="USER_ENTERED")
+    print(f"➕ Добавлено в {sheet.title}: {date_str}")
 
 # --- 2. CONFIG ---
 GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
@@ -51,7 +53,6 @@ if GARMIN_SESSION_BASE64:
     try:
         with open("session.tar.gz", "wb") as f: f.write(base64.b64decode(GARMIN_SESSION_BASE64))
         with tarfile.open("session.tar.gz", "r:gz") as tar: tar.extractall(path=".")
-        print("✅ Попытка загрузки сессии из секрета...")
     except: pass
 
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
@@ -68,7 +69,6 @@ try:
         print("🚀 Вход по паролю успешен!")
         
         # ГЕНЕРИРУЕМ НОВЫЙ ТОКЕН ДЛЯ ТЕБЯ:
-        import io, tarfile
         out = io.BytesIO()
         with tarfile.open(fileobj=out, mode="w:gz") as tar:
             tar.add(session_dir, arcname=".garth")
@@ -79,7 +79,7 @@ except Exception as e:
     print(f"🚨 Login Error: {e}")
     raise e
 
-# --- 4. СБОР ДАННЫХ (ТОЛЬКО ПРОВЕРЕННЫЕ МЕТОДЫ) ---
+# --- 4. СБОР ДАННЫХ (MORNING + ACTIVITIES) ---
 human_delay()
 summary = safe_call(gar.get_user_summary, today_str) or {}
 human_delay()
@@ -114,7 +114,7 @@ for d in [today_str, yesterday_str]:
         morning_ts = datetime.fromtimestamp(raw_ts/1000).strftime("%Y-%m-%d %H:%M") if isinstance(raw_ts, (int, float)) else str(raw_ts).replace("T", " ")[:16]
         break
 
-# --- 5. АНАЛИТИКА И GOOGLE ---
+# --- 5. АНАЛИТИКА (CTL/ATL) ---
 creds_dict = json.loads(GOOGLE_CREDS_JSON)
 creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
 ss = gspread.authorize(creds).open("Garmin_Data")
@@ -122,7 +122,6 @@ act_sheet = ss.worksheet("Activities")
 all_acts = act_sheet.get_all_values()
 existing_ids = {r[15] for r in all_acts if len(r) > 15}
 
-# CTL/ATL/TSB
 tss_history = [float(str(r[13]).replace(',', '.')) for r in all_acts[1:][-60:] if len(r) > 13 and r[13]]
 def get_ewma(data, days):
     if not data: return 0
@@ -132,6 +131,15 @@ def get_ewma(data, days):
     return round(res, 1)
 ctl, atl = get_ewma(tss_history, 42), get_ewma(tss_history, 7)
 tsb = round(ctl - atl, 1)
+
+# Readiness Score
+rd_score = 2.5
+if hrv and int(hrv) > 65: rd_score += 1.0
+if r_hr and int(r_hr) < 50: rd_score += 0.5
+if slp_h and float(slp_h) >= 7.5: rd_score += 1.0
+if tsb < -20: rd_score -= 1.0
+rd_score = max(0, min(5, round(rd_score, 1)))
+rd_icon = "🔥" if rd_score >= 4 else "🟢" if rd_score >= 3 else "🟡" if rd_score >= 2 else "🟠" if rd_score >= 1 else "🔴"
 
 # --- 6. ТРЕНИРОВКИ ---
 human_delay()
@@ -154,10 +162,8 @@ for a in latest_acts:
         ]
         new_acts_to_log.append(row)
 
-# --- 7. РЕЗУЛЬТАТ ---
-morning_row = [f"'{morning_ts}", weight, fat, muscle, r_hr, hrv, summary.get("bodyBatteryHighestValue", ""), slp_sc, slp_h, 63, 52] # 52 - fit_age заглушка
-steps = summary.get('totalSteps', 0)
-daily_row = [f"'{today_str}", steps, round(steps * 0.000762, 2), int(summary.get("activeKilocalories", 0) + summary.get("bmrKilocalories", 0)), r_hr, summary.get("bodyBatteryMostRecentValue", "")]
+# --- 7. ОТЧЕТЫ И ИИ ---
+morning_row = [f"'{morning_ts}", weight, fat, muscle, r_hr, hrv, summary.get("bodyBatteryHighestValue", ""), slp_sc, slp_h, 63, 50.0] # 50.0 - Fit Age заглушка
 
 log_sheet = ss.worksheet("AI_Log")
 morning_done = any(today_str in str(r[0]) and "Morning" in str(r[1]) for r in log_sheet.get_all_values()[-10:])
@@ -165,20 +171,21 @@ morning_done = any(today_str in str(r[0]) and "Morning" in str(r[1]) for r in lo
 report_type, prompt = "", ""
 if new_acts_to_log:
     report_type, act = "Activity", new_acts_to_log[0]
-    prompt = f"Ты АРНИ. Разбери тренировку: {act[1]}, {act[3]}км, NP {act[12]}W, TSS {act[13]}. TSB {tsb}. Будь краток."
+    prompt = f"Ты АРНИ. Разбери тренировку: {act[1]}, {act[3]}км, NP {act[12]}W, TSS {act[13]}. TSB {tsb}. Будь профессионален и краток."
 elif not morning_done:
     report_type = "Morning"
-    prompt = f"Ты АРНИ. Утро: HRV {hrv}, RHR {r_hr}, Сон {slp_h}ч, BB {morning_row[6]}. CTL {ctl}, TSB {tsb}. Оцени день."
+    prompt = f"Ты АРНИ. Утро: HRV {hrv}, RHR {r_hr}, Сон {slp_h}ч, BB {morning_row[6]}. CTL {ctl}, TSB {tsb}. Готовность {rd_score}/5. Оцени день."
 
 if prompt:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
     ai_text = res.json()["candidates"][0]["content"]["parts"][0]["text"].replace('*', '')
     
-    requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": f"<b>{report_type}</b>\n\n{ai_text}\n\n📊 TSB: {tsb}", "parse_mode": "HTML"})
+    msg = f"<b>{report_type} Report</b>\n\n{ai_text}\n\n📊 TSB: {tsb} | Readiness: {rd_score}/5 {rd_icon}"
+    requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"})
+    
     log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, ai_text])
     update_or_append(ss.worksheet("Morning"), today_str, morning_row)
-    update_or_append(ss.worksheet("Daily"), today_str, daily_row)
     for r in reversed(new_acts_to_log): act_sheet.append_row(r, value_input_option="USER_ENTERED")
 
-print("✅ Done.")
+print("✅ Workflow complete.")
