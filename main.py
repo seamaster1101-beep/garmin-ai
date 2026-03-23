@@ -45,19 +45,20 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 display_date = now.strftime("%d.%m.%Y")
 
-# --- ЛОГИН GARMIN (УЛЬТИМАТИВНЫЙ) ---
+# --- ЛОГИН GARMIN (КОРРЕКТНЫЙ) ---
 session_dir = os.path.abspath("./.garth")
 os.makedirs(session_dir, exist_ok=True)
 
+# 1. Пробуем восстановить из секрета, если он есть
 if GARMIN_SESSION_BASE64:
     try:
         with open("session.tar.gz", "wb") as f:
             f.write(base64.b64decode(GARMIN_SESSION_BASE64))
         with tarfile.open("session.tar.gz", "r:gz") as tar:
             tar.extractall(path=".")
-        print(f"✅ Сессия извлечена в: {session_dir}")
+        print(f"✅ Сессия извлечена")
     except Exception as e:
-        print(f"⚠️ Секрет сессии битый, игнорируем: {e}")
+        print(f"⚠️ Секрет не подошел, идем дальше")
 
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
 
@@ -65,21 +66,20 @@ try:
     token_file = os.path.join(session_dir, "oauth1_token.json")
     
     if os.path.exists(token_file):
-        print("📂 Файл сессии найден, загружаем...")
+        print("📂 Загрузка из файла...")
         garth.client.load(session_dir)
         gar.garth = garth.client
-        print(f"🚀 Вход по сессии: {gar.display_name}")
+        print(f"🚀 Вход выполнен (сессия)")
     else:
-        print("🔑 Сессия не найдена. Чистый вход по паролю...")
+        print("🔑 Файлов нет. Вход по паролю...")
         human_delay()
-        # ВНИМАНИЕ: вызываем login() БЕЗ аргументов, чтобы она не искала файлы
         safe_call(gar.login) 
-        # А вот ТЕПЕРЬ сохраняем свежие токены в папку
-        gar.garth.save(session_dir)
-        print(f"🚀 Вход по паролю выполнен: {gar.display_name}")
+        # ПРАВИЛЬНЫЙ ВЫЗОВ СОХРАНЕНИЯ:
+        garth.save(session_dir) 
+        print(f"🚀 Вход выполнен (пароль). Сессия сохранена в {session_dir}")
 
 except Exception as e:
-    print(f"🚨 Ошибка входа: {e}")
+    print(f"🚨 Ошибка: {e}")
     raise e
     
 # --- ФУНКЦИЯ ДЛЯ ТАБЛИЦ (БРОНЕБОЙНАЯ ВЕРСИЯ) ---
