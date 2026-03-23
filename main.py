@@ -98,6 +98,7 @@ except Exception as e:
 
 # --- 1. ПЕРВИЧНЫЕ ДАННЫЕ (Объявляем всё здесь) ---
 summary = gar.get_user_summary(today_str) or {}
+time.sleep(random.randint(5, 10)) # <--- ВСТАВЬ СЮДА (между summary и hrv)
 hrv_res = gar.get_hrv_data(today_str) or {}
 hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 r_hr = summary.get("restingHeartRate") or ""
@@ -105,6 +106,7 @@ r_hr = summary.get("restingHeartRate") or ""
 # --- 2. ВЕС, ЖИР, МЫШЦЫ (На основе твоего лога S2) ---
 weight, fat, muscle = "", "", ""
 try:
+    time.sleep(random.randint(4, 7)) # <--- ВСТАВЬ СЮДА (перед запросом веса)
     w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
     weights = w_data.get('dateWeightList', [])
     if weights:
@@ -131,6 +133,7 @@ slp_sc, slp_h = "", ""
 
 for d in [today_str, yesterday_str]:
     try:
+        time.sleep(random.randint(5, 8)) # <--- ВСТАВЬ СЮДА (внутри цикла перед запросом)
         sleep_data = gar.get_sleep_data(d) or {}
         dto = sleep_data.get("dailySleepDTO") or {}
         if dto and dto.get("sleepTimeSeconds", 0) > 0:
@@ -219,6 +222,7 @@ daily_row = [
 # --- 2. ACTIVITIES ---
 activities_to_log = []
 try:
+    time.sleep(random.randint(6, 12)) # <--- ВСТАВЬ СЮДА (перед получением списка тренировок)
     latest_activities = gar.get_activities(0, 5) or []
     for a in latest_activities:
         start_local = a.get("startTimeLocal", "")
