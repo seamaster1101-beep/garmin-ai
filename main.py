@@ -22,6 +22,7 @@ GARMIN_SESSION_BASE64 = os.environ.get("GARMIN_SESSION_BASE64")
 
 now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
+display_date = now.strftime("%d.%m.%Y")
 
 # --- ЛОГИН GARMIN (ОБНОВЛЕННЫЙ) ---
 session_dir = os.path.abspath("./.garth")
@@ -151,14 +152,14 @@ for d in [today_str, yesterday_str]:
 # --- 4. FITNESS AGE (Логика на основе биомаркеров Garmin) ---
 fit_age = ""
 try:
-    actual_age = 62
+    actual_age = 63
     # 1. Влияние пульса покоя (RHR)
     # Garmin хвалит за 45-46. Если RHR <= 48, это отличный бонус.
     rhr_val = int(r_hr) if r_hr else 60
     rhr_impact = (rhr_val - 55) * 0.4  # Чем ниже 55, тем моложе
     
     # 2. Влияние жира (Body Fat)
-    # У тебя 18.3%, что для 62 лет — атлетический уровень.
+    # У тебя 18.3%, что для 63 лет — атлетический уровень.
     fat_val = float(fat) if fat else 25
     fat_impact = (fat_val - 22) * 0.5  # Норма около 22%, всё что ниже — молодит
     
@@ -172,13 +173,13 @@ try:
     # Ограничиваем разумными пределами (как у Garmin)
     fit_age = round(max(45, min(actual_age + 5, calculated)), 1)
 except:
-    fit_age = "62"
+    fit_age = "63"
         
 # --- 5. ФОРМИРОВАНИЕ СТРОК (Версия на базе рабочего кода 15/03) ---
 
 # 1. Значения для Morning (Максимальный заряд за утро)
 morning_bb_max = summary.get("bodyBatteryHighestValue") or summary.get("bodyBatteryMostRecentValue", "")
-real_age = 62 
+real_age = 63 
 
 morning_row = [
     f"'{morning_ts}", 
@@ -336,83 +337,71 @@ except Exception as e:
     ctl = atl = tsb = 0
     ftp_est = "N/A"    
         
-# --- 2. РАСЧЕТ ГОТОВНОСТИ (УЛЬТИМАТИВНАЯ ВЕРСИЯ) ---
-    readiness_score = 0
+# --- 2. РАСЧЕТ ГОТОВНОСТИ (СБАЛАНСИРОВАННАЯ ВЕРСИЯ) ---
+    # Базовая готовность 2.5 (нейтрально), дальше плюсуем или минусуем
+    readiness_score = 2.5
     
-    # 1. HRV
+    # 1. HRV (Вес: 1.0)
     try:
         hrv_val = int(float(morning_row[5])) if morning_row[5] not in ["", None] else 0
-        if hrv_val > 70: readiness_score += 2
-        elif hrv_val > 50: readiness_score += 1
-        elif hrv_val < 45: readiness_score -= 2
+        if hrv_val > 75: readiness_score += 1.0
+        elif hrv_val > 65: readiness_score += 0.5
+        elif hrv_val < 45: readiness_score -= 1.0
     except: pass
 
-    # 2. Пульс покоя (RHR)
+    # 2. Пульс покоя (RHR) (Вес: 0.5)
     try:
         rhr_val = int(float(morning_row[4])) if morning_row[4] not in ["", None] else 0
-        if rhr_val > 0:
-            if rhr_val < 55: readiness_score += 1
-            elif rhr_val > 60: readiness_score -= 1
+        if 0 < rhr_val < 50: readiness_score += 0.5
+        elif rhr_val > 60: readiness_score -= 0.5
     except: pass
 
-    # 3. Сон
+    # 3. Сон (Вес: 1.5) - делаем мягче
     try:
         sleep_hrs = float(morning_row[8]) if morning_row[8] not in ["", None] else 0
-        if sleep_hrs > 0:
-            if sleep_hrs >= 7.5: readiness_score += 2
-            elif sleep_hrs >= 6.5: readiness_score += 1
-            elif sleep_hrs < 6.0: readiness_score -= 2
+        if sleep_hrs >= 7.5: readiness_score += 1.0
+        elif sleep_hrs < 6.0: readiness_score -= 1.0 # Раньше было -2, это слишком
     except: pass
 
-    # 4. Body Battery
+    # 4. Body Battery (Вес: 0.5)
     try:
         bb_val = int(float(morning_row[6])) if morning_row[6] not in ["", None] else 0
-        if bb_val > 0:
-            if bb_val > 70: readiness_score += 1
-            elif bb_val < 40: readiness_score -= 1
+        if bb_val > 80: readiness_score += 0.5
+        elif bb_val < 40: readiness_score -= 0.5
     except: pass
 
-    # 5. Контроль перегрузки (Load Ratio ATL/CTL)
+    # 5. Ограничитель по перегрузке (TSB)
     try:
-        c_val = float(ctl) if ctl and str(ctl).strip() not in ["", "N/A", "None"] else 0
-        a_val = float(atl) if atl and str(atl).strip() not in ["", "N/A", "None"] else 0
-        if c_val > 0:
-            load_ratio = a_val / c_val
-            if load_ratio > 2.0: readiness_score -= 1
-            elif load_ratio < 0.8: readiness_score += 1 
+        t_val = float(tsb) if tsb and str(tsb).strip() not in ["", "N/A", "None"] else 0
+        if t_val < -25: readiness_score -= 1.5
+        elif t_val < -15: readiness_score -= 0.5
     except: pass
 
-    # 6. ЖЕСТКИЙ ограничитель по TSB
-    try:
-        if tsb and str(tsb).strip() not in ["", "N/A", "None"]:
-            t_val = float(tsb)
-            if t_val < -25: readiness_score = -3
-            elif t_val < -20: readiness_score = min(readiness_score, -2)
-            elif t_val < -15: readiness_score = min(readiness_score, 0)
-    except: pass
+    # Ограничиваем рамками 0 и 5
+    readiness_score = max(0, min(5, round(readiness_score, 1)))
 
     # --- Интерпретация текста ---
-    if readiness_score >= 3:
+    if readiness_score >= 4:
         readiness_text = "🔥 Отличная готовность — идеальный день для рекордов"
+        rd_icon = "🔥🏆"
+    elif readiness_score >= 3:
+        readiness_text = "👍 Хорошая готовность — можно тренироваться уверенно"
+        rd_icon = "🟢🟢"
+    elif readiness_score >= 2:
+        readiness_text = "⚠️ Средняя готовность — работаем, но без фанатизма"
+        rd_icon = "🟢🟡"
     elif readiness_score >= 1:
-        readiness_text = "👍 Хорошая готовность — можно тренироваться умеренно"
-    elif readiness_score >= -1:
-        readiness_text = "⚠️ Средняя готовность — будь осторожен с нагрузкой"
+        readiness_text = "🟠 Низкая готовность — лучше восстановиться"
+        rd_icon = "🟠"
     else:
-        readiness_text = "🚨 Низкая готовность — необходим отдых или легкая активность"
-
-    # Иконки
-    if readiness_score >= 4: rd_icon = "🔥🏆"
-    elif readiness_score >= 2: rd_icon = "🟢🟢"
-    elif readiness_score >= 1: rd_icon = "🟢🟡"
-    elif readiness_score == 0: rd_icon = "🟡"
-    elif readiness_score >= -2: rd_icon = "🟠"
-    else: rd_icon = "🔴"
+        readiness_text = "🚨 Критическая усталость — строгий отдых"
+        rd_icon = "🔴"
 
 # --- 3. AI BLOCK ---
 ai_advice = ""
 report_type = ""
 ftp_status = ""
+display_date = now.strftime("%d.%m.%Y") # Вынес сюда для надежности
 # Теперь используем уже открытый ss (из начала скрипта)
 log_sheet = ss.worksheet("AI_Log")
 last_logs = log_sheet.get_all_values()
@@ -427,50 +416,61 @@ if activities_to_log:
     # Проверка адекватности FTP (по совету ChatGPT)
     ftp_status = ""
     # Извлекаем NP из данных текущей тренировки
-    current_act_np = activities_to_log[0]['row'][12] 
+    current_act_np = act[12] # Это надежнее 
     if current_act_np and ftp_est and ftp_est != "N/A":
         try:
             if float(current_act_np) > float(ftp_est):
-                ftp_status = "⚠️ Внимание: Твоя мощность выше расчетного FTP! Ты сильнее, чем думает система!\n"
+                ftp_status = f"⚠️ Внимание: Твоя мощность (<code>{current_act_np}W</code>) выше расчетного FTP! Ты сильнее, чем думает система!\n"
         except:
             pass
             
     # Добавляем контекст формы и готовности в промпт
     prompt = (
-            f"Ты — опытный спортивный коуч. Проведи конструктивный разбор сессии: "
-            f"Тип: {act[1]}, Дистанция: {act[3]}км, Мощность: {act[10]}Вт (NP: {act[12]}Вт), "
-            f"TSS: {act[13]}, IF: {act[6]}. "
-            f"\nКонтекст атлета: Баланс нагрузки (TSB): {tsb}, CTL: {ctl}, ATL: {atl}, "
-            f"Готовность (Readiness Score): {readiness_score}/5, Состояние: {readiness_text}. "
-            f"\nИНСТРУКЦИИ: "
-            f"1. Используй цифры NP и TSS как факт нагрузки. "
-            f"2. Если тип 'Walking' или данные мощности отсутствуют, не критикуй — оценивай это как восстановление или активность по шагам. "
-            f"3. Учти соотношение ATL/CTL: если нагрузка (ATL) в 2 раза выше базы (CTL), предупреди о риске травм. "
-            f"4. Fit Age используй только как индикатор стресса, не делай на нем основной акцент. "
-            f"5. Если TSB сильно отрицательный, похвали за дисциплину, но жестко настаивай на отдыхе. "
-            f"\nТвой стиль: профессиональный, мотивирующий, но честный. "
-            f"В конце дай краткий совет на завтра. Без грубости."
+        f"Ты — опытный спортивный коуч по имени АРНИ. Проведи конструктивный разбор сессии."
+        f"\nСТРУКТУРА ОТЧЕТА:"
+        f"\n1. Заголовок: <b>Анализ тренировки от {display_date}</b>"
+        f"\n2. Используй жирные заголовки разделов."
+        f"\n3. В конце подпись: С уважением, <b>АРНИ</b>."
+        f"\n\nДанные сессии: Тип: {act[1]}, Дистанция: {act[3]}км, Мощность: {act[10]}Вт (NP: {act[12]}Вт), "
+        f"TSS: {act[13]}, IF: {act[6]}. "
+        f"\nКонтекст атлета: Баланс нагрузки (TSB): {tsb}, CTL: {ctl}, ATL: {atl}, "
+        f"Готовность (Readiness Score): {readiness_score}/5, Состояние: {readiness_text}. "
+        f"\nИНСТРУКЦИИ:"
+        f"\n1. Используй цифры NP (нормализованная мощность) и TSS как главный факт нагрузки."
+        f"\n2. Если тип 'Walking' или данные мощности отсутствуют, не критикуй — оценивай это как восстановление или активность по шагам."
+        f"\n3. Учти соотношение ATL/CTL: если нагрузка (ATL) в 2 раза выше базы (CTL), предупреди о риске травм."
+        f"\n4. Если TSB сильно отрицательный (ниже -20), похвали за дисциплину, но жестко настаивай на отдыхе."
+        f"\n5. Твой стиль: профессиональный, мотивирующий, но честный."
+        f"\n6. В конце дай краткий совет на завтра. Без грубости."
         )
 
 elif not morning_done_today:
     report_type = "Morning"
+    
     # Умный промпт для ИИ-аналитика
     prompt = (
-            f"Ты — элитный спортивный директор. Тон: профессиональный, без паники. "
-            f"Данные атлета: HRV {morning_row[5]}, Пульс {morning_row[4]}, Сон {morning_row[8]}ч, "
-            f"BB {morning_row[6]}, Fit Age {morning_row[10]}. "
-            f"Форма: CTL {ctl}, ATL {atl}, TSB {tsb}. "
-            f"Готовность: {readiness_score}/5. {ftp_status} "
-            f"\nИНСТРУКЦИЯ: "
-            f"1. Это УТРЕННИЙ отчет о состоянии покоя. Не ищи данные тренировок. "
-            f"2. Атлету 62 года (в мае будет 63). Его HRV > 70 и RHR < 50 — это ПОКАЗАТЕЛИ ЭЛИТНОЙ ФОРМЫ для этого возраста. Хвали за это! "
-            f"3. Атлет весит 87 кг, но это МЫШЦЫ (жир ~12%). Не предлагай худеть. "
-            f"4. TSB до -25 — это нормальный процесс загрузки. "
-            f"5. Fit Age сейчас {morning_row[10]}. Учитывая реальный возраст (62), это отличный результат. Интерпретируй любые колебания только как временный стресс. "
-            f"6. Оцени: нужно ли сегодня восстанавливаться или можно грузиться."
+        f"Ты — элитный спортивный директор по имени АРНИ. Тон: профессиональный, мотивирующий. "
+        f"\nСТРУКТУРА ОТЧЕТА (ОБЯЗАТЕЛЬНО):"
+        f"\n1. Заголовок: <b>Утренний Отчет о Состоянии Атлета</b>"
+        f"\n2. Дата: <b>{display_date}</b>"
+        f"\n3. Тема: Оценка утренней готовности к тренировочному дню."
+        f"\n4. Используй жирные заголовки разделов (<b>1. Сердечно-сосудистая система:</b> и т.д.)."
+        f"\n5. В конце подпись: С уважением, <b>АРНИ</b> (Твой Элитный Спортивный Директор)."
+        f"\n\nДанные атлета: HRV {morning_row[5]}, Пульс {morning_row[4]}, Сон {morning_row[8]}ч, "
+        f"BB {morning_row[6]}, Fit Age {morning_row[10]}. "
+        f"Форма: CTL {ctl}, ATL {atl}, TSB {tsb}. "
+        f"Готовность: {readiness_score}/5. {ftp_status} "
+        f"\nИНСТРУКЦИИ:"
+        f"\n1. Это УТРЕННИЙ отчет о состоянии покоя. Не ищи данные тренировок."
+        f"\n2. Атлету 63 года. Его HRV > 70 и RHR < 50 — это ПОКАЗАТЕЛИ ЭЛИТНОЙ ФОРМЫ для этого возраста. Обязательно хвали за это!"
+        f"\n3. Атлет весит 87 кг, но это МЫШЦЫ (жир ~18%). Категорически не предлагай худеть."
+        f"\n4. TSB до -25 — это нормальный процесс загрузки."
+        f"\n5. Fit Age {morning_row[10]} при реальных 63 годах — отличный результат. Интерпретируй колебания только как временный стресс."
+        f"\n6. Оцени: нужно ли сегодня восстанавливаться или можно грузиться."
         )
 else:
     ai_advice = "SKIP"
+    print("🚀 Отчеты уже отправлены, новых активностей нет.")
 
 # ... (дальше твой код с запросом к Gemini и отправкой в Telegram остается без изменений)
 
@@ -543,7 +543,7 @@ try:
     
     # --- 3. ОТПРАВКА В TELEGRAM И ЛОГ ---
     if ai_advice and ai_advice != "SKIP":
-        clean_ai = ai_advice.replace('*', '').replace('<', '&lt;').replace('>', '&gt;').strip()
+        clean_ai = ai_advice.replace('**', '').replace('*', '').strip()
         log_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), report_type, clean_ai])
         
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
