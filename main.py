@@ -11,6 +11,27 @@ from garminconnect import Garmin
 import gspread
 from google.oauth2.service_account import Credentials
 
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+def human_delay():
+    """Делает паузу как живой человек, чтобы Garmin не банил."""
+    wait_time = random.uniform(3.5, 7.5)
+    print(f"⏳ Пауза {round(wait_time, 1)} сек...")
+    time.sleep(wait_time)
+
+def safe_call(func, *args, **kwargs):
+    """Выполняет запрос к Garmin и, если видит ошибку 429, ждет и пробует еще раз."""
+    for attempt in range(2): # 2 попытки вполне хватит
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            if "429" in str(e):
+                wait = (attempt + 1) * 30
+                print(f"⚠️ Garmin перегружен (429). Ждем {wait} сек...")
+                time.sleep(wait)
+            else:
+                raise e # Если ошибка не 429, то пробрасываем её дальше
+    return None
+
 # --- CONFIG ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -41,29 +62,21 @@ gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
 
 try:
     if os.path.exists(session_dir):
-        # Показываем, что внутри, чтобы понять, нет ли там лишних папок
         print(f"📂 Содержимое папки сессии: {os.listdir(session_dir)}")
-        
-        # Принудительная загрузка
-        garth.client.load(session_dir)
+        # Загружаем сессию через защиту
+        safe_call(garth.client.load, session_dir)
         gar.garth = garth.client
-        
-        if gar.display_name:
-            print(f"🚀 Вход по сессии: {gar.display_name}")
-        else:
-            print("⚠️ Сессия загружена, но display_name пустой. Пробуем login()...")
-            gar.login(session_dir)
-            print(f"🚀 Вход после обновления: {gar.display_name}")
+        print("🚀 Вход по сессии выполнен")
     else:
         print("🔑 Сессия не найдена. Вход по паролю...")
-        gar.login(session_dir)
-        print(f"🚀 Вход выполнен: {gar.display_name}")
+        human_delay() # Пауза перед вводом пароля
+        safe_call(gar.login, session_dir)
+        print("🚀 Вход по паролю выполнен")
 
 except Exception as e:
     print(f"🚨 Ошибка входа: {e}")
-    # Если это 429, мы хотя бы будем знать на каком этапе
     raise e
-
+    
 # --- ФУНКЦИЯ ДЛЯ ТАБЛИЦ (БРОНЕБОЙНАЯ ВЕРСИЯ) ---
 def update_or_append(sheet, date_str, row_data):
     """Обновляет строку, если дата уже есть, или добавляет новую."""
@@ -97,20 +110,24 @@ except Exception as e:
     raise e
 
 # --- 1. ПЕРВИЧНЫЕ ДАННЫЕ (Объявляем всё здесь) ---
-summary = gar.get_user_summary(today_str) or {}
-time.sleep(random.randint(5, 10)) # <--- ВСТАВЬ СЮДА (между summary и hrv)
-hrv_res = gar.get_hrv_data(today_str) or {}
+human_delay() # Пауза перед первым запросом
+summary = safe_call(gar.get_user_summary, today_str) or {}
+
+human_delay() # Пауза между summary и hrv (как ты и просил)
+hrv_res = safe_call(gar.get_hrv_data, today_str) or {}
+
 hrv = hrv_res.get("hrvSummary", {}).get("lastNightAvg") or ""
 r_hr = summary.get("restingHeartRate") or ""
 
 # --- 2. ВЕС, ЖИР, МЫШЦЫ (На основе твоего лога S2) ---
 weight, fat, muscle = "", "", ""
 try:
-    time.sleep(random.randint(4, 7)) # <--- ВСТАВЬ СЮДА (перед запросом веса)
-    w_data = gar.get_body_composition((now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
+    human_delay() # Пауза перед запросом веса (как в твоем оригинале)
+    w_data = safe_call(gar.get_body_composition, (now - timedelta(days=3)).strftime("%Y-%m-%d"), today_str) or {}
+    
     weights = w_data.get('dateWeightList', [])
     if weights:
-        # Берем самый свежий замер (за 15.03)
+        # Твоя логика: берем самый свежий замер
         actual_entry = max(weights, key=lambda x: x.get('sampleTime', x.get('date', 0)))
         
         # Вес: 88080.0 -> 88.1
@@ -123,33 +140,41 @@ try:
         raw_m = actual_entry.get('muscleMass')
         if raw_m:
             muscle = round(float(raw_m) / 1000, 1)
+            
 except Exception as e:
     print(f"Ошибка парсинга весов: {e}")
 
-# --- 3. СОН И ВРЕМЯ (Твой рабочий утренний алгоритм) ---
+# --- 3. СОН И ВРЕМЯ (Твой рабочий утренний алгоритм + Защита) ---
 yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 morning_ts = f"{today_str} 08:00"
 slp_sc, slp_h = "", ""
 
 for d in [today_str, yesterday_str]:
     try:
-        time.sleep(random.randint(5, 8)) # <--- ВСТАВЬ СЮДА (внутри цикла перед запросом)
-        sleep_data = gar.get_sleep_data(d) or {}
+        # 1. Используем нашу новую паузу вместо обычного sleep
+        human_delay() 
+        
+        # 2. Оборачиваем запрос в safe_call
+        sleep_data = safe_call(gar.get_sleep_data, d) or {}
+        
         dto = sleep_data.get("dailySleepDTO") or {}
         if dto and dto.get("sleepTimeSeconds", 0) > 0:
             slp_h = round(float(dto.get("sleepTimeSeconds")) / 3600, 1)
+            
             # Тот самый поиск Score, который у тебя работал
             scores = dto.get("sleepScores") or {}
             slp_sc = scores.get("overall", {}).get("value") or dto.get("sleepScore") or ""
             
             raw_ts = dto.get("sleepEndTimestampLocal")
             if raw_ts:
+                # Твоя проверка на тип данных (число или строка ISO)
                 if isinstance(raw_ts, (int, float)):
                     morning_ts = datetime.fromtimestamp(raw_ts / 1000).strftime("%Y-%m-%d %H:%M")
                 else:
                     morning_ts = str(raw_ts).replace("T", " ")[:16]
             break # Нашли данные — выходим из цикла
-    except:
+    except Exception as e:
+        print(f"⚠️ Ошибка в цикле сна для {d}: {e}")
         continue
 
 # --- 4. FITNESS AGE (Логика на основе биомаркеров Garmin) ---
@@ -219,21 +244,29 @@ daily_row = [
     r_hr, 
     current_bb # В Daily пишем актуальный заряд
 ]
-# --- 2. ACTIVITIES ---
+# --- 2. ACTIVITIES (Защищенный сбор) ---
 activities_to_log = []
 try:
-    time.sleep(random.randint(6, 12)) # <--- ВСТАВЬ СЮДА (перед получением списка тренировок)
-    latest_activities = gar.get_activities(0, 5) or []
+    # 1. Используем новую умную паузу вместо обычного time.sleep
+    human_delay() 
+    
+    # 2. Оборачиваем запрос в safe_call и запрашиваем 3 тренировки (этого достаточно для одного дня)
+    latest_activities = safe_call(gar.get_activities, 0, 3) or []
+    
     for a in latest_activities:
         start_local = a.get("startTimeLocal", "")
+        # Твоя проверка: берем только сегодняшние тренировки
         if not start_local.startswith(today_str): continue
         
         act_id = str(a.get("activityId"))
+        
+        # Мощность: NP или взвешенная средняя
         np_val = a.get('normPower') or a.get('weightedAveragePower', "")
         if_val = a.get('intensityFactor')
         tss_val = a.get('trainingStressScore')
         avg_pwr = a.get('avgPower', "")
         
+        # Твой расчет VI (Variability Index)
         vi_val = ""
         try:
             if np_val and avg_pwr and float(avg_pwr) > 0:
@@ -241,6 +274,7 @@ try:
         except:
             vi_val = ""
 
+        # Твое формирование строки для таблицы (индексы сохранены!)
         row_data = [
             start_local.replace("T", " ")[:16], 
             a.get('activityType', {}).get('typeKey', ''), 
@@ -253,15 +287,16 @@ try:
             round(float(a.get('aerobicTrainingEffect', 0)), 1), 
             a.get('calories', ""),
             avg_pwr, 
+            # Твой поиск каденса (велосипедный или общий)
             a.get('averageBikingCadenceInRevPerMinute') or a.get('averageBikingCadence') or "",
             round(float(np_val), 1) if np_val else "", 
             round(float(tss_val), 1) if tss_val else "", 
             vi_val, 
-            f"'{act_id}"
+            f"'{act_id}" # Твой апостроф для Google Sheets
         ]
         activities_to_log.append({"id": act_id, "row": row_data})
 
-    # Разворачиваем список собранных тренировок перед записью в таблицу
+    # Твой reverse для правильного порядка записи
     activities_to_log.reverse() 
 
 except Exception as e:
