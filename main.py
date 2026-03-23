@@ -45,36 +45,45 @@ now = datetime.now()
 today_str = now.strftime("%Y-%m-%d")
 display_date = now.strftime("%d.%m.%Y")
 
-# --- ЛОГИН GARMIN (ОБНОВЛЕННЫЙ) ---
+# --- ЛОГИН GARMIN (ЖЕЛЕЗОБЕТОННЫЙ) ---
 session_dir = os.path.abspath("./.garth")
+
+# Создаем папку ЗАРАНЕЕ, чтобы garth не ругался на отсутствие директории
+os.makedirs(session_dir, exist_ok=True)
 
 if GARMIN_SESSION_BASE64:
     try:
+        # Пытаемся реанимировать сессию из секрета
         with open("session.tar.gz", "wb") as f:
             f.write(base64.b64decode(GARMIN_SESSION_BASE64))
         with tarfile.open("session.tar.gz", "r:gz") as tar:
             tar.extractall(path=".")
         print(f"✅ Сессия извлечена в: {session_dir}")
     except Exception as e:
-        print(f"⚠️ Ошибка распаковки: {e}")
+        print(f"⚠️ Секрет сессии битый или пустой, игнорируем: {e}")
 
 gar = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
 
 try:
-    if os.path.exists(session_dir):
-        print(f"📂 Содержимое папки сессии: {os.listdir(session_dir)}")
-        # Загружаем сессию через защиту
-        safe_call(garth.client.load, session_dir)
+    # Проверяем наличие файла токена. Если его нет — load() выдаст FileNotFoundError
+    token_file = os.path.join(session_dir, "oauth1_token.json")
+    
+    if os.path.exists(token_file):
+        print("📂 Файл сессии найден, загружаем...")
+        garth.client.load(session_dir)
         gar.garth = garth.client
-        print("🚀 Вход по сессии выполнен")
+        print(f"🚀 Вход по сессии выполнен: {gar.display_name}")
     else:
+        # Если файла нет — идем по чистому пути через пароль
         print("🔑 Сессия не найдена. Вход по паролю...")
-        human_delay() # Пауза перед вводом пароля
+        human_delay() 
+        # safe_call тут нужен, если на логине вылетит 429
         safe_call(gar.login, session_dir)
-        print("🚀 Вход по паролю выполнен")
+        print(f"🚀 Вход по паролю выполнен: {gar.display_name}")
 
 except Exception as e:
-    print(f"🚨 Ошибка входа: {e}")
+    print(f"🚨 Ошибка входа (даже по паролю): {e}")
+    # Если и тут упали — значит пароль/почта или бан
     raise e
     
 # --- ФУНКЦИЯ ДЛЯ ТАБЛИЦ (БРОНЕБОЙНАЯ ВЕРСИЯ) ---
