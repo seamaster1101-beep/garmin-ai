@@ -46,7 +46,8 @@ def get_session():
         gar = Garmin()
         gar.garth = garth.client
         # Проверка связи
-        gar.get_display_name()
+        # Проверка связи через профиль
+        gar.get_full_name()
         print("🚀 Успешный вход по СЕССИИ!")
         return gar
     except Exception as e:
