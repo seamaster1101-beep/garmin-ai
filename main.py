@@ -14,8 +14,10 @@ target_days = [now.strftime("%Y-%m-%d"), (now - timedelta(days=1)).strftime("%Y-
 def send_tg(message):
     if len(message) > 3900: message = message[:3900] + "\n\n...(обрезано)"
     try:
+        # Добавлен таймаут 10 сек, чтобы процесс не подвисал
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"},
+                      timeout=10)
     except: pass
 
 def escape_md(text):
@@ -54,12 +56,13 @@ def get_session():
     except: return None
 
 # --- 2. ЗАПУСК ---
-print(f"--- Запуск финальной версии: {now.strftime('%H:%M')} ---")
+print(f"--- Запуск ULTRA-STABLE версии: {now.strftime('%H:%M')} ---")
 gar = get_session()
 
 if gar:
     try:
-        time.sleep(random.uniform(10, 20)) # Удлиненная пауза для безопасности
+        # Осторожная пауза перед единственным выстрелом
+        time.sleep(random.uniform(10, 20))
         activities = gar.get_activities(0, 4) 
         
         report_parts = []
@@ -77,7 +80,7 @@ if gar:
 
                 info = f"🕒 *{date_label}* ({start_time[11:16]}) — {name}\n📏 {dist} км | ⏱ {dur} мин | 💓 HR: {hr}\n📊 Load: {load}"
                 report_parts.append(info)
-                if len(raw_data_for_ai) < 400: # Лимит для промпта
+                if len(raw_data_for_ai) < 400:
                     raw_data_for_ai += f"{date_label}: {name}, load {load}; "
 
         if report_parts:
@@ -88,9 +91,9 @@ if gar:
                 full_report += f"\n\n🤖 *АРНИ:* _{escape_md(ai_comment)}_"
             
             send_tg(full_report)
-            print("✅ Успех!")
+            print("✅ Отчет в Telegram отправлен.")
         else:
-            print("ℹ️ Нет активностей за 48ч.")
+            print("ℹ️ Активностей за сегодня/вчера не найдено.")
 
     except Exception as e:
         if "429" in str(e):
