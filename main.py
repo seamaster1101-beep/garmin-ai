@@ -5,104 +5,139 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import google.generativeai as genai
 from datetime import datetime, timedelta
-import warnings
+import sys
 
-warnings.filterwarnings("ignore", category=FutureWarning)
+# --- CONFIG ---
+def get_env(name):
+    val = os.environ.get(name)
+    if not val:
+        print(f"❌ Нет переменной {name}")
+        sys.exit(1)
+    return val
 
-# --- КОНФИГУРАЦИЯ ---
-try:
-    STRAVA_CLIENT_ID = os.environ['STRAVA_CLIENT_ID']
-    STRAVA_CLIENT_SECRET = os.environ['STRAVA_CLIENT_SECRET']
-    STRAVA_REFRESH_TOKEN = os.environ['STRAVA_REFRESH_TOKEN']
-    TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
-    TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-    GEMINI_API_KEY = os.environ['GEMINI_API_KEY']
-    GOOGLE_CREDS_JSON = os.environ['GOOGLE_CREDS']
-except KeyError as e:
-    print(f"❌ Ошибка: Отсутствует секрет {e}")
-    exit(1)
+CLIENT_ID = get_env('STRAVA_CLIENT_ID')
+CLIENT_SECRET = get_env('STRAVA_CLIENT_SECRET')
+REFRESH_TOKEN = get_env('STRAVA_REFRESH_TOKEN')
+TELEGRAM_BOT_TOKEN = get_env('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
+GEMINI_API_KEY = get_env('GEMINI_API_KEY')
+GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
-# --- ФУНКЦИИ ---
-
-def get_strava_token():
-    print("Step 1: Авторизация в Strava...")
-    url = "https://www.strava.com/oauth/token"
-    payload = {
-        'client_id': STRAVA_CLIENT_ID,
-        'client_secret': STRAVA_CLIENT_SECRET,
-        'refresh_token': STRAVA_REFRESH_TOKEN,
-        'grant_type': 'refresh_token'
-    }
-    res = requests.post(url, data=payload)
-    data = res.json()
-    if 'access_token' not in data:
-        raise Exception(f"Strava Auth Failed: {data}")
-    print("✅ Токен Strava получен.")
-    return data['access_token']
-
-def get_strava_activities(access_token):
-    print("Step 2: Загрузка тренировок...")
-    after = int((datetime.now() - timedelta(days=2)).timestamp())
-    url = f"https://www.strava.com/api/v3/athlete/activities?after={after}"
-    headers = {'Authorization': f'Bearer {access_token}'}
-    res = requests.get(url, headers=headers)
-    activities = res.json()
-    
-    detailed = []
-    for act in activities:
-        d_url = f"https://www.strava.com/api/v3/activities/{act['id']}"
-        d_res = requests.get(d_url, headers=headers).json()
-        detailed.append({
-            'name': d_res.get('name'),
-            'type': d_res.get('type'),
-            'watts': d_res.get('average_watts', 0),
-            'cadence': d_res.get('average_cadence', 0),
-            'hr': d_res.get('average_heartrate', 0)
-        })
-    print(f"✅ Найдено тренировок: {len(detailed)}")
-    return detailed
-
-def get_morning_data():
-    print("Step 3: Чтение Google Sheets...")
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    
-    # ВНИМАНИЕ: Проверь, что имя таблицы в Кавычках совпадает с реальностью!
+# --- TELEGRAM ---
+def send_tg(msg):
+    if len(msg) > 4000: msg = msg[:4000] + "..."
     try:
-        sheet = client.open("ArniData").worksheet("Morning") 
-        data = sheet.get_all_records()
-        print("✅ Данные из таблицы получены.")
-        return data[-1] if data else {}
-    except Exception as e:
-        print(f"❌ Ошибка Google Sheets: {e}")
-        return {"error": str(e)}
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=10
+        )
+    except Exception as e: print(f"TG Error: {e}")
 
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"})
+# --- STRAVA AUTH (БРОНЕБОЙНЫЙ) ---
+def get_strava_access():
+    print("🔄 Авторизация в Strava...")
+    try:
+        res = requests.post("https://www.strava.com/oauth/token", data={
+            'client_id': CLIENT_ID,
+            'client_secret': CLIENT_SECRET,
+            'refresh_token': REFRESH_TOKEN,
+            'grant_type': 'refresh_token'
+        }, timeout=15)
+        data = res.json()
+        
+        if res.status_code != 200:
+            print(f"❌ Ошибка Strava: {data}")
+            sys.exit(1)
+
+        # Проверка обновления рефреш-токена
+        new_refresh = data.get('refresh_token')
+        if new_refresh and new_refresh != REFRESH_TOKEN:
+            print(f"\n⚠️ СРОЧНО! НОВЫЙ REFRESH_TOKEN: {new_refresh}\n")
+            
+        return data["access_token"]
+    except Exception as e:
+        print(f"Critical Auth Error: {e}")
+        sys.exit(1)
+
+# --- АНАЛИТИКА МОЩНОСТИ ---
+def get_power_zones(token, activity_id, ftp=250):
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        res = requests.get(f"https://www.strava.com/api/v3/activities/{activity_id}/streams",
+                          headers=headers, params={"keys": "watts", "key_by_type": "true"}, timeout=10)
+        stream = res.json().get("watts", {}).get("data", [])
+        if not stream: return None
+        
+        zones = [0,0,0,0,0] # Z1-Z5
+        for w in stream:
+            if w < 0.55*ftp: zones[0]+=1
+            elif w < 0.75*ftp: zones[1]+=1
+            elif w < 0.90*ftp: zones[2]+=1
+            elif w < 1.05*ftp: zones[3]+=1
+            else: zones[4]+=1
+        total = sum(zones) or 1
+        return [round(z/total*100) for z in zones]
+    except: return None
+
+# --- СБОР ДАННЫХ ---
+def collect_strava_data(token):
+    headers = {"Authorization": f"Bearer {token}"}
+    res = requests.get("https://www.strava.com/api/v3/athlete/activities", 
+                      headers=headers, params={"per_page": 5}, timeout=15)
+    activities = res.json() if res.status_code == 200 else []
+    
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    today_data, yesterday_data = [], []
+
+    for a in activities:
+        a_id = a['id']
+        # Доп. детали (watts, cadence)
+        det = requests.get(f"https://www.strava.com/api/v3/activities/{a_id}", headers=headers).json()
+        
+        info = {
+            "name": a.get("name"),
+            "dist": round(a.get("distance",0)/1000, 2),
+            "time": round(a.get("moving_time",0)/60, 1),
+            "hr": a.get("average_heartrate"),
+            "pwr": det.get("average_watts"),
+            "load": det.get("suffer_score", 0),
+            "zones": get_power_zones(token, a_id)
+        }
+        
+        date = a.get("start_date_local", "")
+        if today_str in date: today_data.append(info)
+        elif yesterday_str in date: yesterday_data.append(info)
+            
+    return today_data, yesterday_data
+
+# --- GOOGLE SHEETS ---
+def get_morning_stats():
+    try:
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(GOOGLE_CREDS_JSON), scope)
+        client = gspread.authorize(creds)
+        sheet = client.open("ArniData").worksheet("Morning")
+        return sheet.get_all_records()[-1]
+    except Exception as e:
+        print(f"Sheets error: {e}")
+        return {}
 
 # --- MAIN ---
-
-try:
-    s_token = get_strava_token()
-    s_activities = get_strava_activities(s_token)
-    m_data = get_morning_data()
-
-    print("Step 4: Запрос к Gemini...")
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+def main():
+    print("🚀 Запуск АРНИ v2.5 Гибрид")
     
-    prompt = f"Ты АРНИ, ИИ-тренер. Проанализируй:\nУтро: {m_data}\nТренировки: {s_activities}\nДай короткий совет."
+    token = get_strava_access()
+    today, yesterday = collect_strava_data(token)
+    morning = get_morning_stats()
     
-    response = model.generate_content(prompt)
-    print("✅ Ответ от Gemini получен.")
-    
-    send_telegram(response.text)
-    print("🚀 Отчет отправлен в Telegram!")
+    if not today and not morning:
+        print("📭 Данных нет.")
+        return
 
-except Exception as e:
-    error_text = f"❌ Сбой системы АРНИ:\n{str(e)}"
-    print(error_text)
-    send_telegram(error_text)
+    # Расчет Score (интенсивность)
+    load_today = sum(a['load'] for a in today)
+    load_yesterday = sum(a['load'] for a in yesterday)
+    score
