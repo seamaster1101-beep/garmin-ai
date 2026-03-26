@@ -7,14 +7,14 @@ import google.generativeai as genai
 from datetime import datetime, timedelta
 import sys
 
-# --- CONFIG ---
 def get_env(name):
     val = os.environ.get(name)
     if not val:
-        print(f"❌ Нет переменной {name}")
+        print(f"❌ Ошибка: {name} не найден")
         sys.exit(1)
     return val
 
+# Настройки
 CLIENT_ID = get_env('STRAVA_CLIENT_ID')
 CLIENT_SECRET = get_env('STRAVA_CLIENT_SECRET')
 REFRESH_TOKEN = get_env('STRAVA_REFRESH_TOKEN')
@@ -23,121 +23,71 @@ TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
 GEMINI_API_KEY = get_env('GEMINI_API_KEY')
 GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
-# --- TELEGRAM ---
 def send_tg(msg):
-    if len(msg) > 4000: msg = msg[:4000] + "..."
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
-            timeout=10
-        )
-    except Exception as e: print(f"TG Error: {e}")
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                     json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+    except: pass
 
-# --- STRAVA AUTH (БРОНЕБОЙНЫЙ) ---
-def get_strava_access():
-    print("🔄 Авторизация в Strava...")
-    try:
-        res = requests.post("https://www.strava.com/oauth/token", data={
-            'client_id': CLIENT_ID,
-            'client_secret': CLIENT_SECRET,
-            'refresh_token': REFRESH_TOKEN,
-            'grant_type': 'refresh_token'
-        }, timeout=15)
-        data = res.json()
-        
-        if res.status_code != 200:
-            print(f"❌ Ошибка Strava: {data}")
-            sys.exit(1)
-
-        # Проверка обновления рефреш-токена
-        new_refresh = data.get('refresh_token')
-        if new_refresh and new_refresh != REFRESH_TOKEN:
-            print(f"\n⚠️ СРОЧНО! НОВЫЙ REFRESH_TOKEN: {new_refresh}\n")
-            
-        return data["access_token"]
-    except Exception as e:
-        print(f"Critical Auth Error: {e}")
-        sys.exit(1)
-
-# --- АНАЛИТИКА МОЩНОСТИ ---
-def get_power_zones(token, activity_id, ftp=250):
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        res = requests.get(f"https://www.strava.com/api/v3/activities/{activity_id}/streams",
-                          headers=headers, params={"keys": "watts", "key_by_type": "true"}, timeout=10)
-        stream = res.json().get("watts", {}).get("data", [])
-        if not stream: return None
-        
-        zones = [0,0,0,0,0] # Z1-Z5
-        for w in stream:
-            if w < 0.55*ftp: zones[0]+=1
-            elif w < 0.75*ftp: zones[1]+=1
-            elif w < 0.90*ftp: zones[2]+=1
-            elif w < 1.05*ftp: zones[3]+=1
-            else: zones[4]+=1
-        total = sum(zones) or 1
-        return [round(z/total*100) for z in zones]
-    except: return None
-
-# --- СБОР ДАННЫХ ---
-def collect_strava_data(token):
-    headers = {"Authorization": f"Bearer {token}"}
-    res = requests.get("https://www.strava.com/api/v3/athlete/activities", 
-                      headers=headers, params={"per_page": 5}, timeout=15)
-    activities = res.json() if res.status_code == 200 else []
+def main():
+    print("🚀 СТАРТ ОТЛАДКИ АРНИ")
     
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    # 1. Strava
+    print("🔐 Авторизация Strava...")
+    res = requests.post("https://www.strava.com/oauth/token", data={
+        'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
+        'refresh_token': REFRESH_TOKEN, 'grant_type': 'refresh_token'
+    })
+    token = res.json().get('access_token')
     
-    today_data, yesterday_data = [], []
-
-    for a in activities:
-        a_id = a['id']
-        # Доп. детали (watts, cadence)
-        det = requests.get(f"https://www.strava.com/api/v3/activities/{a_id}", headers=headers).json()
-        
-        info = {
-            "name": a.get("name"),
-            "dist": round(a.get("distance",0)/1000, 2),
-            "time": round(a.get("moving_time",0)/60, 1),
-            "hr": a.get("average_heartrate"),
-            "pwr": det.get("average_watts"),
-            "load": det.get("suffer_score", 0),
-            "zones": get_power_zones(token, a_id)
-        }
-        
-        date = a.get("start_date_local", "")
-        if today_str in date: today_data.append(info)
-        elif yesterday_str in date: yesterday_data.append(info)
-            
-    return today_data, yesterday_data
-
-# --- GOOGLE SHEETS ---
-def get_morning_stats():
+    activities = []
+    if token:
+        print("🏃‍♂️ Поиск тренировок...")
+        after = int((datetime.now() - timedelta(days=1)).timestamp())
+        r = requests.get("https://www.strava.com/api/v3/athlete/activities", 
+                        headers={"Authorization": f"Bearer {token}"}, params={"after": after})
+        activities = r.json()
+        print(f"Найдено тренировок: {len(activities)}")
+    
+    # 2. Google Sheets
+    print("📊 Чтение Google Sheets...")
+    morning = {}
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(GOOGLE_CREDS_JSON), scope)
         client = gspread.authorize(creds)
         sheet = client.open("ArniData").worksheet("Morning")
-        return sheet.get_all_records()[-1]
+        all_data = sheet.get_all_records()
+        
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        print(f"Ищем дату: {today_str}")
+        
+        for row in reversed(all_data):
+            # Проверяем, начинается ли колонка Date с нужной даты
+            if str(row.get('Date', '')).startswith(today_str):
+                morning = row
+                print(f"✅ Данные утра найдены: {morning}")
+                break
     except Exception as e:
-        print(f"Sheets error: {e}")
-        return {}
+        print(f"❌ Ошибка Sheets: {e}")
 
-# --- MAIN ---
-def main():
-    print("🚀 Запуск АРНИ v2.5 Гибрид")
-    
-    token = get_strava_access()
-    today, yesterday = collect_strava_data(token)
-    morning = get_morning_stats()
-    
-    if not today and not morning:
-        print("📭 Данных нет.")
+    if not activities and not morning:
+        print("😴 Данных за сегодня пока нет ни в Strava, ни в Таблице.")
         return
 
-    # Расчет Score (интенсивность)
-    load_today = sum(a['load'] for a in today)
-    load_yesterday = sum(a['load'] for a in yesterday)
-    score
+    # 3. AI
+    print("🧠 Запрос к Gemini...")
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    prompt = f"Ты АРНИ. Разбери день. Утро: {morning}, Тренировки: {activities}. Будь краток."
+    
+    try:
+        response = model.generate_content(prompt)
+        send_tg(f"🏋️ *ОТЧЕТ АРНИ*\n\n{response.text}")
+        print("✅ Готово! Сообщение отправлено.")
+    except Exception as e:
+        print(f"❌ Ошибка ИИ: {e}")
+
+if __name__ == "__main__":
+    main()
