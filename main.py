@@ -112,7 +112,7 @@ def main():
         pwr = get_power_label(a.get('average_watts'))
         act_summary += f"• {a.get('name')}: {dist}км | {pwr}\n"
 
-    # 4. AI Analysis (Универсальный способ)
+    # 4. AI Analysis (Стабильная версия)
     print("🧠 Gemini AI Analysis...")
     try:
         import google.generativeai as genai
