@@ -55,12 +55,20 @@ def get_morning_metrics(target_date):
     return {}
 
 def ask_arnie(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    # Стабильный URL v1 (Строка 58)
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    headers = {'Content-Type': 'application/json'}
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
-        if res.status_code == 429: return "Арнольд занят. Перелимит запросов."
-        return res.json()['candidates'][0]['content']['parts'][0]['text']
-    except: return "Связь с базой данных Скайнет прервана."
+        res = requests.post(url, json=payload, headers=headers, timeout=30)
+        if res.status_code == 429:
+            return "Арнольд отдыхает. Лимит запросов (429)."
+        data = res.json()
+        if 'candidates' in data and data['candidates']:
+            return data['candidates'][0]['content']['parts'][0]['text']
+        return f"АРНИ молчит (Код: {res.status_code})"
+    except Exception as e:
+        return f"Ошибка связи: {str(e)}"
 
 # --- MAIN ---
 def main():
