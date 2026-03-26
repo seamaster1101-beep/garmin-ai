@@ -3,7 +3,7 @@ import requests
 import json
 import gspread
 from google.oauth2.service_account import Credentials
-from google import genai
+import google.genai as genai
 from datetime import datetime, timedelta
 import sys
 
