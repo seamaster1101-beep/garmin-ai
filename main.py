@@ -12,7 +12,7 @@ def get_env(name):
         sys.exit(1)
     return val
 
-# ВСТАВЬ СВОЙ ID ТАБЛИЦЫ ЗДЕСЬ:
+# Твой ID таблицы
 SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4" 
 
 CLIENT_ID = get_env('STRAVA_CLIENT_ID')
@@ -29,18 +29,6 @@ def send_tg(msg):
                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
     except: pass
 
-# --- МОДУЛЬ АНАЛИТИКИ ---
-def calc_training_metrics(activities):
-    # Упрощенный расчет нагрузки (TSS) на базе HR и времени
-    # Для CTL/ATL нужно больше данных, делаем скользящее среднее за доступные дни
-    loads = [ (a.get('average_heartrate', 120) * (a.get('moving_time', 0)/60) / 100) for a in activities ]
-    if not loads: return 0, 0, 0
-    
-    atl = sum(loads[:7]) / 7  # Усталость (неделя)
-    ctl = sum(loads) / 42     # Форма (6 недель - аппроксимация)
-    tsb = ctl - atl           # Баланс (Ready to race?)
-    return round(ctl, 1), round(atl, 1), round(tsb, 1)
-
 def get_power_label(watts):
     if not watts: return "N/A"
     if watts < 150: return "Z1-Z2 (Easy)"
@@ -49,7 +37,7 @@ def get_power_label(watts):
 
 # --- ОСНОВНОЙ ЦИКЛ ---
 def main():
-    print("🚀 ARNI v3.0: SYSTEM ONLINE")
+    print("🚀 ARNI v3.1: SYSTEM ONLINE")
     
     # 1. Strava Auth & Data
     try:
@@ -61,12 +49,9 @@ def main():
         s_data = res.json()
         token = s_data.get('access_token')
         
-        # Лог нового рефреша на случай обновления
-        if s_data.get('refresh_token') and s_data.get('refresh_token') != REFRESH_TOKEN:
-            print(f"⚠️ NEW REFRESH TOKEN: {s_data.get('refresh_token')}")
-
         print("🏃 Fetching Activities...")
-        after = int((datetime.now() - timedelta(days=7)).timestamp()) # Берем неделю для метрик
+        # Берем данные за последние 7 дней для расчета нагрузки
+        after = int((datetime.now() - timedelta(days=7)).timestamp())
         r = requests.get("https://www.strava.com/api/v3/athlete/activities", 
                         headers={"Authorization": f"Bearer {token}"}, params={"after": after})
         all_activities = r.json() if isinstance(r.json(), list) else []
@@ -93,18 +78,32 @@ def main():
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
         records = sheet.get_all_records()
         
+        # Ищем сегодняшнюю строку
         for row in reversed(records):
             if today_str in str(row.get('Date', '')):
                 morning = row
-                print("✅ Morning data found.")
+                print(f"✅ Morning data found: HR {row.get('Resting_HR')}, HRV {row.get('HRV')}")
                 break
     except Exception as e:
         print(f"❌ Sheets Error: {e}")
 
-    # 3. Analytics
-    ctl, atl, tsb = calc_training_metrics(all_activities)
-    fitness_score = max(0, min(100, int(50 + tsb * 2)))
+    # 3. Analytics & Fitness Score
+    # Базовый расчет нагрузки на основе Strava
+    loads = [ (a.get('average_heartrate', 120) * (a.get('moving_time', 0)/60) / 100) for a in all_activities ]
+    atl = round(sum(loads) / 7, 1) if loads else 0
+    ctl = 12.7 # Временная константа, пока нет истории за 42 дня
+    tsb = round(ctl - atl, 1)
     
+    # Считаем Fitness Score на основе пульса и HRV из таблицы
+    score = 50
+    if morning.get('Resting_HR'):
+        # Идеальный пульс ~45-50. Если выше — штраф.
+        score -= (morning['Resting_HR'] - 45) * 2
+    if morning.get('HRV'):
+        # Идеальный HRV > 90.
+        score += (morning['HRV'] - 70) / 2
+        
+    fitness_score = max(5, min(100, int(score)))
     status = "Восстановление" if tsb > 5 else "Прогресс" if tsb > -10 else "ПЕРЕГРУЗ ⚠️"
     
     act_summary = ""
@@ -113,19 +112,19 @@ def main():
         pwr = get_power_label(a.get('average_watts'))
         act_summary += f"• {a.get('name')}: {dist}км | {pwr}\n"
 
-    # 4. AI Analysis
+    # 4. AI Analysis (Исправленный импорт)
     print("🧠 Gemini AI Analysis...")
     try:
         from google import genai
         client_ai = genai.Client(api_key=GEMINI_API_KEY)
         
-        prompt = f"""Ты - АРНИ, суровый тренер. Проанализируй данные:
-        Утро: {morning}
-        Тренировки сегодня: {act_summary}
-        Метрики: CTL(Форма)={ctl}, ATL(Усталость)={atl}, TSB(Баланс)={tsb}.
+        prompt = f"""Ты - АРНИ, суровый тренер из Терминатора. Проанализируй данные:
+        Утро: Пульс {morning.get('Resting_HR')}, HRV {morning.get('HRV')}.
+        Тренировки сегодня: {act_summary if act_summary else 'НЕТ ТРЕНИРОВОК! ЛЕНТЯЙ!'}
+        Метрики: Форма={ctl}, Усталость={atl}, Баланс={tsb}.
         Fitness Score: {fitness_score}/100. Статус: {status}.
         
-        Дай разбор: коротко, едко, в стиле Шварценеггера. Похвали за низкий пульс или отругай за лень. До 450 знаков."""
+        Дай разбор: коротко, едко, в стиле Шварценеггера. Похвали за пульс 45 или HRV 94, но напомни, что расслабляться нельзя. До 400 знаков."""
 
         response = client_ai.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         ai_text = response.text
