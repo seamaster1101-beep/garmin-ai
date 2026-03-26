@@ -52,7 +52,8 @@ def get_morning_metrics(target_date):
     return {}
 
 def ask_arnie(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # Единственный стабильный URL для бесплатного ключа
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {'Content-Type': 'application/json'}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
@@ -60,7 +61,8 @@ def ask_arnie(prompt):
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text']
         return f"АРНИ взял паузу (Ошибка {res.status_code})"
-    except: return "Связь с базой данных прервана."
+    except:
+        return "Связь с базой данных прервана."
 
 # --- MAIN ---
 def main():
