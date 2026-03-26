@@ -3,7 +3,6 @@ import requests
 import json
 from datetime import datetime, timedelta
 import sys
-import math
 
 # --- CONFIG ---
 def get_env(name):
@@ -23,7 +22,7 @@ TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
 GEMINI_API_KEY = get_env('GEMINI_API_KEY')
 GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
-FTP = 250  # ⚠️ Поставь свой реальный FTP
+FTP = 250  # ⚠️ поставь свой реальный FTP
 
 # --- TELEGRAM ---
 def send_tg(msg):
@@ -40,30 +39,30 @@ def send_tg(msg):
 
 # --- STRAVA ---
 def get_strava_data():
-    res = requests.post("https://www.strava.com/oauth/token", data={
-        'client_id': CLIENT_ID,
-        'client_secret': CLIENT_SECRET,
-        'refresh_token': REFRESH_TOKEN,
-        'grant_type': 'refresh_token'
-    }, timeout=15)
+    try:
+        res = requests.post("https://www.strava.com/oauth/token", data={
+            'client_id': CLIENT_ID,
+            'client_secret': CLIENT_SECRET,
+            'refresh_token': REFRESH_TOKEN,
+            'grant_type': 'refresh_token'
+        }, timeout=15)
 
-    token = res.json().get('access_token')
-    if not token:
+        token = res.json().get('access_token')
+        if not token:
+            return []
+
+        r = requests.get(
+            "https://www.strava.com/api/v3/athlete/activities",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"per_page": 100},
+            timeout=15
+        )
+
+        return r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
+
+    except Exception as e:
+        print("Strava error:", e)
         return []
-
-    r = requests.get(
-        "https://www.strava.com/api/v3/athlete/activities",
-        headers={"Authorization": f"Bearer {token}"},
-        params={"per_page": 100},
-        timeout=15
-    )
-
-    if r.status_code != 200:
-        print("Strava error:", r.text)
-        return []
-
-    data = r.json()
-    return data if isinstance(data, list) else []
 
 # --- GOOGLE SHEETS ---
 def get_morning_metrics(target_date):
@@ -90,7 +89,7 @@ def get_morning_metrics(target_date):
 
     return {}
 
-# --- TSS / LOAD ---
+# --- TRAINING LOAD (TSS) ---
 def calc_tss(activity):
     watts = activity.get("average_watts")
     duration = activity.get("moving_time", 0)
@@ -103,24 +102,22 @@ def calc_tss(activity):
 
     return round(hours * (intensity ** 2) * 100, 1)
 
-# --- CTL / ATL ---
+# --- CTL / ATL / TSB ---
 def calc_training_metrics(activities):
-    daily_load = {}
+    daily = {}
 
     for a in activities:
-        date = a.get("start_date_local", "")[:10]
+        d = a.get("start_date_local", "")[:10]
         tss = calc_tss(a)
-        daily_load[date] = daily_load.get(date, 0) + tss
-
-    dates = sorted(daily_load.keys())
+        daily[d] = daily.get(d, 0) + tss
 
     ctl = 0
     atl = 0
 
-    for d in dates:
-        load = daily_load[d]
-        ctl = ctl + (load - ctl) * (1/42)
-        atl = atl + (load - atl) * (1/7)
+    for d in sorted(daily.keys()):
+        load = daily[d]
+        ctl += (load - ctl) * (1/42)
+        atl += (load - atl) * (1/7)
 
     tsb = ctl - atl
 
@@ -138,7 +135,7 @@ def power_zone(w):
     if z < 1.20: return "Z5"
     return "Z6+"
 
-# --- FITNESS SCORE ---
+# --- FITNESS ---
 def calc_fitness(rhr, hrv):
     try:
         rhr = int(rhr)
@@ -151,16 +148,23 @@ def calc_fitness(rhr, hrv):
 def detect_status(score):
     if isinstance(score, str):
         return "Н/Д"
-    if score > 80:
-        return "Готов 🚀"
-    elif score > 60:
-        return "Норма 👍"
-    elif score > 40:
-        return "Устал 😐"
+    if score > 80: return "Готов 🚀"
+    if score > 60: return "Норма 👍"
+    if score > 40: return "Устал 😐"
     return "Перегруз ⚠️"
 
-# --- AI ---
-def ask_arnie(prompt):
+# --- LOCAL FALLBACK AI ---
+def local_ai(tsb, load):
+    if tsb < -10:
+        return "Ты перегружен. Завтра только восстановление."
+    if tsb < 0:
+        return "Работаешь в нагрузке. Это нормально."
+    if tsb > 5:
+        return "Свежий. Можно давить."
+    return "Баланс норм. Работай."
+
+# --- GEMINI ---
+def ask_arnie(prompt, tsb, load):
     urls = [
         f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
@@ -171,19 +175,21 @@ def ask_arnie(prompt):
     for url in urls:
         try:
             res = requests.post(url, json=payload, timeout=20)
+
             if res.status_code != 200:
+                print("Gemini fail:", res.status_code)
                 continue
 
             data = res.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            text = data.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text")
 
             if text:
                 return text[:500]
 
-        except:
-            continue
+        except Exception as e:
+            print("Gemini error:", e)
 
-    return "АРНИ молчит."
+    return local_ai(tsb, load)
 
 # --- MAIN ---
 def main():
@@ -203,10 +209,9 @@ def main():
     fitness = calc_fitness(rhr, hrv)
     status = detect_status(fitness)
 
-    # --- TRAINING METRICS ---
+    # --- LOAD ---
     ctl, atl, tsb = calc_training_metrics(activities)
 
-    # --- ACTIVITIES ---
     act_text = ""
     total_tss = 0
 
@@ -216,8 +221,8 @@ def main():
         watts = a.get("average_watts")
         zone = power_zone(watts)
         tss = calc_tss(a)
-        total_tss += tss
 
+        total_tss += tss
         act_text += f"• {name}: {dist} км | {zone} | TSS {tss}\n"
 
     if not act_text:
@@ -225,16 +230,12 @@ def main():
 
     # --- AI ---
     prompt = f"""
-    Ты АРНИ. Дай жесткий анализ:
     Пульс {rhr}, HRV {hrv}
     CTL {ctl}, ATL {atl}, TSB {tsb}
-    Нагрузка сегодня {total_tss}
-    Активности:
-    {act_text}
-    До 300 символов.
+    Нагрузка {total_tss}
     """
 
-    ai = ask_arnie(prompt)
+    ai = ask_arnie(prompt, tsb, total_tss)
 
     # --- REPORT ---
     report = (
