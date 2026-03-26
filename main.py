@@ -3,7 +3,6 @@ import requests
 import json
 from datetime import datetime, timedelta
 import sys
-from google import genai
 
 # --- CONFIG ---
 def get_env(name):
@@ -44,11 +43,9 @@ def get_strava_token():
         'refresh_token': REFRESH_TOKEN,
         'grant_type': 'refresh_token'
     }, timeout=15)
-
     data = res.json()
     if res.status_code != 200:
         raise Exception(f"Strava Auth Error: {data}")
-
     return data['access_token']
 
 def get_activities(token, days=7):
@@ -66,28 +63,19 @@ def get_morning_data():
     try:
         import gspread
         from google.oauth2.service_account import Credentials
-
         creds = Credentials.from_service_account_info(
             json.loads(GOOGLE_CREDS_JSON),
-            scopes=[
-                "https://www.googleapis.com/auth/spreadsheets.readonly",
-                "https://www.googleapis.com/auth/drive.readonly"
-            ]
+            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly", "https://www.googleapis.com/auth/drive.readonly"]
         )
-
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
         records = sheet.get_all_records()
-
         today = datetime.now().strftime("%Y-%m-%d")
-
         for row in reversed(records):
             if today in str(row.get('Date', '')):
                 return row
-
     except Exception as e:
         print(f"Sheets Error: {e}")
-
     return {}
 
 # --- ANALYTICS ---
@@ -98,11 +86,9 @@ def calc_load(activity):
 
 def calc_training_metrics(activities):
     loads = [calc_load(a) for a in activities]
-
     atl = sum(loads[-7:]) / 7 if loads else 0
-    ctl = sum(loads) / len(loads) if loads else 0
+    ctl = sum(loads) / 42 if len(loads) > 10 else sum(loads)/max(1, len(loads))
     tsb = ctl - atl
-
     return round(ctl,1), round(atl,1), round(tsb,1)
 
 def get_power_zone(watts):
@@ -114,116 +100,77 @@ def get_power_zone(watts):
 
 def calc_fitness_score(morning, tsb):
     score = 60
-
     rhr = morning.get('Resting_HR')
     hrv = morning.get('HRV')
-
-    if rhr:
-        score -= max(0, (rhr - 50)) * 1.5
-
-    if hrv:
-        score += max(0, (hrv - 60)) * 0.5
-
-    score += tsb * 0.3
-
+    if rhr: score -= max(0, (rhr - 45)) * 2
+    if hrv: score += (hrv - 70) * 0.5
+    score += tsb * 0.5
     return max(5, min(100, int(score)))
 
-def detect_status(tsb):
-    if tsb > 10:
-        return "Восстановление"
-    elif tsb > -10:
-        return "Прогресс"
-    else:
-        return "ПЕРЕГРУЗ ⚠️"
-
-# --- AI ---
+# --- AI (BULLETPROOF VERSION) ---
 def ask_ai(prompt):
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt
-        )
-
-        text = response.text if hasattr(response, "text") else ""
-
-        if len(text) > 800:
-            text = text[:800] + "..."
-
-        return text if text else "ИИ не ответил"
-
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        res = requests.post(url, json=payload, timeout=20)
+        
+        if res.status_code != 200:
+            return f"Ошибка API ({res.status_code}). Контроль TSB."
+        
+        data = res.json()
+        text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        
+        if not text: return "ИИ временно безмолвен."
+        return text[:800] + "..." if len(text) > 800 else text
     except Exception as e:
-        return f"Ошибка ИИ: {e}"
+        return f"Сбой связи с ИИ: {e}"
 
 # --- MAIN ---
 def main():
-    print("🚀 ARNI SYSTEM ONLINE")
-
-    # Strava
+    print("🚀 ARNI SYSTEM v3.5 ONLINE")
+    
+    # Data Gathering
     try:
         token = get_strava_token()
-        activities = get_activities(token, 7)
+        activities = get_activities(token, 42) # Берем больше для CTL
     except Exception as e:
-        print(f"Strava error: {e}")
-        activities = []
+        print(f"Strava error: {e}"); activities = []
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_acts = [a for a in activities if today in a.get('start_date_local', '')]
-
-    # Sheets
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_acts = [a for a in activities if today_str in a.get('start_date_local', '')]
     morning = get_morning_data()
 
-    # Analytics
+    # Calculations
     ctl, atl, tsb = calc_training_metrics(activities)
     fitness_score = calc_fitness_score(morning, tsb)
-    status = detect_status(tsb)
+    status = "Восстановление" if tsb > 10 else "Прогресс" if tsb > -10 else "ПЕРЕГРУЗ ⚠️"
 
-    # Activities text
     act_text = ""
     for a in today_acts:
         dist = round(a.get('distance', 0)/1000, 2)
-        watts = a.get('average_watts')
-        zone = get_power_zone(watts)
+        zone = get_power_zone(a.get('average_watts'))
         act_text += f"• {a.get('name')}: {dist} км | {zone}\n"
+    if not act_text: act_text = "Тренировок не зафиксировано."
 
-    if not act_text:
-        act_text = "Нет тренировок"
-
-    # AI prompt
-    prompt = f"""
-Ты АРНИ, жесткий тренер.
-
-Утро:
-HR={morning.get('Resting_HR')} HRV={morning.get('HRV')}
-
-CTL={ctl} ATL={atl} TSB={tsb}
-Fitness={fitness_score}
-
-Тренировки:
-{act_text}
-
-Дай краткий жесткий анализ и 1 совет.
-До 400 символов.
-"""
+    # AI Prompt
+    prompt = f"Ты АРНИ, суровый тренер. Утро: HR={morning.get('Resting_HR')}, HRV={morning.get('HRV')}. " \
+             f"Метрики: CTL={ctl}, ATL={atl}, TSB={tsb}. Fitness={fitness_score}. Сегодня: {act_text}. " \
+             f"Дай краткий едкий разбор в стиле Шварценеггера и 1 совет. До 400 знаков."
 
     ai_text = ask_ai(prompt)
 
-    if "Ошибка ИИ" in ai_text:
-        ai_text = f"ИИ недоступен. Контроль: TSB={tsb}"
-
-    # Final report
+    # Report Construction
     report = (
-        f"🏋️ *ARNI REPORT*\n\n"
-        f"🔥 Fitness: {fitness_score}/100\n"
+        f"🏋️ *ARNI INTELLIGENCE REPORT*\n\n"
+        f"🔥 *Fitness Score:* {fitness_score}/100\n"
         f"📈 CTL: {ctl} | ATL: {atl} | TSB: {tsb}\n"
         f"🚦 Статус: *{status}*\n\n"
-        f"🏃 Сегодня:\n{act_text}\n"
-        f"🤖 АРНИ:\n_{ai_text}_"
+        f"🏃 *Сегодня:*\n{act_text}\n"
+        f"🤖 *АРНИ:* \n_{ai_text}_"
     )
 
     send_tg(report)
-    print("✅ DONE")
+    print("✅ REPORT SENT")
 
 if __name__ == "__main__":
     main()
