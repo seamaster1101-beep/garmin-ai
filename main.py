@@ -27,11 +27,10 @@ def send_tg(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
-    except:
-        pass
+    except: pass
 
 def main():
-    print("🚀 СТАРТ АРНИ v2.8 (Full Fix)")
+    print("🚀 СТАРТ АРНИ v2.9")
     
     # 1. Strava Auth
     print("🔐 Strava Auth...")
@@ -53,52 +52,47 @@ def main():
     print("📊 Чтение Google Sheets...")
     morning = {}
     try:
-        creds_info = json.loads(GOOGLE_CREDS_JSON)
-        # РАСШИРЯЕМ ПРАВА ДОСТУПА (Scopes)
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+        creds_dict = json.loads(GOOGLE_CREDS_JSON)
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client_gs = gspread.authorize(creds)
         
-        # Открываем таблицу
         sheet = client_gs.open("ArniData").worksheet("Morning")
-        all_data = sheet.get_all_records()
+        all_rows = sheet.get_all_records()
         
         today_str = datetime.now().strftime("%Y-%m-%d")
-        print(f"🔍 Ищем записи за: {today_str}")
+        print(f"🔍 Ищем дату: {today_str}")
         
-        for row in reversed(all_data):
+        for row in reversed(all_rows):
             if today_str in str(row.get('Date', '')):
                 morning = row
-                print(f"✅ Данные утра найдены!")
+                print(f"✅ Утро найдено!")
                 break
-        if not morning:
-            print("⚠️ Запись за сегодня не найдена в таблице.")
     except Exception as e:
         print(f"❌ Ошибка Sheets: {e}")
 
-    # 3. Gemini (Stable SDK)
+    if not activities and not morning:
+        print("😴 Данных нет. Сообщение не отправляем.")
+        return
+
+    # 3. Gemini (Исправленный вызов)
     print("🧠 Запрос к Арнольду...")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
+        # Явное указание версии модели для обхода 404
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        prompt = f"""Ты — АРНИ, легендарный тренер-киборг. 
-        Утренние замеры: {morning}
-        Тренировки за день: {activities}
-        Дай краткий разбор дня (до 450 симв). 
-        Стиль: Арнольд Шварценеггер. Эмодзи обязательны."""
-
+        prompt = f"Ты АРНИ. Разбери данные. Утро: {morning}. Тренировки: {activities}. Будь краток и суров как Терминатор. Эмодзи!"
+        
+        # Пробуем получить ответ
         response = model.generate_content(prompt)
         
-        if response.text:
+        if response and response.text:
             msg = f"🏋️ *ОТЧЕТ АРНИ*\n\n{response.text}"
             send_tg(msg)
-            print("🚀 ГОТОВО! Проверяй Telegram.")
+            print("🚀 ПОБЕДА! Сообщение ушло.")
         else:
-            print("⚠️ Пустой ответ от ИИ.")
+            print("⚠️ ИИ вернул пустой результат.")
             
     except Exception as e:
         print(f"❌ Ошибка Gemini: {e}")
