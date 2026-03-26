@@ -1,101 +1,105 @@
-import base64, tarfile, os, garth, time, random, sys, requests, json
+import os
+import requests
+import json
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import google.generativeai as genai
 from datetime import datetime, timedelta
-from garminconnect import Garmin
 
-# --- 1. CONFIG ---
-GARMIN_SESSION_BASE64 = os.environ.get("GARMIN_SESSION_BASE64")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# --- КОНФИГУРАЦИЯ ---
+STRAVA_CLIENT_ID = os.environ['STRAVA_CLIENT_ID']
+STRAVA_CLIENT_SECRET = os.environ['STRAVA_CLIENT_SECRET']
+STRAVA_REFRESH_TOKEN = os.environ['STRAVA_REFRESH_TOKEN']
+TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
+TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+GEMINI_API_KEY = os.environ['GEMINI_API_KEY']
+GOOGLE_CREDS_JSON = os.environ['GOOGLE_CREDS'] # Твои креды Google Sheets
 
-now = datetime.now()
-target_days = [now.strftime("%Y-%m-%d"), (now - timedelta(days=1)).strftime("%Y-%m-%d")]
+# --- ФУНКЦИИ ---
 
-def send_tg(message):
-    if len(message) > 3900: message = message[:3900] + "\n\n...(обрезано)"
-    try:
-        # Добавлен таймаут 10 сек, чтобы процесс не подвисал
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"},
-                      timeout=10)
-    except: pass
+def get_strava_token():
+    url = "https://www.strava.com/oauth/token"
+    payload = {
+        'client_id': STRAVA_CLIENT_ID,
+        'client_secret': STRAVA_CLIENT_SECRET,
+        'refresh_token': STRAVA_REFRESH_TOKEN,
+        'grant_type': 'refresh_token'
+    }
+    res = requests.post(url, data=payload)
+    return res.json()['access_token']
 
-def escape_md(text):
-    for char in ['_', '*', '`', '[', '(', ')', '-']:
-        text = str(text).replace(char, f"\\{char}")
-    return text
+def get_strava_activities(access_token):
+    after = int((datetime.now() - timedelta(days=1)).timestamp())
+    url = f"https://www.strava.com/api/v3/athlete/activities?after={after}"
+    headers = {'Authorization': f'Bearer {access_token}'}
+    res = requests.get(url, headers=headers)
+    activities = res.json()
+    
+    detailed_data = []
+    for act in activities:
+        # Берем детальные данные (там есть ватты и каденс)
+        detail_url = f"https://www.strava.com/api/v3/activities/{act['id']}"
+        detail_res = requests.get(detail_url, headers=headers).json()
+        detailed_data.append({
+            'name': detail_res.get('name'),
+            'type': detail_res.get('type'),
+            'distance': detail_res.get('distance'),
+            'moving_time': detail_res.get('moving_time'),
+            'avg_watts': detail_res.get('average_watts', 0),
+            'max_watts': detail_res.get('max_watts', 0),
+            'avg_cadence': detail_res.get('average_cadence', 0),
+            'avg_hr': detail_res.get('average_heartrate', 0)
+        })
+    return detailed_data
 
-def ask_gemini(data_text):
-    if not GEMINI_API_KEY or not data_text: return ""
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        prompt = f"Ты тренер АРНИ. Кратко проанализируй тренировки: {data_text[:500]}. Оцени нагрузку и дай 1 совет. Будь краток и суров. Макс 300 симв."
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        res = requests.post(url, json=payload, timeout=15)
-        if res.status_code != 200: return ""
-        data = res.json()
-        if "candidates" in data and data["candidates"]:
-            comment = data["candidates"][0]["content"]["parts"][0]["text"]
-            return comment[:400]
-        return ""
-    except: return ""
+def get_morning_data():
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("ArniData").worksheet("Morning") # Проверь название таблицы!
+    data = sheet.get_all_records()
+    return data[-1] if data else {}
 
-def get_session():
-    if not GARMIN_SESSION_BASE64: sys.exit(1)
-    session_dir = os.path.abspath("./.garth")
-    if os.path.exists(session_dir): import shutil; shutil.rmtree(session_dir)
-    os.makedirs(session_dir, exist_ok=True)
-    try:
-        with open("session.tar.gz", "wb") as f:
-            f.write(base64.b64decode(GARMIN_SESSION_BASE64.strip()))
-        with tarfile.open("session.tar.gz", "r:gz") as tar:
-            tar.extractall(path=".")
-        garth.client.load(session_dir)
-        gar = Garmin(); gar.garth = garth.client
-        return gar
-    except: return None
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    requests.post(url, json=payload)
 
-# --- 2. ЗАПУСК ---
-print(f"--- Запуск ULTRA-STABLE версии: {now.strftime('%H:%M')} ---")
-gar = get_session()
+# --- ОСНОВНОЙ ЛОГИК ---
 
-if gar:
-    try:
-        # Осторожная пауза перед единственным выстрелом
-        time.sleep(random.uniform(10, 20))
-        activities = gar.get_activities(0, 4) 
-        
-        report_parts = []
-        raw_data_for_ai = ""
-        
-        for a in activities:
-            start_time = a.get("startTimeLocal", "")
-            if start_time[:10] in target_days:
-                name = escape_md(a.get("activityName", "Тренировка"))
-                dist = round(a.get("distance", 0)/1000, 2)
-                dur = round(a.get("duration", 0)/60, 1)
-                hr = a.get("averageHR", "--")
-                load = round(a.get("activityTrainingLoad", 0), 1)
-                date_label = "Сегодня" if start_time.startswith(target_days[0]) else "Вчера"
+try:
+    # 1. Сбор данных
+    token = get_strava_token()
+    activities = get_strava_activities(token)
+    morning = get_morning_data()
 
-                info = f"🕒 *{date_label}* ({start_time[11:16]}) — {name}\n📏 {dist} км | ⏱ {dur} мин | 💓 HR: {hr}\n📊 Load: {load}"
-                report_parts.append(info)
-                if len(raw_data_for_ai) < 400:
-                    raw_data_for_ai += f"{date_label}: {name}, load {load}; "
+    # 2. Подготовка промпта для АРНИ
+    prompt = f"""
+    Ты - АРНИ, суровый и профессиональный ИИ-тренер. 
+    Проанализируй данные атлета и дай короткий, мощный отчет.
+    
+    УТРЕННИЕ ДАННЫЕ (из Google Sheets):
+    {json.dumps(morning, indent=2, ensure_ascii=False)}
+    
+    ТРЕНИРОВКИ ЗА 24 ЧАСА (из Strava):
+    {json.dumps(activities, indent=2, ensure_ascii=False)}
+    
+    Инструкция:
+    1. Если есть тренировка с ваттами - разбери её (эффективность, интенсивность).
+    2. Сопоставь утреннее состояние (сон, HRV) с нагрузкой.
+    3. Дай один четкий совет на сегодня. Тон: подбадривающий, но строгий.
+    """
 
-        if report_parts:
-            report_parts.reverse() 
-            ai_comment = ask_gemini(raw_data_for_ai)
-            full_report = f"🚀 *АРНИ: Сводка активностей*\n\n" + "\n\n".join(report_parts)
-            if ai_comment:
-                full_report += f"\n\n🤖 *АРНИ:* _{escape_md(ai_comment)}_"
-            
-            send_tg(full_report)
-            print("✅ Отчет в Telegram отправлен.")
-        else:
-            print("ℹ️ Активностей за сегодня/вчера не найдено.")
+    # 3. Запрос к Gemini
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    response = model.generate_content(prompt)
+    
+    # 4. Отправка
+    send_telegram(response.text)
+    print("Отчет успешно отправлен!")
 
-    except Exception as e:
-        if "429" in str(e):
-            print("🚨 429! Спим и выходим."); time.sleep(300); sys.exit(1)
-        print(f"⚠️ Ошибка: {e}")
+except Exception as e:
+    send_telegram(f"❌ Ошибка АРНИ: {str(e)}")
+    print(f"Ошибка: {e}")
