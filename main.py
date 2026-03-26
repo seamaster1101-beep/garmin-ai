@@ -47,8 +47,11 @@ def get_strava_data():
             'grant_type': 'refresh_token'
         }, timeout=15)
 
-        token = res.json().get('access_token')
+        data = res.json()
+        token = data.get('access_token')
+
         if not token:
+            print("❌ Нет access_token")
             return []
 
         r = requests.get(
@@ -58,7 +61,17 @@ def get_strava_data():
             timeout=15
         )
 
-        return r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
+        if r.status_code != 200:
+            print("Strava error:", r.text)
+            return []
+
+        data = r.json()
+
+        if not isinstance(data, list):
+            print("❌ Strava вернул не список:", data)
+            return []
+
+        return data
 
     except Exception as e:
         print("Strava error:", e)
@@ -77,11 +90,18 @@ def get_morning_metrics(target_date):
 
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
-
         records = sheet.get_all_records()
 
+        # сначала сегодня
         for row in reversed(records):
             if target_date in str(row.get('Date', '')):
+                return row
+
+        # fallback на вчера
+        yesterday = (datetime.strptime(target_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+        for row in reversed(records):
+            if yesterday in str(row.get('Date', '')):
+                print("⚠️ Использую вчерашние данные")
                 return row
 
     except Exception as e:
@@ -122,6 +142,23 @@ def calc_training_metrics(activities):
     tsb = ctl - atl
 
     return round(ctl,1), round(atl,1), round(tsb,1)
+
+# --- VO2max ---
+def estimate_vo2max(activities):
+    vo2_list = []
+
+    for a in activities:
+        speed = a.get("average_speed")  # м/с
+        hr = a.get("average_heartrate")
+
+        if speed and hr and hr > 0:
+            vo2 = (speed * 3.6) * 0.2 + 3.5
+            vo2_list.append(vo2)
+
+    if vo2_list:
+        return round(sum(vo2_list)/len(vo2_list),1)
+
+    return "Н/Д"
 
 # --- POWER ZONES ---
 def power_zone(w):
@@ -193,12 +230,14 @@ def ask_arnie(prompt, tsb, load):
 
 # --- MAIN ---
 def main():
-    now = datetime.utcnow() + timedelta(hours=1)
+    # ✅ Утренний лаг (ключевой фикс)
+    now = datetime.utcnow() + timedelta(hours=1) - timedelta(hours=3)
     today = now.strftime("%Y-%m-%d")
 
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
+    # только сегодня
     today_acts = [a for a in activities if a.get("start_date_local","")[:10] == today]
     today_acts = today_acts[::-1]
 
@@ -211,6 +250,9 @@ def main():
 
     # --- LOAD ---
     ctl, atl, tsb = calc_training_metrics(activities)
+
+    # --- VO2 ---
+    vo2 = estimate_vo2max(activities)
 
     act_text = ""
     total_tss = 0
@@ -243,7 +285,8 @@ def main():
         f"🔥 Fitness: {fitness}/100\n"
         f"🚦 Статус: {status}\n\n"
         f"📊 CTL: {ctl} | ATL: {atl} | TSB: {tsb}\n"
-        f"⚡ Load today: {total_tss}\n\n"
+        f"⚡ Load today: {total_tss}\n"
+        f"🫁 VO2max: {vo2}\n\n"
         f"📊 Утро: ❤️ {rhr} | 🌀 {hrv}\n\n"
         f"🏃 Активность:\n{act_text}\n"
         f"🤖 АРНИ:\n_{ai}_"
