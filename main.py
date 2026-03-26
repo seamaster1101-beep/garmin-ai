@@ -54,23 +54,30 @@ def main():
     morning = {}
     try:
         creds_info = json.loads(GOOGLE_CREDS_JSON)
-        creds = Credentials.from_service_account_info(creds_info, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+        # РАСШИРЯЕМ ПРАВА ДОСТУПА (Scopes)
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
         client_gs = gspread.authorize(creds)
+        
+        # Открываем таблицу
         sheet = client_gs.open("ArniData").worksheet("Morning")
         all_data = sheet.get_all_records()
         
         today_str = datetime.now().strftime("%Y-%m-%d")
+        print(f"🔍 Ищем записи за: {today_str}")
+        
         for row in reversed(all_data):
             if today_str in str(row.get('Date', '')):
                 morning = row
-                print(f"✅ Данные утра найдены.")
+                print(f"✅ Данные утра найдены!")
                 break
+        if not morning:
+            print("⚠️ Запись за сегодня не найдена в таблице.")
     except Exception as e:
         print(f"❌ Ошибка Sheets: {e}")
-
-    if not activities and not morning:
-        print("😴 Данных нет. Выходим.")
-        return
 
     # 3. Gemini (Stable SDK)
     print("🧠 Запрос к Арнольду...")
