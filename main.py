@@ -3,15 +3,18 @@ import requests
 import json
 from datetime import datetime, timedelta
 import sys
+import math
 
 # --- CONFIG ---
 def get_env(name):
     val = os.environ.get(name)
     if not val:
-        print(f"❌ Нет переменной: {name}"); sys.exit(1)
+        print(f"❌ Нет переменной: {name}")
+        sys.exit(1)
     return val
 
 SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
+
 CLIENT_ID = get_env('STRAVA_CLIENT_ID')
 CLIENT_SECRET = get_env('STRAVA_CLIENT_SECRET')
 REFRESH_TOKEN = get_env('STRAVA_REFRESH_TOKEN')
@@ -20,95 +23,233 @@ TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
 GEMINI_API_KEY = get_env('GEMINI_API_KEY')
 GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
-def send_tg(msg):
-    try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                     json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
-    except: pass
+FTP = 250  # ⚠️ Поставь свой реальный FTP
 
-# --- DATA PROVIDERS ---
+# --- TELEGRAM ---
+def send_tg(msg):
+    if len(msg) > 4000:
+        msg = msg[:3900] + "\n\n...(обрезано)"
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=15
+        )
+    except:
+        pass
+
+# --- STRAVA ---
 def get_strava_data():
     res = requests.post("https://www.strava.com/oauth/token", data={
-        'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
-        'refresh_token': REFRESH_TOKEN, 'grant_type': 'refresh_token'
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'refresh_token': REFRESH_TOKEN,
+        'grant_type': 'refresh_token'
     }, timeout=15)
-    token = res.json().get('access_token')
-    r = requests.get("https://www.strava.com/api/v3/athlete/activities",
-                    headers={"Authorization": f"Bearer {token}"}, params={"per_page": 50}, timeout=15)
-    return r.json() if r.status_code == 200 else []
 
+    token = res.json().get('access_token')
+    if not token:
+        return []
+
+    r = requests.get(
+        "https://www.strava.com/api/v3/athlete/activities",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"per_page": 100},
+        timeout=15
+    )
+
+    if r.status_code != 200:
+        print("Strava error:", r.text)
+        return []
+
+    data = r.json()
+    return data if isinstance(data, list) else []
+
+# --- GOOGLE SHEETS ---
 def get_morning_metrics(target_date):
     try:
         import gspread
         from google.oauth2.service_account import Credentials
-        creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON),
-            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
+
+        creds = Credentials.from_service_account_info(
+            json.loads(GOOGLE_CREDS_JSON),
+            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
+        )
+
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+
         records = sheet.get_all_records()
+
         for row in reversed(records):
-            if target_date in str(row.get('Date', '')): return row
-    except: pass
+            if target_date in str(row.get('Date', '')):
+                return row
+
+    except Exception as e:
+        print("Sheets error:", e)
+
     return {}
 
-def ask_arnie(prompt):
-    # Единственный стабильный URL для бесплатного ключа
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+# --- TSS / LOAD ---
+def calc_tss(activity):
+    watts = activity.get("average_watts")
+    duration = activity.get("moving_time", 0)
+
+    if not watts or watts == 0:
+        return 0
+
+    intensity = watts / FTP
+    hours = duration / 3600
+
+    return round(hours * (intensity ** 2) * 100, 1)
+
+# --- CTL / ATL ---
+def calc_training_metrics(activities):
+    daily_load = {}
+
+    for a in activities:
+        date = a.get("start_date_local", "")[:10]
+        tss = calc_tss(a)
+        daily_load[date] = daily_load.get(date, 0) + tss
+
+    dates = sorted(daily_load.keys())
+
+    ctl = 0
+    atl = 0
+
+    for d in dates:
+        load = daily_load[d]
+        ctl = ctl + (load - ctl) * (1/42)
+        atl = atl + (load - atl) * (1/7)
+
+    tsb = ctl - atl
+
+    return round(ctl,1), round(atl,1), round(tsb,1)
+
+# --- POWER ZONES ---
+def power_zone(w):
+    if not w:
+        return "N/A"
+    z = w / FTP
+    if z < 0.55: return "Z1"
+    if z < 0.75: return "Z2"
+    if z < 0.90: return "Z3"
+    if z < 1.05: return "Z4"
+    if z < 1.20: return "Z5"
+    return "Z6+"
+
+# --- FITNESS SCORE ---
+def calc_fitness(rhr, hrv):
     try:
-        res = requests.post(url, json=payload, headers=headers, timeout=30)
-        if res.status_code == 200:
-            return res.json()['candidates'][0]['content']['parts'][0]['text']
-        return f"АРНИ взял паузу (Ошибка {res.status_code})"
+        rhr = int(rhr)
+        hrv = int(hrv)
+        score = 70 - (rhr - 45)*2 + (hrv - 70)*0.5
+        return max(10, min(100, int(score)))
     except:
-        return "Связь с базой данных прервана."
+        return "Н/Д"
+
+def detect_status(score):
+    if isinstance(score, str):
+        return "Н/Д"
+    if score > 80:
+        return "Готов 🚀"
+    elif score > 60:
+        return "Норма 👍"
+    elif score > 40:
+        return "Устал 😐"
+    return "Перегруз ⚠️"
+
+# --- AI ---
+def ask_arnie(prompt):
+    urls = [
+        f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+    ]
+
+    payload = {"contents": [{"parts": [{"text": prompt[:1000]}]}]}
+
+    for url in urls:
+        try:
+            res = requests.post(url, json=payload, timeout=20)
+            if res.status_code != 200:
+                continue
+
+            data = res.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+
+            if text:
+                return text[:500]
+
+        except:
+            continue
+
+    return "АРНИ молчит."
 
 # --- MAIN ---
 def main():
-    # 1. Время (Мальта UTC+1)
-    malta_now = datetime.utcnow() + timedelta(hours=1)
-    today_str = malta_now.strftime("%Y-%m-%d")
-    
-    # 2. Сбор данных
+    now = datetime.utcnow() + timedelta(hours=1)
+    today = now.strftime("%Y-%m-%d")
+
     activities = get_strava_data()
-    morning = get_morning_metrics(today_str)
+    morning = get_morning_metrics(today)
 
-    # 3. Фильтрация и правильный хронологический порядок (сначала ранние)
-    today_acts = [a for a in activities if a.get('start_date_local', '')[:10] == today_str]
-    today_acts = today_acts[::-1] 
+    today_acts = [a for a in activities if a.get("start_date_local","")[:10] == today]
+    today_acts = today_acts[::-1]
 
+    # --- MORNING ---
+    rhr = morning.get("Resting_HR", "Н/Д")
+    hrv = morning.get("HRV", "Н/Д")
+
+    fitness = calc_fitness(rhr, hrv)
+    status = detect_status(fitness)
+
+    # --- TRAINING METRICS ---
+    ctl, atl, tsb = calc_training_metrics(activities)
+
+    # --- ACTIVITIES ---
     act_text = ""
+    total_tss = 0
+
     for a in today_acts:
-        dist = round(a.get('distance', 0)/1000, 2)
-        act_text += f"• {a.get('name')}: {dist} км\n"
-    
-    if not act_text: act_text = "Тренировок сегодня еще не было."
+        name = a.get("name", "Тренировка")
+        dist = round(a.get("distance",0)/1000,2)
+        watts = a.get("average_watts")
+        zone = power_zone(watts)
+        tss = calc_tss(a)
+        total_tss += tss
 
-    # 4. Аналитика утра
-    rhr = morning.get('Resting_HR', "Н/Д")
-    hrv = morning.get('HRV', "Н/Д")
-    
-    try:
-        f_score = max(10, min(100, int(70 - (int(rhr) - 45)*2 + (int(hrv) - 70)*0.5)))
-    except:
-        f_score = "Н/Д"
+        act_text += f"• {name}: {dist} км | {zone} | TSS {tss}\n"
 
-    # 5. ИИ Анализ
-    prompt = f"Ты АРНИ, суровый тренер. Проанализируй: Пульс {rhr}, HRV {hrv}. Тренировки за день: {act_text}. Дай жесткий разбор до 350 знаков."
-    arnie_speech = ask_arnie(prompt)
+    if not act_text:
+        act_text = "Сегодня отдыхаешь."
 
-    # 6. Финальный отчет
+    # --- AI ---
+    prompt = f"""
+    Ты АРНИ. Дай жесткий анализ:
+    Пульс {rhr}, HRV {hrv}
+    CTL {ctl}, ATL {atl}, TSB {tsb}
+    Нагрузка сегодня {total_tss}
+    Активности:
+    {act_text}
+    До 300 символов.
+    """
+
+    ai = ask_arnie(prompt)
+
+    # --- REPORT ---
     report = (
-        f"🏋️ *ARNI INTELLIGENCE REPORT*\n\n"
-        f"🔥 *Fitness Score:* {f_score}/100\n"
-        f"📊 *Утро:* ❤️ {rhr} | 🌀 {hrv}\n\n"
-        f"🏃 *Активность:* \n{act_text}\n"
-        f"🤖 *АРНИ:* \n_{arnie_speech}_"
+        f"🏋️ *ARNI REPORT*\n\n"
+        f"🔥 Fitness: {fitness}/100\n"
+        f"🚦 Статус: {status}\n\n"
+        f"📊 CTL: {ctl} | ATL: {atl} | TSB: {tsb}\n"
+        f"⚡ Load today: {total_tss}\n\n"
+        f"📊 Утро: ❤️ {rhr} | 🌀 {hrv}\n\n"
+        f"🏃 Активность:\n{act_text}\n"
+        f"🤖 АРНИ:\n_{ai}_"
     )
-    
+
     send_tg(report)
-    print(f"✅ Готово. Дата: {today_str}")
+    print("✅ DONE")
 
 if __name__ == "__main__":
     main()
