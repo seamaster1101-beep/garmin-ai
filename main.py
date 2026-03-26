@@ -112,12 +112,11 @@ def main():
         pwr = get_power_label(a.get('average_watts'))
         act_summary += f"• {a.get('name')}: {dist}км | {pwr}\n"
 
-    # 4. AI Analysis (Стабильная версия)
+    # 4. AI Analysis (Версия 2.0 - Самая стабильная)
     print("🧠 Gemini AI Analysis...")
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        from google import genai
+        client_ai = genai.Client(api_key=GEMINI_API_KEY)
         
         prompt = f"""Ты - АРНИ, суровый тренер из Терминатора. Проанализируй данные:
         Утро: Пульс {morning.get('Resting_HR')}, HRV {morning.get('HRV')}.
@@ -127,7 +126,11 @@ def main():
         
         Дай разбор: коротко, едко, в стиле Шварценеггера. Похвали за пульс 45 или HRV 94, но напомни, что расслабляться нельзя. До 400 знаков."""
 
-        response = model.generate_content(prompt)
+        # Используем новейшую модель 2.0 Flash
+        response = client_ai.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=prompt
+        )
         ai_text = response.text
     except Exception as e:
         ai_text = f"Ошибка ИИ: {e}"
