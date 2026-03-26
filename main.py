@@ -3,10 +3,11 @@ import requests
 import json
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
+from google import genai
 from datetime import datetime, timedelta
 import sys
 
+# --- CONFIG ---
 def get_env(name):
     val = os.environ.get(name)
     if not val:
@@ -28,17 +29,23 @@ def send_tg(msg):
                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
     except: pass
 
+# --- MAIN LOGIC ---
 def main():
-    print("🚀 СТАРТ АРНИ v2.6")
+    print("🚀 СТАРТ АРНИ v2.7 (GenAI SDK)")
     
-    # 1. Strava
+    # 1. Strava Auth
     print("🔐 Strava Auth...")
     res = requests.post("https://www.strava.com/oauth/token", data={
         'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
         'refresh_token': REFRESH_TOKEN, 'grant_type': 'refresh_token'
     })
-    token = res.json().get('access_token')
+    token_data = res.json()
+    token = token_data.get('access_token')
     
+    # Проверка на новый refresh_token (на всякий случай)
+    if token_data.get('refresh_token') and token_data.get('refresh_token') != REFRESH_TOKEN:
+        print(f"⚠️ НОВЫЙ REFRESH_TOKEN: {token_data.get('refresh_token')}")
+
     activities = []
     if token:
         after = int((datetime.now() - timedelta(days=1)).timestamp())
@@ -51,44 +58,51 @@ def main():
     print("📊 Чтение Google Sheets...")
     morning = {}
     try:
-        # Новый метод авторизации
-        info = json.loads(GOOGLE_CREDS_JSON)
-        creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-        client = gspread.authorize(creds)
-        
-        sheet = client.open("ArniData").worksheet("Morning")
+        creds_info = json.loads(GOOGLE_CREDS_JSON)
+        creds = Credentials.from_service_account_info(creds_info, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+        client_gs = gspread.authorize(creds)
+        sheet = client_gs.open("ArniData").worksheet("Morning")
         all_data = sheet.get_all_records()
         
         today_str = datetime.now().strftime("%Y-%m-%d")
-        print(f"Ищем записи за: {today_str}")
-        
         for row in reversed(all_data):
-            row_date = str(row.get('Date', ''))
-            if today_str in row_date:
+            if today_str in str(row.get('Date', '')):
                 morning = row
-                print(f"✅ Нашел данные в таблице: {morning}")
+                print(f"✅ Данные утра найдены.")
                 break
     except Exception as e:
-        print(f"❌ Ошибка Sheets: {str(e)}")
+        print(f"❌ Ошибка Sheets: {e}")
 
     if not activities and not morning:
-        print("😴 Глухо. Ни в Strava, ни в Таблице ничего нового.")
+        print("😴 Данных нет. Выходим.")
         return
 
-    # 3. Gemini
-    print("🧠 Запрос к Арнольду...")
+    # 3. Gemini (NEW SDK v1)
+    print("🧠 Запрос к Арнольду (New SDK)...")
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        client_ai = genai.Client(api_key=GEMINI_API_KEY)
         
-        prompt = f"Ты АРНИ. Прокомментируй эти данные. Утро: {morning}. Тренировки: {activities}. Будь краток и суров."
-        response = model.generate_content(prompt)
+        prompt = f"""Ты — АРНИ, жесткий тренер. 
+        Утренние замеры: {morning}
+        Тренировки за день: {activities}
+        Дай краткий разбор дня (до 450 симв). Если пульс в покое высокий или тренировок нет — дави на совесть. 
+        Стиль: Арнольд Шварценеггер. Эмодзи обязательны."""
+
+        response = client_ai.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt
+        )
         
-        msg = f"🏋️ *ОТЧЕТ АРНИ*\n\n{response.text}"
-        send_tg(msg)
-        print("🚀 ГОТОВО! Проверяй Telegram.")
+        report = response.text
+        if report:
+            msg = f"🏋️ *ОТЧЕТ АРНИ*\n\n{report}"
+            send_tg(msg)
+            print("🚀 ГОТОВО! Сообщение в пути.")
+        else:
+            print("⚠️ Gemini вернул пустой ответ.")
+            
     except Exception as e:
-        print(f"❌ Ошибка ИИ: {e}")
+        print(f"❌ Ошибка Gemini SDK: {e}")
 
 if __name__ == "__main__":
     main()
