@@ -179,54 +179,94 @@ def ask_arnie(prompt, fallback_text):
         
     return fallback_text
 
+# --- READINESS CALCULATION ---
+def get_readiness(morning):
+    score = 0
+    try:
+        # 1. HRV (Колонка F)
+        hrv = morning.get("HRV")
+        if hrv and hrv != "Н/Д":
+            val = int(hrv)
+            if val > 80: score += 2  # У тебя отличные показатели HRV, поднял планку
+            elif val < 50: score -= 2
+
+        # 2. Пульс покоя (Колонка E)
+        rhr = morning.get("Resting_HR")
+        if rhr and rhr != "Н/Д":
+            val = int(rhr)
+            if val < 46: score += 1
+            elif val > 55: score -= 1
+
+        # 3. Сон (Колонка I)
+        slp = morning.get("Sleep_Hours")
+        if slp:
+            # Заменяем запятую на точку, если она есть (для Google Sheets)
+            val = float(str(slp).replace(',', '.'))
+            if val >= 7: score += 1
+            elif val < 6: score -= 1
+
+        # 4. Body Battery (Колонка G)
+        bb = morning.get("Body_Battery")
+        if bb:
+            val = int(bb)
+            if val > 85: score += 1
+            elif val < 60: score -= 1
+
+        # Итоговый расчет (базово 2 балла + бонусы/штрафы)
+        final_score = max(0, min(5, score + 2)) 
+        
+        if final_score >= 4:
+            text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
+        elif final_score >= 3:
+            text = "👍 Нормальная готовность — допустима умеренная нагрузка"
+        elif final_score >= 2:
+            text = "⚠️ Сниженная готовность — лучше лёгкая тренировка"
+        else:
+            text = "❌ Низкая готовность — восстановление или отдых"
+        
+        return final_score, text
+    except Exception as e:
+        print(f"Readiness Error: {e}")
+        return 2, "👍 Нормальная готовность (ошибка расчета)"
+
 # --- MAIN ---
 def main():
-    now = datetime.utcnow() + timedelta(hours=1) - timedelta(hours=3)
+    now = datetime.utcnow() + timedelta(hours=1) # Твое локальное время
     today = now.strftime("%Y-%m-%d")
-    yesterday = (datetime.strptime(today,"%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
 
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
-    rhr = morning.get("Resting_HR","Н/Д")
-    hrv = morning.get("HRV","Н/Д")
-
-    # сегодняшние активности
-    today_acts = [a for a in activities if a.get("start_date_local","")[:10]==today]
-
-    # вчерашний TSS
-    y_tss = sum(calc_tss(a) for a in activities if a.get("start_date_local","")[:10]==yesterday)
-
+    rhr = morning.get("Resting_HR", "Н/Д")
+    hrv = morning.get("HRV", "Н/Д")
     vo2 = estimate_vo2max(activities)
-    f_age = fitness_age(rhr, hrv)
+    f_age = fitness_age(rhr, hrv) # Используем фитнес-возраст
 
-    # ==========================================
-    # 1. УТРЕННИЙ РЕЖИМ (Если еще не тренировался)
-    # ==========================================
+    today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
+
     if not today_acts:
+        # Считаем готовность
+        r_val, r_text = get_readiness(morning)
+        
         prompt = f"""
 Ты — Арнольд, легендарный тренер. Проанализируй состояние атлета ({BIO_AGE} лет).
-Данные: Пульс {rhr}, HRV {hrv}, вчерашний TSS {y_tss}. Твоя оценка Fitness Age: {f_age}.
+Данные: Пульс {rhr}, HRV {hrv}, Готовность {r_val}/5 ({r_text}).
+Твой Fitness Age: {f_age}. Вчерашний TSS: {sum(calc_tss(a) for a in activities if a.get('start_date_local','')[:10]==yesterday)}.
 
-Дай развернутый, ироничный и мотивирующий разбор. Оцени восстановление и дай совет по интенсивности на сегодня. 
-Не ограничивайся тремя строками, напиши нормально. 
-
-ВАЖНО: Отвечай строго на русском языке, используя свой фирменный стиль.
+Дай развернутый, ироничный разбор на РУССКОМ языке. Оцени цифры и дай приказ на сегодня.
 """
-        fallback = "Восстановление в норме. Работай по самочувствию."
-        ai_response = ask_arnie(prompt, fallback)
+        ai_response = ask_arnie(prompt, "Восстановление в норме. Работай по самочувствию.")
 
         report = (
             f"🌅 *УТРЕННИЙ СТАТУС*\n\n"
-            f"❤️ Пульс: {rhr}\n"
-            f"🌀 HRV: {hrv}\n"
-            f"📊 Вчера TSS: {y_tss}\n"
+            f"❤️ Пульс: {rhr} | 🌀 HRV: {hrv}\n"
+            f"🔋 *Готовность: {r_val}/5*\n"
+            f"📢 {r_text}\n"
             f"🧬 Fitness Age: {f_age}\n\n"
             f"🤖 АРНИ:\n_{ai_response}_"
         )
-
         send_tg(report)
-        print("✅ MORNING REPORT SENT")
         return
 
     # ==========================================
