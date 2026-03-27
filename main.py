@@ -119,26 +119,32 @@ def estimate_vo2max(activities):
     return None
 
 # --- FITNESS AGE ---
-def fitness_age(rhr, hrv, fat=18.3): # Жир 18.3 из твоего лога S2
+def fitness_age(rhr, hrv, vo2=None, fat=18.3): # Жир 18.3 из твоего лога S2
     try:
-        actual_age = 63 
+        actual_age = 63
         # 1. Влияние пульса покоя (RHR)
         rhr_val = int(rhr) if rhr and rhr != "Н/Д" else 60
-        rhr_impact = (rhr_val - 55) * 0.4  
+        rhr_impact = (rhr_val - 55) * 0.4
         
         # 2. Влияние жира (Body Fat) - атлетический уровень
         fat_val = float(fat)
-        fat_impact = (fat_val - 22) * 0.5  
+        fat_impact = (fat_val - 22) * 0.5
         
         # 3. Влияние HRV
         hrv_val = int(hrv) if hrv and hrv != "Н/Д" else 45
-        hrv_impact = (hrv_val - 45) * 0.1  
-        
+        hrv_impact = (hrv_val - 45) * 0.1
+
+        # 4. Влияние VO2max (Новое!)
+        vo2_impact = 0
+        if vo2 and isinstance(vo2, (int, float)):
+            # Чем выше VO2max, тем больше вычитаем из возраста (бонус до -5 лет)
+            vo2_impact = (vo2 - 40) * 0.5
+
         # Итоговый расчет
-        calculated = actual_age + rhr_impact + fat_impact - hrv_impact
+        calculated = actual_age + rhr_impact + fat_impact - hrv_impact - vo2_impact
         
-        # Ограничиваем разумными пределами, как было в старом коде
-        return round(max(48, min(actual_age + 2, calculated)), 1)
+        # Ограничиваем разумными пределами
+        return round(max(45, min(actual_age + 2, calculated)), 1)
     except:
         return 63
 
@@ -258,26 +264,31 @@ def main():
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
-    # --- 1. РАСЧЕТ TSB (Всегда, чтобы данные были доступны везде) ---
-    all_tss = []
-    for a in activities:
-        try:
-            dt = datetime.strptime(a.get("start_date_local", "2000-01-01")[:10], "%Y-%m-%d")
-            days_ago = (datetime.utcnow() - dt).days
-            all_tss.append((days_ago, calc_tss(a)))
-        except: continue
-
-    atl = sum(tss for d, tss in all_tss if d <= 7) / 7
-    ctl = sum(tss for d, tss in all_tss if d <= 42) / 42
+    # --- 1. РАСЧЕТ TSB (EMA Модель) ---
+    # Сортируем активности от старых к новым для правильного накопления
+    sorted_acts = sorted(activities, key=lambda x: x.get("start_date_local", "2000-01-01"))
+    
+    ctl, atl = 0, 0
+    for a in sorted_acts:
+        tss_val = calc_tss(a)
+        # Формула EMA (экспоненциальное сглаживание)
+        ctl += (tss_val - ctl) / 42
+        atl += (tss_val - atl) / 7
+    
     tsb = round(ctl - atl, 1)
 
+    # --- 2. МЕТРИКИ И ГОТОВНОСТЬ ---
     rhr = morning.get("Resting_HR", "Н/Д")
     hrv = morning.get("HRV", "Н/Д")
-    f_age = fitness_age(rhr, hrv) 
     
-    # Считаем готовность ОДИН РАЗ здесь, чтобы использовать и в утреннем, и в тренировочном отчете
+    # Вот здесь мы добавляем расчет VO2max и передаем его в Fitness Age
+    vo2_val = estimate_vo2max(activities)
+    f_age = fitness_age(rhr, hrv, vo2_val) 
+    
+    # Считаем готовность один раз для всех отчетов
     r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
 
+    # Фильтруем тренировки за сегодня
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
 
     # --- 2. УТРЕННИЙ РЕЖИМ ---
@@ -286,17 +297,20 @@ def main():
         r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
         prompt = (
             f"Ты — легендарный Арнольд, элитный спортивный директор. Твоя задача: дать хлесткий, "
-            f"профессиональный анализ утреннего состояния. Тон: харизматичный, мотивирующий тренер. "
+            f"профессиональный анализ утреннего состояния. Тон: харизматичный тренер. "
             f"Данные: HRV {hrv}, Пульс {rhr}, Сон {morning.get('Sleep_Hours')}ч, "
-            f"BB {morning.get('Body_Battery')}, Fit Age {f_age}. "
-            f"Форма: CTL {round(ctl,1)}, ATL {round(atl,1)}, TSB {tsb}. "
+            f"BB {morning.get('Body_Battery')}, Fit Age {f_age}, VO2max {vo2_val}. "
+            f"Форма: CTL {round(ctl,1)} (фитнес), TSB {tsb} (баланс). "
             f"Готовность: {r_val}/5. "
             f"\nИНСТРУКЦИЯ: "
-            f"1. Не перечисляй цифры. Интерпретируй их! "
-            f"2. Если HRV {hrv} > 70 и Пульс {rhr} < 50 — это элитный уровень для 63 лет. Отметь это мощно. "
-            f"3. Трактуй TSB {tsb}: если больше 10 — атлет свеж и застоялся, если от -10 до -25 — это зона чемпионов, если ниже -25 — требуй немедленного отдыха из-за риска травм. "
-            f"4. Твой вердикт: сегодня рекорды или восстановление? Опирайся на итоговый балл Готовности {r_val}/5. "
-            f"5. ПИШИ НА РУССКОМ. Будь лаконичен (2-3 абзаца), сохрани дух Терминатора, но без воды."
+            f"1. Не перечисляй цифры, а интерпретируй их! ПИШИ НА РУССКОМ. "
+            f"2. Если HRV {hrv} > 70 и Пульс {rhr} < 50 — отметь это как элитный уровень для 63 лет. "
+            f"3. Трактуй TSB {tsb}: >10 (атлет застоялся), -10...-25 (зона чемпионов, паши!), < -25 (риск травм, требуй отдых). "
+            f"4. ДАЙ КОНКРЕТНЫЙ СОВЕТ: в какой зоне интенсивности сегодня крутить и сколько минут? "
+            f"(Напр. Z2 для восстановления или Z3-Z4 для прогресса). "
+            f"5. Если Fit Age {f_age} ниже 63 — вставь мощный комментарий об этом. "
+            f"6. Будь лаконичен (2-3 абзаца), сохрани дух Терминатора, но дай четкий тренерский план. "
+            f"В конце — одна фирменная фраза."
         )
         ai_response = ask_arnie(prompt, r_text)
 
@@ -304,7 +318,7 @@ def main():
             f"🌅 *УТРЕННИЙ СТАТУС* {r_icon}\n\n"
             f"❤️ Пульс: {rhr} | 🌀 HRV: {hrv}\n"
             f"🔋 *Готовность: {r_val}/5*\n"
-            f"📊 Форма (TSB): {tsb}\n"
+            f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val if vo2_val else 'н/д'}\n"
             f"📢 {r_text}\n"
             f"🧬 Fitness Age: {f_age}\n\n"
             f"🤖 *АРНИ:* \n_{ai_response}_"
