@@ -143,19 +143,19 @@ def calc_training_metrics(activities):
 
     return round(ctl,1), round(atl,1), round(tsb,1)
 
-# --- VO2max ---
+# --- VO2max (очищенный) ---
 def estimate_vo2max(activities):
     vo2_list = []
 
     for a in activities:
-        speed = a.get("average_speed")  # м/с
+        speed = a.get("average_speed")
         hr = a.get("average_heartrate")
 
-        if speed and hr and hr > 0:
+        if speed and hr and 2 < speed < 8 and 80 < hr < 180:
             vo2 = (speed * 3.6) * 0.2 + 3.5
             vo2_list.append(vo2)
 
-    if vo2_list:
+    if len(vo2_list) >= 3:
         return round(sum(vo2_list)/len(vo2_list),1)
 
     return "Н/Д"
@@ -193,21 +193,21 @@ def detect_status(score):
 # --- LOCAL FALLBACK AI ---
 def local_ai(tsb, load):
     if tsb < -10:
-        return "Ты перегружен. Завтра только восстановление."
+        return "Перегруз. Только восстановление."
     if tsb < 0:
-        return "Работаешь в нагрузке. Это нормально."
+        return "Рабочая нагрузка. Без жести."
     if tsb > 5:
-        return "Свежий. Можно давить."
-    return "Баланс норм. Работай."
+        return "Свежий. Можно интенсив."
+    return "Баланс норм."
 
-# --- GEMINI ---
+# --- GEMINI (улучшенный промпт) ---
 def ask_arnie(prompt, tsb, load):
     urls = [
         f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
     ]
 
-    payload = {"contents": [{"parts": [{"text": prompt[:1000]}]}]}
+    payload = {"contents": [{"parts": [{"text": prompt[:1200]}]}]}
 
     for url in urls:
         try:
@@ -221,7 +221,7 @@ def ask_arnie(prompt, tsb, load):
             text = data.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text")
 
             if text:
-                return text[:500]
+                return text.strip()[:600]
 
         except Exception as e:
             print("Gemini error:", e)
@@ -230,14 +230,13 @@ def ask_arnie(prompt, tsb, load):
 
 # --- MAIN ---
 def main():
-    # ✅ Утренний лаг (ключевой фикс)
+    # ✅ фикс времени (утренний лаг)
     now = datetime.utcnow() + timedelta(hours=1) - timedelta(hours=3)
     today = now.strftime("%Y-%m-%d")
 
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
-    # только сегодня
     today_acts = [a for a in activities if a.get("start_date_local","")[:10] == today]
     today_acts = today_acts[::-1]
 
@@ -250,8 +249,6 @@ def main():
 
     # --- LOAD ---
     ctl, atl, tsb = calc_training_metrics(activities)
-
-    # --- VO2 ---
     vo2 = estimate_vo2max(activities)
 
     act_text = ""
@@ -270,12 +267,25 @@ def main():
     if not act_text:
         act_text = "Сегодня отдыхаешь."
 
-    # --- AI ---
+    # --- УМНЫЙ PROMPT ---
     prompt = f"""
-    Пульс {rhr}, HRV {hrv}
-    CTL {ctl}, ATL {atl}, TSB {tsb}
-    Нагрузка {total_tss}
-    """
+Ты — спортивный аналитик (ARNI).
+
+Дай краткий анализ (3-4 строки, без воды):
+
+Данные:
+Пульс покоя: {rhr}
+HRV: {hrv}
+CTL: {ctl}
+ATL: {atl}
+TSB: {tsb}
+Нагрузка сегодня: {total_tss}
+
+Нужно:
+1. Состояние (перегруз / норма / свежий)
+2. Динамика формы
+3. Что делать сегодня
+"""
 
     ai = ask_arnie(prompt, tsb, total_tss)
 
