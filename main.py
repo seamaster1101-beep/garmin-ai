@@ -253,13 +253,14 @@ def main():
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
-    # --- РАСЧЕТ TSB (ФОРМЫ) ---
-    # ATL (усталость за 7 дней), CTL (фитнес за 42 дня)
+    # --- 1. РАСЧЕТ TSB (Всегда, чтобы данные были доступны везде) ---
     all_tss = []
     for a in activities:
-        dt = datetime.strptime(a.get("start_date_local", "2000-01-01")[:10], "%Y-%m-%d")
-        days_ago = (datetime.utcnow() - dt).days
-        all_tss.append((days_ago, calc_tss(a)))
+        try:
+            dt = datetime.strptime(a.get("start_date_local", "2000-01-01")[:10], "%Y-%m-%d")
+            days_ago = (datetime.utcnow() - dt).days
+            all_tss.append((days_ago, calc_tss(a)))
+        except: continue
 
     atl = sum(tss for d, tss in all_tss if d <= 7) / 7
     ctl = sum(tss for d, tss in all_tss if d <= 42) / 42
@@ -268,14 +269,14 @@ def main():
     rhr = morning.get("Resting_HR", "Н/Д")
     hrv = morning.get("HRV", "Н/Д")
     f_age = fitness_age(rhr, hrv) 
+    
+    # Считаем готовность ОДИН РАЗ здесь, чтобы использовать и в утреннем, и в тренировочном отчете
+    r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
 
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
 
+    # --- 2. УТРЕННИЙ РЕЖИМ ---
     if not today_acts:
-        # Передаем полученный TSB в расчет готовности
-        r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
-        
-        # Профессиональный промпт (без воды)
         prompt = (
             f"Ты — элитный спортивный директор Арни. Тон: профессиональный, без воды. "
             f"Данные атлета: HRV {hrv}, Пульс {rhr}, Сон {morning.get('Sleep_Hours')}ч, "
@@ -284,11 +285,10 @@ def main():
             f"Готовность: {r_val}/5. "
             f"\nИНСТРУКЦИЯ: "
             f"1. Учитывай TSB: если он ниже -25, требуй отдыха. "
-            f"2. Атлету 63 года. HRV > 70 — это элитный уровень, отметь это кратко. "
+            f"2. Атлету 63 года. HRV > 70 — это элитный уровень. "
             f"3. Оцени: нужно ли сегодня восстанавливаться или можно грузиться. "
             f"4. ПИШИ СТРОГО НА РУССКОМ, КОРОТКО И ПО ДЕЛУ."
         )
-        
         ai_response = ask_arnie(prompt, r_text)
 
         report = (
@@ -300,39 +300,34 @@ def main():
             f"🧬 Fitness Age: {f_age}\n\n"
             f"🤖 *АРНИ:* \n_{ai_response}_"
         )
-        
         send_tg(report)
         print("✅ MORNING REPORT SENT")
         return
 
-    # ==========================================
-    # 2. АНАЛИЗ ТРЕНИРОВКИ (Если есть активность)
-    # ==========================================
+    # --- 3. АНАЛИЗ ТРЕНИРОВКИ ---
     last = sorted(today_acts, key=lambda x: x.get("start_date_local"))[-1]
-    tss = calc_tss(last)
+    tss_last = calc_tss(last)
     dist = round(last.get("distance", 0) / 1000, 2)
     name = last.get("name", "Тренировка")
 
-    # Формируем ОДИН четкий промпт
-    prompt = f"""
-Ты — Арнольд, жесткий тренер. Проанализируй тренировку: {name}.
-Дистанция: {dist} км, TSS: {tss}. Пульс: {rhr}, HRV: {hrv}.
-Дай оценку качества, скажи, не халявил ли я, и что делать дальше. 
-
-ВАЖНО: Пиши в своем стиле строго на русском языке.
-"""
-    
-    fallback = "Тренировка засчитана. Хорошая работа."
-    ai_response = ask_arnie(prompt, fallback)
+    prompt = (
+        f"Ты — опытный коуч Арнольд. Профессиональный разбор сессии: {name}. "
+        f"Дистанция: {dist}км, TSS: {tss_last}. Пульс в покое утром был {rhr}. "
+        f"Контекст: Готовность была {r_val}/5, TSB {tsb}. "
+        f"\nИНСТРУКЦИИ: "
+        f"1. Оцени качество работы. "
+        f"2. ПИШИ СТРОГО НА РУССКОМ, в своем стиле, но БЕЗ ЛИШНЕЙ ВОДЫ. "
+        f"3. Дай краткий совет на завтра."
+    )
+    ai_response = ask_arnie(prompt, "Хорошая работа.")
 
     report = (
         f"🏃 *ТРЕНИРОВКА*\n\n"
         f"*{name}*\n"
-        f"📍 {dist} км | 📈 TSS {tss}\n"
+        f"📍 {dist} км | 📈 TSS {tss_last}\n"
         f"🧬 Fitness Age: {f_age}\n\n"
-        f"🤖 АРНИ:\n_{ai_response}_"
+        f"🤖 *АРНИ:* \n_{ai_response}_"
     )
-
     send_tg(report)
     print("✅ TRAINING REPORT SENT")
 
