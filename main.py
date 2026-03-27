@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import sys
 
 # --- CONFIG ---
+BIO_AGE = 63  # твой возраст
+
 def get_env(name):
     val = os.environ.get(name)
     if not val:
@@ -22,12 +24,12 @@ TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
 GEMINI_API_KEY = get_env('GEMINI_API_KEY')
 GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
-FTP = 250  # ⚠️ поставь свой реальный FTP
+FTP = 250
 
 # --- TELEGRAM ---
 def send_tg(msg):
     if len(msg) > 4000:
-        msg = msg[:3900] + "\n\n...(обрезано)"
+        msg = msg[:3900]
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
@@ -47,11 +49,8 @@ def get_strava_data():
             'grant_type': 'refresh_token'
         }, timeout=15)
 
-        data = res.json()
-        token = data.get('access_token')
-
+        token = res.json().get('access_token')
         if not token:
-            print("❌ Нет access_token")
             return []
 
         r = requests.get(
@@ -61,17 +60,8 @@ def get_strava_data():
             timeout=15
         )
 
-        if r.status_code != 200:
-            print("Strava error:", r.text)
-            return []
-
         data = r.json()
-
-        if not isinstance(data, list):
-            print("❌ Strava вернул не список:", data)
-            return []
-
-        return data
+        return data if r.status_code == 200 and isinstance(data, list) else []
 
     except Exception as e:
         print("Strava error:", e)
@@ -92,12 +82,10 @@ def get_morning_metrics(target_date):
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
         records = sheet.get_all_records()
 
-        # сначала сегодня
         for row in reversed(records):
             if target_date in str(row.get('Date', '')):
                 return row
 
-        # fallback на вчера
         yesterday = (datetime.strptime(target_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         for row in reversed(records):
             if yesterday in str(row.get('Date', '')):
@@ -109,201 +97,150 @@ def get_morning_metrics(target_date):
 
     return {}
 
-# --- TRAINING LOAD (TSS) ---
-def calc_tss(activity):
-    watts = activity.get("average_watts")
-    duration = activity.get("moving_time", 0)
-
-    if not watts or watts == 0:
-        return 0
-
-    intensity = watts / FTP
-    hours = duration / 3600
-
-    return round(hours * (intensity ** 2) * 100, 1)
-
-# --- CTL / ATL / TSB ---
-def calc_training_metrics(activities):
-    daily = {}
-
-    for a in activities:
-        d = a.get("start_date_local", "")[:10]
-        tss = calc_tss(a)
-        daily[d] = daily.get(d, 0) + tss
-
-    ctl = 0
-    atl = 0
-
-    for d in sorted(daily.keys()):
-        load = daily[d]
-        ctl += (load - ctl) * (1/42)
-        atl += (load - atl) * (1/7)
-
-    tsb = ctl - atl
-
-    return round(ctl,1), round(atl,1), round(tsb,1)
-
-# --- VO2max (очищенный) ---
-def estimate_vo2max(activities):
-    vo2_list = []
-
-    for a in activities:
-        speed = a.get("average_speed")
-        hr = a.get("average_heartrate")
-
-        if speed and hr and 2 < speed < 8 and 80 < hr < 180:
-            vo2 = (speed * 3.6) * 0.2 + 3.5
-            vo2_list.append(vo2)
-
-    if len(vo2_list) >= 3:
-        return round(sum(vo2_list)/len(vo2_list),1)
-
-    return "Н/Д"
-
-# --- POWER ZONES ---
-def power_zone(w):
+# --- TSS ---
+def calc_tss(a):
+    w = a.get("average_watts")
+    t = a.get("moving_time", 0)
     if not w:
-        return "N/A"
-    z = w / FTP
-    if z < 0.55: return "Z1"
-    if z < 0.75: return "Z2"
-    if z < 0.90: return "Z3"
-    if z < 1.05: return "Z4"
-    if z < 1.20: return "Z5"
-    return "Z6+"
+        return 0
+    return round((t/3600)*(w/FTP)**2*100,1)
 
-# --- FITNESS ---
-def calc_fitness(rhr, hrv):
+# --- VO2 ---
+def estimate_vo2max(activities):
+    vals = []
+    for a in activities:
+        s = a.get("average_speed")
+        hr = a.get("average_heartrate")
+        if s and hr and 2 < s < 8 and 80 < hr < 180:
+            vals.append((s*3.6)*0.2 + 3.5)
+    if len(vals) >= 3:
+        v = round(sum(vals)/len(vals),1)
+        return v if v >= 20 else None
+    return None
+
+# --- FITNESS AGE ---
+def fitness_age(rhr, hrv, vo2):
     try:
         rhr = int(rhr)
         hrv = int(hrv)
-        score = 70 - (rhr - 45)*2 + (hrv - 70)*0.5
-        return max(10, min(100, int(score)))
+        score = 0
+
+        if rhr < 50: score += 2
+        if hrv > 80: score += 2
+        if vo2 and vo2 > 45: score += 2
+        if vo2 and vo2 > 50: score += 1
+
+        return BIO_AGE - score
     except:
-        return "Н/Д"
+        return BIO_AGE
 
-def detect_status(score):
-    if isinstance(score, str):
-        return "Н/Д"
-    if score > 80: return "Готов 🚀"
-    if score > 60: return "Норма 👍"
-    if score > 40: return "Устал 😐"
-    return "Перегруз ⚠️"
-
-# --- LOCAL FALLBACK AI ---
-def local_ai(tsb, load):
-    if tsb < -10:
-        return "Перегруз. Только восстановление."
-    if tsb < 0:
-        return "Рабочая нагрузка. Без жести."
-    if tsb > 5:
-        return "Свежий. Можно интенсив."
-    return "Баланс норм."
-
-# --- GEMINI (улучшенный промпт) ---
-def ask_arnie(prompt, tsb, load):
-    urls = [
-        f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
-    ]
-
-    payload = {"contents": [{"parts": [{"text": prompt[:1200]}]}]}
-
-    for url in urls:
-        try:
-            res = requests.post(url, json=payload, timeout=20)
-
-            if res.status_code != 200:
-                print("Gemini fail:", res.status_code)
-                continue
-
-            data = res.json()
-            text = data.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text")
-
-            if text:
-                return text.strip()[:600]
-
-        except Exception as e:
-            print("Gemini error:", e)
-
-    return local_ai(tsb, load)
+# --- AI ---
+def ask_arnie(prompt):
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    try:
+        r = requests.post(url, json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=20)
+        txt = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text")
+        if txt:
+            return txt.strip()[:600]
+    except:
+        pass
+    return "Нет анализа."
 
 # --- MAIN ---
 def main():
-    # ✅ фикс времени (утренний лаг)
     now = datetime.utcnow() + timedelta(hours=1) - timedelta(hours=3)
     today = now.strftime("%Y-%m-%d")
+    yesterday = (datetime.strptime(today,"%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
 
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
-    today_acts = [a for a in activities if a.get("start_date_local","")[:10] == today]
-    today_acts = today_acts[::-1]
+    rhr = morning.get("Resting_HR","Н/Д")
+    hrv = morning.get("HRV","Н/Д")
 
-    # --- MORNING ---
-    rhr = morning.get("Resting_HR", "Н/Д")
-    hrv = morning.get("HRV", "Н/Д")
+    # сегодняшние активности
+    today_acts = [a for a in activities if a.get("start_date_local","")[:10]==today]
 
-    fitness = calc_fitness(rhr, hrv)
-    status = detect_status(fitness)
+    # вчера
+    y_tss = sum(calc_tss(a) for a in activities if a.get("start_date_local","")[:10]==yesterday)
 
-    # --- LOAD ---
-    ctl, atl, tsb = calc_training_metrics(activities)
     vo2 = estimate_vo2max(activities)
+    f_age = fitness_age(rhr, hrv, vo2)
 
-    act_text = ""
-    total_tss = 0
+    # =========================
+    # УТРЕННИЙ РЕЖИМ
+    # =========================
+    if not today_acts:
 
-    for a in today_acts:
-        name = a.get("name", "Тренировка")
-        dist = round(a.get("distance",0)/1000,2)
-        watts = a.get("average_watts")
-        zone = power_zone(watts)
-        tss = calc_tss(a)
-
-        total_tss += tss
-        act_text += f"• {name}: {dist} км | {zone} | TSS {tss}\n"
-
-    if not act_text:
-        act_text = "Сегодня отдыхаешь."
-
-    # --- УМНЫЙ PROMPT ---
-    prompt = f"""
-Ты — спортивный аналитик (ARNI).
-
-Дай краткий анализ (3-4 строки, без воды):
+        prompt = f"""
+Ты тренер.
 
 Данные:
-Пульс покоя: {rhr}
-HRV: {hrv}
-CTL: {ctl}
-ATL: {atl}
-TSB: {tsb}
-Нагрузка сегодня: {total_tss}
+Пульс {rhr}
+HRV {hrv}
+Вчера нагрузка {y_tss}
 
-Нужно:
-1. Состояние (перегруз / норма / свежий)
-2. Динамика формы
-3. Что делать сегодня
+Ответ 3 строки:
+
+Восстановление:
+Нервная система:
+Готовность:
 """
 
-    ai = ask_arnie(prompt, tsb, total_tss)
+        ai = ask_arnie(prompt)
 
-    # --- REPORT ---
+        report = (
+            f"🌅 *УТРЕННИЙ СТАТУС*\n\n"
+            f"❤️ Пульс: {rhr}\n"
+            f"🌀 HRV: {hrv}\n"
+            f"📊 Вчера TSS: {y_tss}\n"
+            f"🧬 Fitness Age: {f_age}\n\n"
+            f"🤖 АРНИ:\n_{ai}_"
+        )
+
+        send_tg(report)
+        print("✅ MORNING")
+        return
+
+    # =========================
+    # АНАЛИЗ ПОСЛЕДНЕЙ ТРЕНИРОВКИ
+    # =========================
+    last = sorted(today_acts, key=lambda x: x.get("start_date_local"))[-1]
+
+    tss = calc_tss(last)
+    dist = round(last.get("distance",0)/1000,2)
+    name = last.get("name","Тренировка")
+
+    prompt = f"""
+Ты тренер.
+
+Проанализируй тренировку:
+
+{name}
+Дистанция {dist} км
+TSS {tss}
+HRV {hrv}
+Пульс {rhr}
+
+Ответ:
+
+Качество:
+Нагрузка:
+Что дальше:
+"""
+
+    ai = ask_arnie(prompt)
+
     report = (
-        f"🏋️ *ARNI REPORT*\n\n"
-        f"🔥 Fitness: {fitness}/100\n"
-        f"🚦 Статус: {status}\n\n"
-        f"📊 CTL: {ctl} | ATL: {atl} | TSB: {tsb}\n"
-        f"⚡ Load today: {total_tss}\n"
-        f"🫁 VO2max: {vo2}\n\n"
-        f"📊 Утро: ❤️ {rhr} | 🌀 {hrv}\n\n"
-        f"🏃 Активность:\n{act_text}\n"
+        f"🏃 *ТРЕНИРОВКА*\n\n"
+        f"{name}\n"
+        f"{dist} км | TSS {tss}\n"
+        f"🧬 Fitness Age: {f_age}\n\n"
         f"🤖 АРНИ:\n_{ai}_"
     )
 
     send_tg(report)
-    print("✅ DONE")
+    print("✅ TRAINING")
 
 if __name__ == "__main__":
     main()
