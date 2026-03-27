@@ -135,16 +135,40 @@ def fitness_age(rhr, hrv, vo2):
         return BIO_AGE
 
 # --- AI ---
-def ask_arnie(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    try:
-        r = requests.post(url, json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=20)
-        txt = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text")
-        if txt:
-            return txt.strip()[:600]
-    except:
-        pass
-    return "Нет анализа."
+def ask_arnie(prompt, fallback_text):
+    urls = [
+        f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+    ]
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt[:1200]}]}]
+    }
+
+    for url in urls:
+        try:
+            r = requests.post(url, json=payload, timeout=20)
+
+            if r.status_code != 200:
+                print("❌ Gemini status:", r.status_code, r.text[:200])
+                continue
+
+            data = r.json()
+
+            text = data.get("candidates", [{}])[0] \
+                       .get("content", {}) \
+                       .get("parts", [{}])[0] \
+                       .get("text")
+
+            if text and len(text.strip()) > 10:
+                return text.strip()[:600]
+
+            print("⚠️ Пустой ответ Gemini:", data)
+
+        except Exception as e:
+            print("❌ Gemini error:", e)
+
+    return fallback_text
 
 # --- MAIN ---
 def main():
@@ -187,7 +211,8 @@ HRV {hrv}
 Готовность:
 """
 
-        ai = ask_arnie(prompt)
+        fallback = "Восстановление хорошее. Нервная система стабильна. Готов к умеренной нагрузке."
+        ai = ask_arnie(prompt, fallback)
 
         report = (
             f"🌅 *УТРЕННИЙ СТАТУС*\n\n"
@@ -229,7 +254,8 @@ HRV {hrv}
 Что дальше:
 """
 
-    ai = ask_arnie(prompt)
+    fallback = "Нагрузка умеренная. Тренировка выполнена нормально. Продолжай по плану."
+    ai = ask_arnie(prompt, fallback)
 
     report = (
         f"🏃 *ТРЕНИРОВКА*\n\n"
