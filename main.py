@@ -123,55 +123,41 @@ def fitness_age(rhr, hrv, vo2):
     try:
         rhr = int(rhr)
         hrv = int(hrv)
-        # Базовая точка — твой реальный возраст
-        age_diff = 0
+        # Базовая точка. Для 60+ норма RHR ~65, HRV ~30.
+        # Твои показатели 45 и 89 — это уровень атлета.
         
-        # RHR: норма для 60 лет ~65-70. Твои 44-45 — это уровень элиты.
-        age_diff -= (65 - rhr) * 0.5  # за каждый удар ниже нормы убираем полгода
+        # Считаем бонусы (минус годы)
+        rhr_bonus = (65 - rhr) * 0.6  # за низкий пульс
+        hrv_bonus = (hrv - 30) * 0.4  # за высокий HRV
         
-        # HRV: для 60 лет норма ~25-35. Твои 89 — это космос.
-        age_diff -= (hrv - 35) * 0.4  # за каждый пункт выше нормы
-        
-        # VO2max: если есть данные
+        vo2_bonus = 0
         if vo2:
-            age_diff -= (vo2 - 30) * 1.0
+            vo2_bonus = (vo2 - 30) * 1.2 # за выносливость
             
-        return round(max(30, BIO_AGE + age_diff)) # не даем стать моложе 30
+        res = BIO_AGE - (rhr_bonus + hrv_bonus + vo2_bonus)
+        return int(max(30, round(res))) # ограничим 30 годами, чтобы не уйти в юность
     except:
         return BIO_AGE
 
 # --- AI ---
 def ask_arnie(prompt, fallback_text):
-    urls = [
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    ]
-
+    # Оставляем только один проверенный URL
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
     payload = {
-        "contents": [{"parts": [{"text": prompt[:1200]}]}]
+        "contents": [{"parts": [{"text": prompt}]}]
     }
 
-    for url in urls:
-        try:
-            r = requests.post(url, json=payload, timeout=20)
-
-            if r.status_code != 200:
-                print("❌ Gemini status:", r.status_code, r.text[:200])
-                continue
-
+    try:
+        r = requests.post(url, json=payload, timeout=25)
+        if r.status_code == 200:
             data = r.json()
-
-            text = data.get("candidates", [{}])[0] \
-                       .get("content", {}) \
-                       .get("parts", [{}])[0] \
-                       .get("text")
-
-            if text and len(text.strip()) > 10:
-                return text.strip()[:600]
-
-            print("⚠️ Пустой ответ Gemini:", data)
-
-        except Exception as e:
-            print("❌ Gemini error:", e)
+            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text")
+            if text:
+                return text.strip()
+        print(f"❌ Gemini Error {r.status_code}: {r.text[:100]}")
+    except Exception as e:
+        print(f"❌ Connection Error: {e}")
 
     return fallback_text
 
@@ -202,21 +188,10 @@ def main():
     if not today_acts:
 
         prompt = f"""
-Ты — Арнольд, легендарный тренер. Проанализируй состояние атлета (63 года).
-Данные: Пульс {rhr}, HRV {hrv}, вчерашний TSS {y_tss}.
-Дай развернутый, ироничный и мотивирующий разбор. Оцени восстановление и дай совет по интенсивности на сегодня.
-"""
+Ты — Арнольд, легендарный тренер. Проанализируй состояние атлета ({BIO_AGE} лет).
+Данные: Пульс {rhr}, HRV {hrv}, вчерашний TSS {y_tss}. Твоя оценка Fitness Age: {f_age}.
 
-Данные:
-Пульс {rhr}
-HRV {hrv}
-Вчера нагрузка {y_tss}
-
-Ответ 3 строки:
-
-Восстановление:
-Нервная система:
-Готовность:
+Дай развернутый, ироничный и мотивирующий разбор. Оцени восстановление и дай совет по интенсивности на сегодня. Не ограничивайся тремя строками, напиши нормально.
 """
 
         fallback = "Восстановление хорошее. Нервная система стабильна. Готов к умеренной нагрузке."
