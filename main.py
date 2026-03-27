@@ -123,22 +123,27 @@ def fitness_age(rhr, hrv, vo2):
     try:
         rhr = int(rhr)
         hrv = int(hrv)
-        score = 0
-
-        if rhr < 50: score += 2
-        if hrv > 80: score += 2
-        if vo2 and vo2 > 45: score += 2
-        if vo2 and vo2 > 50: score += 1
-
-        return BIO_AGE - score
+        # Базовая точка — твой реальный возраст
+        age_diff = 0
+        
+        # RHR: норма для 60 лет ~65-70. Твои 44-45 — это уровень элиты.
+        age_diff -= (65 - rhr) * 0.5  # за каждый удар ниже нормы убираем полгода
+        
+        # HRV: для 60 лет норма ~25-35. Твои 89 — это космос.
+        age_diff -= (hrv - 35) * 0.4  # за каждый пункт выше нормы
+        
+        # VO2max: если есть данные
+        if vo2:
+            age_diff -= (vo2 - 30) * 1.0
+            
+        return round(max(30, BIO_AGE + age_diff)) # не даем стать моложе 30
     except:
         return BIO_AGE
 
 # --- AI ---
 def ask_arnie(prompt, fallback_text):
     urls = [
-        f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     ]
 
     payload = {
@@ -197,7 +202,10 @@ def main():
     if not today_acts:
 
         prompt = f"""
-Ты тренер.
+Ты — Арнольд, легендарный тренер. Проанализируй состояние атлета (63 года).
+Данные: Пульс {rhr}, HRV {hrv}, вчерашний TSS {y_tss}.
+Дай развернутый, ироничный и мотивирующий разбор. Оцени восстановление и дай совет по интенсивности на сегодня.
+"""
 
 Данные:
 Пульс {rhr}
