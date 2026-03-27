@@ -180,93 +180,129 @@ def ask_arnie(prompt, fallback_text):
     return fallback_text
 
 # --- READINESS CALCULATION ---
-def get_readiness(morning):
-    score = 0
+def get_readiness(morning, tsb=0):
+    # Базовая готовность 2.5
+    readiness_score = 2.5
+    
     try:
-        # 1. HRV (Колонка F)
-        hrv = morning.get("HRV")
-        if hrv and hrv != "Н/Д":
-            val = int(hrv)
-            if val > 80: score += 2  # У тебя отличные показатели HRV, поднял планку
-            elif val < 50: score -= 2
+        # 1. HRV (Индекс 5) - Вес: 1.0
+        hrv_val = morning.get("HRV")
+        if hrv_val and hrv_val != "Н/Д":
+            val = int(hrv_val)
+            if val > 75: readiness_score += 1.0
+            elif val > 65: readiness_score += 0.5
+            elif val < 45: readiness_score -= 1.0
 
-        # 2. Пульс покоя (Колонка E)
-        rhr = morning.get("Resting_HR")
-        if rhr and rhr != "Н/Д":
-            val = int(rhr)
-            if val < 46: score += 1
-            elif val > 55: score -= 1
+        # 2. Пульс покоя (Индекс 4) - Вес: 0.5
+        rhr_val = morning.get("Resting_HR")
+        if rhr_val and rhr_val != "Н/Д":
+            val = int(rhr_val)
+            if 0 < val < 50: readiness_score += 0.5
+            elif val > 60: readiness_score -= 0.5
 
-        # 3. Сон (Колонка I)
-        slp = morning.get("Sleep_Hours")
-        if slp:
-            # Заменяем запятую на точку, если она есть (для Google Sheets)
-            val = float(str(slp).replace(',', '.'))
-            if val >= 7: score += 1
-            elif val < 6: score -= 1
+        # 3. Сон (Индекс 8) - Вес: 1.5
+        sleep_hrs = morning.get("Sleep_Hours")
+        if sleep_hrs:
+            val = float(str(sleep_hrs).replace(',', '.'))
+            if val >= 7.5: readiness_score += 1.0
+            elif val < 6.0: readiness_score -= 1.0
 
-        # 4. Body Battery (Колонка G)
-        bb = morning.get("Body_Battery")
-        if bb:
-            val = int(bb)
-            if val > 85: score += 1
-            elif val < 60: score -= 1
+        # 4. Body Battery (Индекс 6) - Вес: 0.5
+        bb_val = morning.get("Body_Battery")
+        if bb_val:
+            val = int(bb_val)
+            if val > 80: readiness_score += 0.5
+            elif val < 40: readiness_score -= 0.5
 
-        # Итоговый расчет (базово 2 балла + бонусы/штрафы)
-        final_score = max(0, min(5, score + 2)) 
-        
-        if final_score >= 4:
-            text = "🔥 Отличная готовность — можно делать тяжёлую тренировку"
-        elif final_score >= 3:
-            text = "👍 Нормальная готовность — допустима умеренная нагрузка"
-        elif final_score >= 2:
-            text = "⚠️ Сниженная готовность — лучше лёгкая тренировка"
-        else:
-            text = "❌ Низкая готовность — восстановление или отдых"
-        
-        return final_score, text
+        # 5. Ограничитель по перегрузке (TSB)
+        t_val = float(tsb) if tsb else 0
+        if t_val < -25: readiness_score -= 1.5
+        elif t_val < -15: readiness_score -= 0.5
+
     except Exception as e:
-        print(f"Readiness Error: {e}")
-        return 2, "👍 Нормальная готовность (ошибка расчета)"
+        print(f"Readiness Calculation Error: {e}")
+
+    # Ограничиваем рамками 0 и 5
+    readiness_score = max(0, min(5, round(readiness_score, 1)))
+
+    # Интерпретация и иконки
+    if readiness_score >= 4:
+        readiness_text = "Отличная готовность — идеальный день для рекордов"
+        rd_icon = "🔥🏆"
+    elif readiness_score >= 3:
+        readiness_text = "Хорошая готовность — можно тренироваться уверенно"
+        rd_icon = "🟢🟢"
+    elif readiness_score >= 2:
+        readiness_text = "Средняя готовность — работаем, но без фанатизма"
+        rd_icon = "🟢🟡"
+    elif readiness_score >= 1:
+        readiness_text = "Низкая готовность — лучше восстановиться"
+        rd_icon = "🟠"
+    else:
+        readiness_text = "Критическая усталость — строгий отдых"
+        rd_icon = "🔴"
+
+    return readiness_score, readiness_text, rd_icon
 
 # --- MAIN ---
 def main():
-    now = datetime.utcnow() + timedelta(hours=1) # Твое локальное время
+    now = datetime.utcnow() + timedelta(hours=1)
     today = now.strftime("%Y-%m-%d")
     yesterday = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
 
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
+    # --- РАСЧЕТ TSB (ФОРМЫ) ---
+    # ATL (усталость за 7 дней), CTL (фитнес за 42 дня)
+    all_tss = []
+    for a in activities:
+        dt = datetime.strptime(a.get("start_date_local", "2000-01-01")[:10], "%Y-%m-%d")
+        days_ago = (datetime.utcnow() - dt).days
+        all_tss.append((days_ago, calc_tss(a)))
+
+    atl = sum(tss for d, tss in all_tss if d <= 7) / 7
+    ctl = sum(tss for d, tss in all_tss if d <= 42) / 42
+    tsb = round(ctl - atl, 1)
+
     rhr = morning.get("Resting_HR", "Н/Д")
     hrv = morning.get("HRV", "Н/Д")
-    vo2 = estimate_vo2max(activities)
-    f_age = fitness_age(rhr, hrv) # Используем фитнес-возраст
+    f_age = fitness_age(rhr, hrv) 
 
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
 
     if not today_acts:
-        # Считаем готовность
-        r_val, r_text = get_readiness(morning)
+        # Передаем полученный TSB в расчет готовности
+        r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
         
-        prompt = f"""
-Ты — Арнольд, легендарный тренер. Проанализируй состояние атлета ({BIO_AGE} лет).
-Данные: Пульс {rhr}, HRV {hrv}, Готовность {r_val}/5 ({r_text}).
-Твой Fitness Age: {f_age}. Вчерашний TSS: {sum(calc_tss(a) for a in activities if a.get('start_date_local','')[:10]==yesterday)}.
-
-Дай развернутый, ироничный разбор на РУССКОМ языке. Оцени цифры и дай приказ на сегодня.
-"""
-        ai_response = ask_arnie(prompt, "Восстановление в норме. Работай по самочувствию.")
+        # Профессиональный промпт (без воды)
+        prompt = (
+            f"Ты — элитный спортивный директор Арни. Тон: профессиональный, без воды. "
+            f"Данные атлета: HRV {hrv}, Пульс {rhr}, Сон {morning.get('Sleep_Hours')}ч, "
+            f"BB {morning.get('Body_Battery')}, Fit Age {f_age}. "
+            f"Форма: CTL {round(ctl,1)}, ATL {round(atl,1)}, TSB {tsb}. "
+            f"Готовность: {r_val}/5. "
+            f"\nИНСТРУКЦИЯ: "
+            f"1. Учитывай TSB: если он ниже -25, требуй отдыха. "
+            f"2. Атлету 63 года. HRV > 70 — это элитный уровень, отметь это кратко. "
+            f"3. Оцени: нужно ли сегодня восстанавливаться или можно грузиться. "
+            f"4. ПИШИ СТРОГО НА РУССКОМ, КОРОТКО И ПО ДЕЛУ."
+        )
+        
+        ai_response = ask_arnie(prompt, r_text)
 
         report = (
-            f"🌅 *УТРЕННИЙ СТАТУС*\n\n"
+            f"🌅 *УТРЕННИЙ СТАТУС* {r_icon}\n\n"
             f"❤️ Пульс: {rhr} | 🌀 HRV: {hrv}\n"
             f"🔋 *Готовность: {r_val}/5*\n"
+            f"📊 Форма (TSB): {tsb}\n"
             f"📢 {r_text}\n"
             f"🧬 Fitness Age: {f_age}\n\n"
-            f"🤖 АРНИ:\n_{ai_response}_"
+            f"🤖 *АРНИ:* \n_{ai_response}_"
         )
+        
         send_tg(report)
+        print("✅ MORNING REPORT SENT")
         return
 
     # ==========================================
