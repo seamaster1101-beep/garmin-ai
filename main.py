@@ -119,46 +119,64 @@ def estimate_vo2max(activities):
     return None
 
 # --- FITNESS AGE ---
-def fitness_age(rhr, hrv, vo2):
+def fitness_age(rhr, hrv, fat=18.3): # Жир 18.3 из твоего лога S2
     try:
-        rhr = int(rhr)
-        hrv = int(hrv)
-        # Базовая точка. Для 60+ норма RHR ~65, HRV ~30.
-        # Твои показатели 45 и 89 — это уровень атлета.
+        actual_age = 63 
+        # 1. Влияние пульса покоя (RHR)
+        rhr_val = int(rhr) if rhr and rhr != "Н/Д" else 60
+        rhr_impact = (rhr_val - 55) * 0.4  
         
-        # Считаем бонусы (минус годы)
-        rhr_bonus = (65 - rhr) * 0.6  # за низкий пульс
-        hrv_bonus = (hrv - 30) * 0.4  # за высокий HRV
+        # 2. Влияние жира (Body Fat) - атлетический уровень
+        fat_val = float(fat)
+        fat_impact = (fat_val - 22) * 0.5  
         
-        vo2_bonus = 0
-        if vo2:
-            vo2_bonus = (vo2 - 30) * 1.2 # за выносливость
-            
-        res = BIO_AGE - (rhr_bonus + hrv_bonus + vo2_bonus)
-        return int(max(30, round(res))) # ограничим 30 годами, чтобы не уйти в юность
+        # 3. Влияние HRV
+        hrv_val = int(hrv) if hrv and hrv != "Н/Д" else 45
+        hrv_impact = (hrv_val - 45) * 0.1  
+        
+        # Итоговый расчет
+        calculated = actual_age + rhr_impact + fat_impact - hrv_impact
+        
+        # Ограничиваем разумными пределами, как было в старом коде
+        return round(max(48, min(actual_age + 2, calculated)), 1)
     except:
-        return BIO_AGE
+        return 63
 
 # --- AI ---
 def ask_arnie(prompt, fallback_text):
-    # Оставляем только один проверенный URL
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
-    }
-
     try:
-        r = requests.post(url, json=payload, timeout=25)
-        if r.status_code == 200:
-            data = r.json()
-            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text")
-            if text:
-                return text.strip()
-        print(f"❌ Gemini Error {r.status_code}: {r.text[:100]}")
+        # 1. Сначала узнаем, какие модели сейчас живы
+        res_m = requests.get(
+            f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", 
+            timeout=10
+        )
+        models_data = res_m.json()
+        available = [
+            m["name"] for m in models_data.get("models", []) 
+            if "generateContent" in m.get("supportedGenerationMethods", [])
+        ]
+        
+        if not available:
+            return fallback_text
+            
+        # 2. Выбираем Flash (она быстрее и стабильнее)
+        target_model = next((m for m in available if "flash" in m), available[0])
+        
+        # 3. Делаем сам запрос
+        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
+        res_ai = requests.post(
+            url, 
+            json={"contents": [{"parts": [{"text": prompt}]}]}, 
+            timeout=30
+        )
+        
+        data = res_ai.json()
+        if "candidates" in data and data["candidates"]:
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            
     except Exception as e:
-        print(f"❌ Connection Error: {e}")
-
+        print(f"AI Error: {e}")
+        
     return fallback_text
 
 # --- MAIN ---
@@ -176,26 +194,24 @@ def main():
     # сегодняшние активности
     today_acts = [a for a in activities if a.get("start_date_local","")[:10]==today]
 
-    # вчера
+    # вчерашний TSS
     y_tss = sum(calc_tss(a) for a in activities if a.get("start_date_local","")[:10]==yesterday)
 
     vo2 = estimate_vo2max(activities)
-    f_age = fitness_age(rhr, hrv, vo2)
+    f_age = fitness_age(rhr, hrv)
 
-    # =========================
-    # УТРЕННИЙ РЕЖИМ
-    # =========================
+    # ==========================================
+    # 1. УТРЕННИЙ РЕЖИМ (Если еще не тренировался)
+    # ==========================================
     if not today_acts:
-
         prompt = f"""
 Ты — Арнольд, легендарный тренер. Проанализируй состояние атлета ({BIO_AGE} лет).
 Данные: Пульс {rhr}, HRV {hrv}, вчерашний TSS {y_tss}. Твоя оценка Fitness Age: {f_age}.
 
-Дай развернутый, ироничный и мотивирующий разбор. Оцени восстановление и дай совет по интенсивности на сегодня. Не ограничивайся тремя строками, напиши нормально.
+Дай развернутый, ироничный и мотивирующий разбор. Оцени восстановление и дай совет по интенсивности на сегодня. Не ограничивайся тремя строками.
 """
-
-        fallback = "Восстановление хорошее. Нервная система стабильна. Готов к умеренной нагрузке."
-        ai = ask_arnie(prompt, fallback)
+        fallback = "Восстановление в норме. Работай по самочувствию."
+        ai_response = ask_arnie(prompt, fallback)
 
         report = (
             f"🌅 *УТРЕННИЙ СТАТУС*\n\n"
@@ -203,53 +219,41 @@ def main():
             f"🌀 HRV: {hrv}\n"
             f"📊 Вчера TSS: {y_tss}\n"
             f"🧬 Fitness Age: {f_age}\n\n"
-            f"🤖 АРНИ:\n_{ai}_"
+            f"🤖 АРНИ:\n_{ai_response}_"
         )
 
         send_tg(report)
-        print("✅ MORNING")
+        print("✅ MORNING REPORT SENT")
         return
 
-    # =========================
-    # АНАЛИЗ ПОСЛЕДНЕЙ ТРЕНИРОВКИ
-    # =========================
+    # ==========================================
+    # 2. АНАЛИЗ ТРЕНИРОВКИ (Если есть активность)
+    # ==========================================
     last = sorted(today_acts, key=lambda x: x.get("start_date_local"))[-1]
-
     tss = calc_tss(last)
-    dist = round(last.get("distance",0)/1000,2)
-    name = last.get("name","Тренировка")
+    dist = round(last.get("distance", 0) / 1000, 2)
+    name = last.get("name", "Тренировка")
 
+    # Формируем ОДИН четкий промпт
     prompt = f"""
-Ты тренер.
-
-Проанализируй тренировку:
-
-{name}
-Дистанция {dist} км
-TSS {tss}
-HRV {hrv}
-Пульс {rhr}
-
-Ответ:
-
-Качество:
-Нагрузка:
-Что дальше:
+Ты — Арнольд, жесткий тренер. Проанализируй тренировку: {name}.
+Дистанция: {dist} км, TSS: {tss}. Пульс: {rhr}, HRV: {hrv}.
+Дай оценку качества, скажи, не халявил ли я, и что делать дальше. Пиши в своем стиле.
 """
-
-    fallback = "Нагрузка умеренная. Тренировка выполнена нормально. Продолжай по плану."
-    ai = ask_arnie(prompt, fallback)
+    
+    fallback = "Тренировка засчитана. Хорошая работа."
+    ai_response = ask_arnie(prompt, fallback)
 
     report = (
         f"🏃 *ТРЕНИРОВКА*\n\n"
-        f"{name}\n"
-        f"{dist} км | TSS {tss}\n"
+        f"*{name}*\n"
+        f"📍 {dist} км | 📈 TSS {tss}\n"
         f"🧬 Fitness Age: {f_age}\n\n"
-        f"🤖 АРНИ:\n_{ai}_"
+        f"🤖 АРНИ:\n_{ai_response}_"
     )
 
     send_tg(report)
-    print("✅ TRAINING")
+    print("✅ TRAINING REPORT SENT")
 
 if __name__ == "__main__":
     main()
