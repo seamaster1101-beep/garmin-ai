@@ -150,37 +150,39 @@ def calc_tss(a):
 
 # --- VO2 ---
 def estimate_vo2max(activities, weight=88.0):
-    print(f"DEBUG: Всего получено активностей из Strava: {len(activities)}")
     vals = []
-    
+    # Твой HR Max — это предел, на котором мы оцениваем пиковую мощность
+    HR_MAX = 175 
+
     for a in activities:
-        # Проверяем только заезды
         if a.get("type") not in ["Ride", "VirtualRide"]:
             continue
             
         w = a.get("average_watts")
         hr = a.get("average_heartrate")
         
-        # Печатаем данные каждой тренировки в лог, чтобы понять, почему они не подходят
-        # print(f"DEBUG ACT: Watts={w}, HR={hr}") 
-
-        if w and hr:
+        if w and hr and float(hr) > 110:
             try:
                 w_f = float(w)
                 hr_f = float(hr)
-                if w_f > 50 and hr_f > 80:
-                    intensity = hr_f / 175
-                    v_final = ((12.0 * w_f / weight) + 7) / (intensity * 0.7 + 0.3)
+                
+                # 1. Пропорционально считаем мощность, которая была БЫ на пульсе 175
+                # Это самый надежный способ для вело
+                estimated_max_watts = w_f * (HR_MAX / hr_f)
+                
+                # 2. Формула Storer: (10.51 * W_max / weight) + 7
+                v_final = (10.51 * estimated_max_watts / weight) + 7
+                
+                # Фильтр адекватности
+                if 25 < v_final < 65:
                     vals.append(v_final)
             except:
                 continue
     
     if vals:
-        res = round(sum(vals) / len(vals), 1)
-        print(f"DEBUG: VO2max рассчитан: {res}")
+        # Берем среднее последних 7 тренировок для стабильности
+        res = round(sum(vals[-7:]) / len(vals[-7:]), 1)
         return res
-    
-    print("DEBUG: Не найдено подходящих тренировок (ватты + пульс)")
     return None
     
 # --- FITNESS AGE ---
