@@ -16,7 +16,6 @@ def get_env(name):
         print(f"❌ Нет переменной: {name}"); sys.exit(1)
     return val
 
-# Переменные окружения
 CLIENT_ID = get_env('STRAVA_CLIENT_ID')
 CLIENT_SECRET = get_env('STRAVA_CLIENT_SECRET')
 REFRESH_TOKEN = get_env('STRAVA_REFRESH_TOKEN')
@@ -25,7 +24,6 @@ TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
 GEMINI_API_KEY = get_env('GEMINI_API_KEY')
 GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def safe_float(val, default=0.0):
     if val is None or str(val).strip() in ["", "Н/Д", "None"]: return default
     try:
@@ -46,24 +44,16 @@ def ask_expert(prompt, fallback):
         print(f"--- [AI DEBUG] PROMPT SENT ---\n{prompt}\n------------------------------")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        
-        if res.status_code == 429:
-            print("⚠️ Gemini rate limit (429)"); return fallback
-        if res.status_code != 200:
-            print(f"⚠️ Gemini error {res.status_code}: {res.text}"); return fallback
-
+        if res.status_code != 200: return fallback
         data = res.json()
         parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        if not parts: 
-            print("⚠️ AI returned empty candidates"); return fallback
-
+        if not parts: return fallback
         ans = parts[0]["text"].strip().replace("_", " ").replace("*", " ")
         print(f"✅ [AI] Ответ получен ({len(ans)} симв.)")
         return ans
     except Exception as e:
         print(f"⚠️ AI Exception: {e}"); return fallback
 
-# --- РАБОТА С ДАННЫМИ ---
 def get_google_client():
     creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), 
                                                   scopes=["https://www.googleapis.com/auth/spreadsheets"])
@@ -79,9 +69,9 @@ def update_fitness_age_in_sheet(target_date, f_age_val):
                 header = sheet.row_values(1)
                 if "Fitness_Age" in header:
                     sheet.update_cell(i + 1, header.index("Fitness_Age") + 1, f_age_val)
-                    print(f"✅ FitAge {f_age_val} записан в Sheets.")
+                    print(f"✅ FitAge {f_age_val} записан.")
                     break
-    except Exception as e: print(f"⚠️ Sheet update error: {e}")
+    except: pass
 
 def estimate_performance(activities, weight=88.0):
     vals_vo2 = []
@@ -97,7 +87,6 @@ def estimate_performance(activities, weight=88.0):
     eftp = max(100, min(400, int(round(avg_vo2 * weight * 0.071, 0))))
     return avg_vo2, eftp
 
-# --- MAIN ---
 def main():
     now = datetime.utcnow() + timedelta(hours=1)
     today = now.strftime("%Y-%m-%d")
@@ -122,32 +111,26 @@ def main():
     morning = next((row for row in reversed(records) if today in str(row.get('Date', ''))), 
                    (records[-1] if records else {}))
 
-    rhr = safe_float(morning.get("Resting_HR"), 60)
-    hrv = safe_float(morning.get("HRV"), 45)
-    weight = safe_float(morning.get("Weight"), 88.0)
+    rhr, hrv = safe_float(morning.get("Resting_HR"), 60), safe_float(morning.get("HRV"), 45)
+    weight, fat = safe_float(morning.get("Weight"), 88.0), safe_float(morning.get("Body_Fat"), 18.3)
     if weight > 500: weight /= 10
-    fat = safe_float(morning.get("Body_Fat"), 18.3)
     if fat > 100: fat /= 10
     sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
     if sleep > 24: sleep /= 10
 
-    # Расчет TSB и прогноза
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
     
-    ctl, atl = 0, 0
+    ctl, atl = 0.0, 0.0
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
         if a.get("type") in ["Ride", "VirtualRide"]:
             w = safe_float(a.get("average_watts"), 0)
-            t = a.get("moving_time", 0)
-            tss = (t/3600)*(w/FTP_GARMIN)**2*100 if w > 0 and FTP_GARMIN > 0 else 0
+            tss = (a.get("moving_time", 0)/3600)*(w/FTP_GARMIN)**2*100 if w > 0 and FTP_GARMIN > 0 else 0
             ctl += (tss - ctl) / 42
             atl += (tss - atl) / 7
             
     tsb = round(ctl - atl, 1)
-    # Формула прогноза: Decay (затухание) нагрузки за 1 день без тренировки
     tsb_tomorrow = round((ctl * (1 - 1/42)) - (atl * (1 - 1/7)), 1)
 
-    # Readiness
     score = 2.5
     if hrv > 75: score += 1.0
     elif hrv < 45: score -= 1.0
@@ -158,16 +141,15 @@ def main():
     if tsb < -25: score -= 2.0
     elif -25 <= tsb <= -10: score += 0.5
     score = max(0, min(5, round(score, 1)))
+    
     icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
     circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
 
     vo2_calc = vo2_val if vo2_val is not None else 35
     f_age = round(get_bio_age() + (rhr-55)*0.4 + (fat-22)*0.5 - (hrv-45)*0.1 - (vo2_calc-35)*1.5, 1)
     f_age = max(45.0, min(get_bio_age() + 2, f_age))
-
     update_fitness_age_in_sheet(today, f_age)
 
-    # Построение отчета
     eftp_diff = eftp_val - FTP_GARMIN if eftp_val else 0
     eftp_str = f" | eFTP: {eftp_val} ({eftp_diff:+})" if eftp_val else ""
     header_ftp = f"{circles} *FTP: {FTP_GARMIN}{eftp_str}*"
@@ -175,9 +157,24 @@ def main():
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
     
     if not today_acts:
-        prompt = (f"Ты — опытный спортивный наставник. Атлет (мужчина, 63 года): "
-                  f"HRV {int(hrv)} (для его возраста норма 30, у него 100!), Пульс {int(rhr)}, TSB {tsb}. "
-                  f"Завтра TSB {tsb_tomorrow}. Сравни с ровесниками (у него элитные показатели сердца). "
-                  f"Дай краткий экспертный совет. В конце — короткая цитата Арнольда. ПИШИ НА РУССКОМ.")
-        ai_msg = ask_expert(prompt, "Тренер на связи. Показатели в норме.")
+        prompt = (f"Ты — опытный спортивный наставник. Атлет (63 года): HRV {int(hrv)} (норма 30, у него 100), Пульс {int(rhr)}, TSB {tsb}. "
+                  f"Завтра TSB {tsb_tomorrow}. Сравни с ровесниками. Краткий совет + цитата Арнольда в конце. На русском.")
+        ai_msg = ask_expert(prompt, "Тренер на связи. Показатели элитные.")
         report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n{header_ftp}\n\n"
+                  f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n📊 TSB: {tsb} (завтра: {tsb_tomorrow})\n"
+                  f"🔋 *Готовность: {score}/5*\n🧬 Fit Age: {f_age} | VO2max: {vo2_val if vo2_val else 'н/д'}\n\n"
+                  f"🤖 *ТРЕНЕР:* \n_{ai_msg}_")
+    else:
+        last = today_acts[-1]
+        dist = round(last.get("distance", 0) / 1000, 2)
+        prompt = (f"Ты — спортивный тренер. Разбери велотренировку атлета 63 лет: {dist}км, TSB {tsb}, eFTP {eftp_val}. "
+                  f"Сравни с ровесниками. Хвали за успехи. Цитата Арнольда в конце. На русском.")
+        ai_msg = ask_expert(prompt, "Тренировка зафиксирована. Продолжаем!")
+        report = (f"🏃 *ТРЕНИРОВКА* {icon}\n{header_ftp}\n\n"
+                  f"*{last.get('name')}*\n📍 {dist} км | 🧬 Fit Age: {f_age}\n"
+                  f"📊 TSB: {tsb}\n\n🤖 *ТРЕНЕР:* \n_{ai_msg}_")
+
+    send_tg(report)
+
+if __name__ == "__main__":
+    main()
