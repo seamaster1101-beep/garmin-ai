@@ -4,7 +4,8 @@ from google.oauth2.service_account import Credentials
 
 # --- CONFIG ---
 BIRTH_DATE = datetime(1963, 5, 29)
-FTP = 213  # Твой актуальный FTP из Garmin
+FTP_GARMIN = 213 
+SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
 
 def get_bio_age():
     return (datetime.utcnow() - BIRTH_DATE).days / 365.25
@@ -15,7 +16,7 @@ def get_env(name):
         print(f"❌ Нет переменной: {name}"); sys.exit(1)
     return val
 
-SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
+# Переменные окружения
 CLIENT_ID = get_env('STRAVA_CLIENT_ID')
 CLIENT_SECRET = get_env('STRAVA_CLIENT_SECRET')
 REFRESH_TOKEN = get_env('STRAVA_REFRESH_TOKEN')
@@ -24,147 +25,163 @@ TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
 GEMINI_API_KEY = get_env('GEMINI_API_KEY')
 GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
-# --- СЛУЖЕБНЫЕ ФУНКЦИИ ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+def safe_float(val, default=0.0):
+    if val is None or str(val).strip() in ["", "Н/Д", "None"]: return default
+    try:
+        v = float(str(val).replace(',', '.').strip())
+        return v if v > 0 else default
+    except: return default
+
 def send_tg(msg):
     if len(msg) > 4000: msg = msg[:3900]
     try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                      json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
-    except: pass
+        if res.status_code != 200: print(f"⚠️ TG Error: {res.text}")
+    except Exception as e: print(f"❌ TG Exception: {e}")
 
 def ask_arnie(prompt, fallback):
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        print(f"DEBUG AI: Status Code = {res.status_code}")
-        if res.status_code != 200:
-            print(f"⚠️ AI Error: {res.text}")
-            return fallback
-        return res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e:
-        print(f"❌ AI Exception: {e}")
-        return fallback
+        if res.status_code == 429: return fallback
+        if res.status_code != 200: return fallback
+        data = res.json()
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        if not parts: return fallback
+        ans = parts[0]["text"].strip().replace("_", " ").replace("*", " ")
+        print(f"✅ [AI] Ответ получен ({len(ans)} симв.)")
+        return ans
+    except: return fallback
 
-# --- ДАННЫЕ ---
-def get_strava_data():
+# --- ДАННЫЕ И РАСЧЕТЫ ---
+def get_google_client():
+    creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), 
+                                                  scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    return gspread.authorize(creds)
+
+def update_fitness_age_in_sheet(target_date, f_age_val):
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        dates = sheet.col_values(1)
+        for i, val in enumerate(dates):
+            if target_date in val:
+                header = sheet.row_values(1)
+                if "Fitness_Age" in header:
+                    sheet.update_cell(i + 1, header.index("Fitness_Age") + 1, f_age_val)
+                    break
+    except: pass
+
+def estimate_performance(activities, weight=88.0):
+    vals_vo2 = []
+    hr_max = 208 - (0.7 * get_bio_age())
+    for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
+        if a.get("type") not in ["Ride", "VirtualRide"]: continue
+        w, hr = safe_float(a.get("average_watts")), safe_float(a.get("average_heartrate"))
+        if w > 0 and hr > 105:
+            v = (10.51 * (w * (hr_max / hr)) / weight) + 7
+            if 20 < v < 70: vals_vo2.append(v)
+    if not vals_vo2: return None, None
+    avg_vo2 = round(sum(vals_vo2[-7:]) / len(vals_vo2[-7:]), 1)
+    eftp = max(100, min(400, int(round(avg_vo2 * weight * 0.071, 0))))
+    return avg_vo2, eftp
+
+# --- MAIN ---
+def main():
+    now = datetime.utcnow() + timedelta(hours=1)
+    today = now.strftime("%Y-%m-%d")
+    
+    # Strava Data Safe Access
+    activities = []
     try:
         res = requests.post("https://www.strava.com/oauth/token", data={
             'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
             'refresh_token': REFRESH_TOKEN, 'grant_type': 'refresh_token'
         }, timeout=15)
         token = res.json().get('access_token')
-        if not token: return []
-        r = requests.get("https://www.strava.com/api/v3/athlete/activities",
-                         headers={"Authorization": f"Bearer {token}"}, params={"per_page": 100}, timeout=15)
-        return r.json() if r.status_code == 200 else []
-    except: return []
+        if token:
+            r = requests.get("https://www.strava.com/api/v3/athlete/activities",
+                             headers={"Authorization": f"Bearer {token}"}, params={"per_page": 100}, timeout=15)
+            data = r.json()
+            activities = data if isinstance(data, list) else []
+    except: pass
 
-def get_morning_metrics(target_date):
-    try:
-        creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), 
-                                                      scopes=["https://www.googleapis.com/auth/spreadsheets"])
-        client = gspread.authorize(creds)
-        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
-        records = sheet.get_all_records()
-        for row in reversed(records):
-            if target_date in str(row.get('Date', '')): return row, records[-2].get('FTP', FTP)
-        return records[-1], records[-2].get('FTP', FTP)
-    except: return {}, FTP
+    # Google Sheets Data
+    client = get_google_client()
+    sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+    records = sheet.get_all_records()
+    morning = next((row for row in reversed(records) if today in str(row.get('Date', ''))), 
+                   (records[-1] if records else {}))
 
-# --- РАСЧЕТЫ ---
-def estimate_vo2max(activities, weight=88.0):
-    vals = []
-    for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
-        w, hr = a.get("average_watts"), a.get("average_heartrate")
-        if w and hr and float(hr) > 110:
-            v = (10.51 * (float(w) * (175 / float(hr))) / weight) + 7
-            if 20 < v < 65: vals.append(v)
-    return round(sum(vals[-7:]) / len(vals[-7:]), 1) if vals else None
-
-def fitness_age(rhr, hrv, vo2, fat):
-    bio_age = get_bio_age()
-    try:
-        rhr_i = (float(rhr) - 55) * 0.4
-        fat_i = (float(fat) - 22) * 0.5
-        hrv_i = (float(hrv) - 45) * 0.1
-        vo2_i = (float(vo2) - 40) * 0.5 if vo2 else 0
-        res = bio_age + rhr_i + fat_i - hrv_i - vo2_i
-        return round(max(45, min(bio_age + 2, res)), 1)
-    except: return round(bio_age, 1)
-
-def get_readiness(morning, tsb=0):
-    score = 2.5
-    hrv = morning.get("HRV", 45)
-    if hrv != "Н/Д":
-        v = int(hrv)
-        if v > 75: score += 1.0
-        elif v < 45: score -= 1.0
-    rhr = morning.get("Resting_HR", 60)
-    if rhr != "Н/Д":
-        v = int(rhr)
-        if v < 50: score += 0.5
-        elif v > 60: score -= 0.5
-    s_raw = morning.get("Sleep_Hours", 0)
-    sleep = float(str(s_raw).replace(',', '.'))
-    if sleep > 24: sleep /= 10
-    if sleep >= 7.5: score += 1.0
-    elif sleep < 6.0: score -= 1.0
-    
-    if tsb < -25: score -= 2.0
-    elif -25 <= tsb <= -10: score += 0.5
-    
-    score = max(0, min(5, round(score, 1)))
-    icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
-    text = "Отличная форма" if score >= 4 else "В строю" if score >= 2.8 else "Нужен отдых"
-    return score, text, icon
-
-# --- MAIN ---
-def main():
-    now = datetime.utcnow() + timedelta(hours=1)
-    today = now.strftime("%Y-%m-%d")
-    activities = get_strava_data()
-    morning, prev_ftp = get_morning_metrics(today)
-
-    weight = float(str(morning.get("Weight", 88.0)).replace(',', '.')); 
+    rhr = safe_float(morning.get("Resting_HR"), 60)
+    hrv = safe_float(morning.get("HRV"), 45)
+    weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
-    fat = float(str(morning.get("Body_Fat", 18.3)).replace(',', '.')); 
+    fat = safe_float(morning.get("Body_Fat"), 18.3)
     if fat > 100: fat /= 10
+    sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
+    if sleep > 24: sleep /= 10
 
-    vo2_val = estimate_vo2max(activities, weight=weight)
+    # Calculations & TSB Forecast
+    vo2_val, eftp_val = estimate_performance(activities, weight=weight)
     
     ctl, atl = 0, 0
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
         if a.get("type") in ["Ride", "VirtualRide"]:
-            w = a.get("average_watts", 0)
+            w = safe_float(a.get("average_watts"), 0)
             t = a.get("moving_time", 0)
-            tss = (t/3600)*(w/FTP)**2*100 if w else 0
+            tss = (t/3600)*(w/FTP_GARMIN)**2*100 if w > 0 and FTP_GARMIN > 0 else 0
             ctl += (tss - ctl) / 42
             atl += (tss - atl) / 7
     tsb = round(ctl - atl, 1)
+    # Прогноз TSB на завтра (без тренировок сегодня)
+    tsb_tomorrow = round((ctl * (1 - 1/42)) - (atl * (1 - 1/7)), 1)
 
-    r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
-    f_age = fitness_age(morning.get("Resting_HR", 60), morning.get("HRV", 45), vo2_val, fat)
+    # Readiness
+    score = 2.5
+    if hrv > 75: score += 1.0
+    elif hrv < 45: score -= 1.0
+    if rhr < 50: score += 0.5
+    elif rhr > 60: score -= 0.5
+    if sleep >= 7.5: score += 1.0
+    elif sleep < 6.0: score -= 1.0
+    if tsb < -25: score -= 2.0
+    elif -25 <= tsb <= -10: score += 0.5
+    score = max(0, min(5, round(score, 1)))
+    icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
+    circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
+
+    vo2_calc = vo2_val if vo2_val is not None else 35
+    f_age = round(get_bio_age() + (rhr-55)*0.4 + (fat-22)*0.5 - (hrv-45)*0.1 - (vo2_calc-35)*1.5, 1)
+    f_age = max(45.0, min(get_bio_age() + 2, f_age))
+
+    update_fitness_age_in_sheet(today, f_age)
+
+    # Report Construction
+    eftp_diff = eftp_val - FTP_GARMIN if eftp_val else 0
+    eftp_str = f" | eFTP: {eftp_val} ({eftp_diff:+})" if eftp_val else ""
+    header_ftp = f"{circles} *FTP: {FTP_GARMIN}{eftp_str}*"
     
-    ftp_diff = int(FTP - prev_ftp)
-    ftp_trend = f"📈 FTP: {FTP} (+{ftp_diff})" if ftp_diff > 0 else f"📉 FTP: {FTP} ({ftp_diff})" if ftp_diff < 0 else f"↔️ FTP: {FTP}"
-
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
     
     if not today_acts:
-        # ВОТ ТОТ САМЫЙ КРУТОЙ ПРОМПТ ИЗ 28.03
-        prompt = (f"Ты — легендарный Арнольд. Дай анализ состояния. ПИШИ НА РУССКОМ. "
-                  f"Данные: HRV {morning.get('HRV')}, Пульс {morning.get('Resting_HR')}, Fit Age {f_age}, TSB {tsb}. "
-                  f"Готовность: {r_val}/5. Интерпретируй цифры, дай совет по Z-зонам на сегодня. Будь краток.")
-        ai_msg = ask_arnie(prompt, r_text)
-        report = (f"🌅 *УТРЕННИЙ СТАТУС* {r_icon}\n🏆 *{ftp_trend}*\n\n❤️ Пульс: {morning.get('Resting_HR')} | 🌀 HRV: {morning.get('HRV')}\n"
-                  f"🔋 *Готовность: {r_val}/5*\n📊 Форма (TSB): {tsb} | VO2max: {vo2_val if vo2_val else 'н/д'}\n"
-                  f"🧬 Fit Age: {f_age}\n\n🤖 *АРНИ:* \n_{ai_msg}_")
+        prompt = (f"Ты Арнольд. HRV {int(hrv)}, Пульс {int(rhr)}, TSB {tsb}. "
+                  f"Завтра TSB будет {tsb_tomorrow} (если сегодня отдых). eFTP {eftp_val} vs Garmin {FTP_GARMIN}. Кратко.")
+        ai_msg = ask_arnie(prompt, "В строю.")
+        report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n{header_ftp}\n\n"
+                  f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
+                  f"📊 TSB: {tsb} (завтра: {tsb_tomorrow})\n"
+                  f"🔋 *Готовность: {score}/5*\n"
+                  f"🧬 Fit Age: {f_age} | VO2max: {vo2_val if vo2_val else 'н/д'}\n\n"
+                  f"🤖 *АРНИ:* \n_{ai_msg}_")
     else:
         last = today_acts[-1]
         dist = round(last.get("distance", 0) / 1000, 2)
-        prompt = f"Арнольд, разбери тренировку {dist}км, TSS {round((last.get('moving_time',0)/3600)*(last.get('average_watts',0)/FTP)**2*100,1)}. ПИШИ НА РУССКОМ."
-        ai_msg = ask_arnie(prompt, "Работа сделана!")
-        report = f"🏃 *ТРЕНИРОВКА*\n🏆 *{ftp_trend}*\n\n*{last.get('name')}*\n📍 {dist} км | 🧬 Fit Age: {f_age}\n📊 TSB: {tsb}\n\n🤖 *АРНИ:* \n_{ai_msg}_"
+        report = (f"🏃 *ТРЕНИРОВКА* {icon}\n{header_ftp}\n\n"
+                  f"*{last.get('name')}*\n📍 {dist} км | 🧬 Fit Age: {f_age}\n"
+                  f"📊 TSB: {tsb}\n\n🤖 *АРНИ:* \n_{ask_arnie('Оцени тренировку кратко.', 'Работа сделана!')}_")
 
     send_tg(report)
 
