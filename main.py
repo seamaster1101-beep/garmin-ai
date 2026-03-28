@@ -151,13 +151,9 @@ def calc_tss(a):
 # --- VO2 ---
 def estimate_vo2max(activities, weight=88.0):
     vals = []
-    # Твой HR Max — это предел, на котором мы оцениваем пиковую мощность
-    HR_MAX = 175 
-
     for a in activities:
-        if a.get("type") not in ["Ride", "VirtualRide"]:
-            continue
-            
+        if a.get("type") not in ["Ride", "VirtualRide"]: continue
+        
         w = a.get("average_watts")
         hr = a.get("average_heartrate")
         
@@ -165,23 +161,20 @@ def estimate_vo2max(activities, weight=88.0):
             try:
                 w_f = float(w)
                 hr_f = float(hr)
+                # Рассчитываем предполагаемую мощность на HR_MAX (175)
+                # Если при 141 пульсе у тебя 188 ватт, то при 175 будет около 230
+                estimated_max_w = w_f * (175 / hr_f)
                 
-                # 1. Пропорционально считаем мощность, которая была БЫ на пульсе 175
-                # Это самый надежный способ для вело
-                estimated_max_watts = w_f * (HR_MAX / hr_f)
+                # Формула Storer для VO2max
+                v_final = (10.51 * estimated_max_w / weight) + 7
                 
-                # 2. Формула Storer: (10.51 * W_max / weight) + 7
-                v_final = (10.51 * estimated_max_watts / weight) + 7
-                
-                # Фильтр адекватности
                 if 25 < v_final < 65:
                     vals.append(v_final)
-            except:
-                continue
-    
+            except: continue
+            
     if vals:
-        # Берем среднее последних 7 тренировок для стабильности
-        res = round(sum(vals[-7:]) / len(vals[-7:]), 1)
+        # Берем среднее последних 5 тренировок для стабильности
+        res = round(sum(vals[-5:]) / len(vals[-5:]), 1)
         return res
     return None
     
