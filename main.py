@@ -144,19 +144,29 @@ def calc_tss(a):
     return round((t/3600)*(w/FTP)**2*100,1)
 
 # --- VO2 ---
-def estimate_vo2max(activities):
+def estimate_vo2max(activities, weight=88): # Добавили weight
     vals = []
     for a in activities:
-        if a.get("type") not in ["Ride", "VirtualRide", "Run"]:
+        if a.get("type") not in ["Ride", "VirtualRide"]:
             continue
             
-        s = a.get("average_speed")
+        watts = a.get("average_watts")
         hr = a.get("average_heartrate")
-        if s and hr and 2 < s < 8 and 80 < hr < 180:
-            vals.append((s*3.6)*0.2 + 3.5)
+        
+        # Считаем через мощность, используя актуальный вес
+        if watts and hr and hr > 100:
+            # Формула: VO2 = (10.8 * W / mass) + 7
+            v = (10.8 * watts / weight) + 7
+            vals.append(v)
+        
+        elif not watts:
+            s = a.get("average_speed")
+            if s and hr and 2 < s < 15 and 80 < hr < 180:
+                vals.append((s * 3.6) * 0.2 + 3.5)
+                
     if len(vals) >= 3:
-        v = round(sum(vals)/len(vals),1)
-        return v if v >= 20 else None
+        recent_vals = vals[-5:]
+        return round(sum(recent_vals) / len(recent_vals), 1)
     return None
 
 # --- FITNESS AGE ---
@@ -316,27 +326,39 @@ def main():
     rhr = morning.get("Resting_HR", "Н/Д")
     hrv = morning.get("HRV", "Н/Д")
 
-    # Считываем новые данные для анализа (важно для корректного prompt)
+    # 1. Извлекаем ВСЕ данные для анализа Арнольдом (сохраняем твой блок try/except)
     try:
         deep_sleep = morning.get("Deep_Sleep", 0)
         rem_sleep = morning.get("REM_Sleep", 0)
         sleep_score = morning.get("Sleep_Score", 0)
         recovery_h = morning.get("Recovery_Time", 0)
         acute_load = morning.get("Acute_Load", 0)
+        
+        # Динамические параметры для точности расчетов
+        weight_raw = morning.get("Weight", 88.0)
+        user_weight = float(str(weight_raw).replace(',', '.')) if weight_raw else 88.0
+        
+        body_fat_raw = morning.get("Body_Fat", 18.3)
+        user_fat = float(str(body_fat_raw).replace(',', '.')) if body_fat_raw else 18.3
     except:
         deep_sleep, rem_sleep, sleep_score, recovery_h, acute_load = 0, 0, 0, 0, 0
+        user_weight = 88.0
+        user_fat = 18.3
     
-    # Вот здесь мы добавляем расчет VO2max и передаем его в Fitness Age
-    vo2_val = estimate_vo2max(activities)
-    f_age = fitness_age(rhr, hrv, vo2_val) 
+    # 2. Расчеты (теперь передаем weight и fat)
+    # Используем твою новую версию estimate_vo2max(activities, weight=...)
+    vo2_val = estimate_vo2max(activities, weight=user_weight)
+    
+    # Используем твою новую версию fitness_age(..., fat=...)
+    f_age = fitness_age(rhr, hrv, vo2_val, fat=user_fat) 
 
-    # Записываем результат AI обратно в таблицу за сегодняшнюю дату
+    # 3. Запись в таблицу и расчет Готовности
     update_fitness_age(today, f_age)
     
-    # Считаем готовность один раз для всех отчетов
+    # Здесь передаем tsb, чтобы готовность учитывала накопленную усталость
     r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
 
-    # Фильтруем тренировки за сегодня
+    # 4. Фильтруем тренировки за сегодня
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
 
     # --- 2. УТРЕННИЙ РЕЖИМ ---
