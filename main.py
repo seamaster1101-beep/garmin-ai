@@ -151,9 +151,8 @@ def calc_tss(a):
 # --- VO2 ---
 def estimate_vo2max(activities, weight=88.0):
     vals = []
-    # Константы для ТВОИХ реальных показателей
     hr_rest = 44 
-    hr_max = 175 # ТУТ ИСПРАВИЛ (было 160)
+    hr_max = 175 
     
     for a in activities:
         if a.get("type") not in ["Ride", "VirtualRide"]:
@@ -163,38 +162,38 @@ def estimate_vo2max(activities, weight=88.0):
         hr = a.get("average_heartrate")
         s = a.get("average_speed")
         
-        # 1. ОСНОВНОЙ ВАРИАНТ (ЧЕРЕЗ МОЩНОСТЬ)
+        v_final = None
+
+        # 1. Сначала пробуем через МОЩНОСТЬ (самый точный)
         if w and hr and hr > 110:
             intensity = (hr - hr_rest) / (hr_max - hr_rest)
-            print(f"DEBUG VO2: HR={hr}, Int={round(intensity, 2)}, W={w}")
-            if intensity > 0.5: # Добавили этот фильтр для точности
+            if intensity > 0.5:
                 v_metabolic = (12.0 * w / weight) + 7
                 v_final = v_metabolic / (intensity * 0.7 + 0.3)
-            
-                if 25 < v_final < 60:
-                    vals.append(v_final)
         
-        # 2. ЗАПАСНОЙ ВАРИАНТ (ЧЕРЕЗ СКОРОСТЬ)
-        elif not w and s and hr:
-            if 2 < s < 15 and 80 < hr < 180:
-                speed_kmh = s * 3.6
-                v_speed = (speed_kmh * 0.2 + 3.5) * 1.2
-                if 25 < v_speed < 60:
-                    vals.append(v_speed)
-                
-    if len(vals) >= 3:
-        # 1. Сортируем все полученные значения от меньшего к большему
-        sorted_vals = sorted(vals)
+        # 2. Если через мощность не вышло, пробуем через СКОРОСТЬ
+        elif s and hr and hr > 110:
+            speed_kmh = s * 3.6
+            if 15 < speed_kmh < 50:
+                v_final = (speed_kmh * 0.2 + 3.5) * 1.2
+
+        # Проверяем, попал ли результат в разумные границы
+        if v_final and 15 < v_final < 65:
+            vals.append(v_final)
+    
+    # ИТОГОВЫЙ РАСЧЕТ
+    if not vals:
+        return None
         
-        # 2. Берем срез последних тренировок (например, последние 6, если их много)
-        recent_pool = sorted_vals[-6:] 
+    # Сортируем и берем среднее последних (до 10 тренировок)
+    sorted_vals = sorted(vals)
+    # Если данных много, отсекаем 1 худший и 1 лучший (для стабильности)
+    if len(sorted_vals) > 5:
+        trimmed = sorted_vals[1:-1]
+    else:
+        trimmed = sorted_vals
         
-        # 3. Убираем самый низкий результат из этого пула (тот самый "мусор")
-        # чтобы одна плохая тренировка не портила всю картину
-        trimmed_vals = recent_pool[1:] if len(recent_pool) > 1 else recent_pool
-        
-        return round(sum(trimmed_vals) / len(trimmed_vals), 1)
-    return None
+    return round(sum(trimmed) / len(trimmed), 1)
     
 # --- FITNESS AGE ---
 def fitness_age(rhr, hrv, vo2=None, fat=18.3):
