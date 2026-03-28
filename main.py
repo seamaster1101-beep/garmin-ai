@@ -146,6 +146,10 @@ def calc_tss(a):
 # --- VO2 ---
 def estimate_vo2max(activities, weight=88.0):
     vals = []
+    # Константы для ТВОИХ реальных показателей
+    hr_rest = 44 
+    hr_max = 175 # ТУТ ИСПРАВИЛ (было 160)
+    
     for a in activities:
         if a.get("type") not in ["Ride", "VirtualRide"]:
             continue
@@ -154,29 +158,29 @@ def estimate_vo2max(activities, weight=88.0):
         hr = a.get("average_heartrate")
         s = a.get("average_speed")
         
-        # 1. Считаем через мощность (научный подход а-ля Garmin)
+        # 1. ОСНОВНОЙ ВАРИАНТ (ЧЕРЕЗ МОЩНОСТЬ)
         if w and hr and hr > 110:
-            v_base = (12.0 * w / weight) + 7
-            hr_max = 160 # Твой макс. пульс (примерно для 63 лет)
-            hr_intensity = hr / hr_max 
-            # Учитываем "цену" пульса: чем он ниже при тех же Ваттах, тем выше VO2max
-            v_final = v_base / (hr_intensity * 0.7 + 0.3)
-            vals.append(v_final)
+            v_metabolic = (12.0 * w / weight) + 7
+            # Считаем интенсивность относительно твоего реального диапазона (44-175)
+            intensity = (hr - hr_rest) / (hr_max - hr_rest)
+            v_final = v_metabolic / (intensity * 0.7 + 0.3)
+            
+            if 25 < v_final < 60:
+                vals.append(v_final)
         
-        # 2. ЗАПАСНОЙ ВАРИАНТ: Если мощности нет, считаем по скорости
+        # 2. ЗАПАСНОЙ ВАРИАНТ (ЧЕРЕЗ СКОРОСТЬ)
         elif not w and s and hr:
             if 2 < s < 15 and 80 < hr < 180:
-                # Стандартная формула ACSM (скорость км/ч * 0.2 + 3.5)
-                # Умножаем на 1.2 для вело, чтобы не занижало относительно Garmin
-                v_speed = ((s * 3.6) * 0.2 + 3.5) * 1.2
-                vals.append(v_speed)
+                speed_kmh = s * 3.6
+                v_speed = (speed_kmh * 0.2 + 3.5) * 1.2
+                if 25 < v_speed < 60:
+                    vals.append(v_speed)
                 
     if len(vals) >= 3:
-        # Берем 5 последних качественных заездов
         recent_vals = vals[-5:]
         return round(sum(recent_vals) / len(recent_vals), 1)
     return None
-
+    
 # --- FITNESS AGE ---
 def fitness_age(rhr, hrv, vo2=None, fat=18.3): # Жир 18.3 из твоего лога S2
     try:
