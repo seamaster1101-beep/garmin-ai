@@ -111,16 +111,29 @@ def update_fitness_age(target_date, f_age_val):
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
         
-        # Ищем ячейку с датой
-        cell = sheet.find(target_date)
-        if cell:
+        # 1. Получаем все значения из первой колонки (Date)
+        dates_col = sheet.col_values(1) 
+        
+        # 2. Ищем строку, в которой содержится наша дата (target_date)
+        row_idx = -1
+        for i, val in enumerate(dates_col):
+            if target_date in val: # Ищем вхождение текста "2026-03-28" в "2026-03-28 03:15"
+                row_idx = i + 1
+                break
+        
+        if row_idx != -1:
             header = sheet.row_values(1)
             if "Fitness_Age" in header:
                 col_idx = header.index("Fitness_Age") + 1
-                sheet.update_cell(cell.row, col_idx, f_age_val)
-                print(f"✅ Fitness Age ({f_age_val}) записан в таблицу")
+                sheet.update_cell(row_idx, col_idx, f_age_val)
+                print(f"✅ Fitness Age ({f_age_val}) успешно записан в строку {row_idx}")
+            else:
+                print("❌ Колонки Fitness_Age не существует")
+        else:
+            print(f"❌ Дата {target_date} не найдена в колонке Date")
+            
     except Exception as e:
-        print(f"Ошибка записи в таблицу: {e}")
+        print(f"Ошибка записи: {e}")
 
 # --- TSS ---
 def calc_tss(a):
