@@ -160,10 +160,10 @@ def estimate_vo2max(activities, weight=88.0):
         
         # 1. ОСНОВНОЙ ВАРИАНТ (ЧЕРЕЗ МОЩНОСТЬ)
         if w and hr and hr > 110:
-            v_metabolic = (12.0 * w / weight) + 7
-            # Считаем интенсивность относительно твоего реального диапазона (44-175)
             intensity = (hr - hr_rest) / (hr_max - hr_rest)
-            v_final = v_metabolic / (intensity * 0.7 + 0.3)
+            if intensity > 0.6: # Добавили этот фильтр для точности
+                v_metabolic = (12.0 * w / weight) + 7
+                v_final = v_metabolic / (intensity * 0.7 + 0.3)
             
             if 25 < v_final < 60:
                 vals.append(v_final)
@@ -177,8 +177,17 @@ def estimate_vo2max(activities, weight=88.0):
                     vals.append(v_speed)
                 
     if len(vals) >= 3:
-        recent_vals = vals[-5:]
-        return round(sum(recent_vals) / len(recent_vals), 1)
+        # 1. Сортируем все полученные значения от меньшего к большему
+        sorted_vals = sorted(vals)
+        
+        # 2. Берем срез последних тренировок (например, последние 6, если их много)
+        recent_pool = sorted_vals[-6:] 
+        
+        # 3. Убираем самый низкий результат из этого пула (тот самый "мусор")
+        # чтобы одна плохая тренировка не портила всю картину
+        trimmed_vals = recent_pool[1:] if len(recent_pool) > 1 else recent_pool
+        
+        return round(sum(trimmed_vals) / len(trimmed_vals), 1)
     return None
     
 # --- FITNESS AGE ---
@@ -321,6 +330,11 @@ def main():
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
+    # Если данных за утро нет совсем, создаем пустой словарь, чтобы скрипт не упал
+    if not morning:
+        morning = {}
+        print("⚠️ Утренние метрики не найдены")
+
     # --- ТЕСТОВЫЙ БЛОК ДЛЯ ПРОВЕРКИ STRAVA ---
     if activities:
         last_act = activities[0]
@@ -350,6 +364,15 @@ def main():
     rhr = morning.get("Resting_HR", "Н/Д")
     hrv = morning.get("HRV", "Н/Д")
 
+    # Если ключевых данных нет, ставим безопасные заглушки для расчетов
+    if rhr == "Н/Д":
+        # Чтобы Fitness Age и Readiness не выдали ошибку
+        rhr_for_calc = 60 
+        hrv_for_calc = 45
+    else:
+        rhr_for_calc = rhr
+        hrv_for_calc = hrv
+
     # 1. Извлекаем ВСЕ данные для анализа Арнольдом (сохраняем твой блок try/except)
     try:
         sleep_hrs = morning.get("Sleep_Hours", 0)
@@ -375,7 +398,10 @@ def main():
     vo2_val = estimate_vo2max(activities, weight=user_weight)
     
     # Используем твою новую версию fitness_age(..., fat=...)
-    f_age = fitness_age(rhr, hrv, vo2_val, fat=user_fat) 
+    f_age = fitness_age(rhr_for_calc, hrv_for_calc, vo2_val, fat=user_fat) 
+
+    # Рассчитываем готовность один раз, чтобы она была доступна в обоих типах отчетов
+    r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
 
     # 3. Запись в таблицу и расчет Готовности
     update_fitness_age(today, f_age)
