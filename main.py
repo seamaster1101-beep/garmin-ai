@@ -188,7 +188,7 @@ def estimate_vo2max(activities, weight=88.0):
 # --- FITNESS AGE ---
 def fitness_age(rhr, hrv, vo2=None, fat=18.3):
     try:
-        actual_age = 63
+        actual_age = BIO_AGE
         
         # 1. Пульс покоя (База 55). Твой 44 даст ~ минус 4.4 года
         rhr_val = int(rhr) if rhr and rhr != "Н/Д" else 60
@@ -211,9 +211,10 @@ def fitness_age(rhr, hrv, vo2=None, fat=18.3):
         calculated = actual_age + rhr_diff + fat_diff - hrv_bonus - vo2_bonus
         
         # Лимиты: не моложе 40 и не старше фактического + 5
-        return round(max(40, min(actual_age + 5, calculated)), 1)
-    except Exception:
-        return 63
+        return round(max(40, min(BIO_AGE + 5, calculated)), 1)
+    except Exception as e:
+        print(f"⚠️ Ошибка в расчете Fitness Age: {e}")
+        return float(BIO_AGE) # Возвращаем базовый возраст, если расчет сломался
 
 # --- AI ---
 def ask_arnie(prompt, fallback_text):
