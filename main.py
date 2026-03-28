@@ -352,6 +352,7 @@ def main():
 
     # 1. Извлекаем ВСЕ данные для анализа Арнольдом (сохраняем твой блок try/except)
     try:
+        sleep_hrs = morning.get("Sleep_Hours", 0)
         deep_sleep = morning.get("Deep_Sleep", 0)
         rem_sleep = morning.get("REM_Sleep", 0)
         sleep_score = morning.get("Sleep_Score", 0)
@@ -379,9 +380,6 @@ def main():
     # 3. Запись в таблицу и расчет Готовности
     update_fitness_age(today, f_age)
     
-    # Здесь передаем tsb, чтобы готовность учитывала накопленную усталость
-    r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
-
     # 4. Фильтруем тренировки за сегодня
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
 
