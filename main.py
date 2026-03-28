@@ -111,7 +111,6 @@ def main():
     morning = next((row for row in reversed(records) if today in str(row.get('Date', ''))), 
                    (records[-1] if records else {}))
 
-    # --- СБОР ДАННЫХ ---
     rhr = safe_float(morning.get("Resting_HR"), 60)
     hrv = safe_float(morning.get("HRV"), 45)
     weight = safe_float(morning.get("Weight"), 88.0)
@@ -189,4 +188,17 @@ def main():
         prompt = (
             f"Ты — коуч Арнольд. Разбери велотренировку атлета 63 лет: {last.get('name')}. "
             f"Дистанция: {dist}км, eFTP {eftp_val}. Утренний HRV был {hrv}, TSB {tsb}. "
-            f
+            f"\nИНСТРУКЦИИ: "
+            f"1. Оцени качество работы. Сравни eFTP {eftp_val} с базовым {FTP_GARMIN}. "
+            f"2. Дай краткий совет на завтра. ПИШИ НА РУССКОМ. "
+            f"3. В конце — фирменная фраза."
+        )
+        ai_msg = ask_expert(prompt, "Тренировка принята. Хорошая работа!")
+        report = (f"🏃 *ТРЕНИРОВКА* {icon}\n{header_ftp}\n\n"
+                  f"*{last.get('name')}*\n📍 {dist} км | 🧬 Fit Age: {f_age}\n"
+                  f"📊 TSB: {tsb}\n\n🤖 *ТРЕНЕР:* \n_{ai_msg}_")
+
+    send_tg(report)
+
+if __name__ == "__main__":
+    main()
