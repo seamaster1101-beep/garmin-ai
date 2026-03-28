@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
 # --- CONFIG ---
-# Считаем возраст динамически, но база — твои 63
+# Динамический расчет фактического возраста
 BIRTH_DATE = datetime(1963, 5, 15) 
 
 def get_bio_age():
@@ -11,7 +11,9 @@ def get_bio_age():
 
 def get_env(name):
     val = os.environ.get(name)
-    if not val: print(f"❌ Нет переменной: {name}"); sys.exit(1)
+    if not val:
+        print(f"❌ Нет переменной: {name}")
+        sys.exit(1)
     return val
 
 SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
@@ -25,13 +27,15 @@ GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
 FTP = 213 # Твой актуальный FTP
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (Твои оригинальные) ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def safe_float(val, default=0.0):
-    if val is None or str(val).strip() in ["", "Н/Д", "None"]: return default
+    if val is None or str(val).strip() in ["", "Н/Д", "None"]:
+        return default
     try:
         v = float(str(val).replace(',', '.').strip())
         return v if v > 0 else default
-    except: return default
+    except:
+        return default
 
 def send_tg(msg):
     if len(msg) > 4000: msg = msg[:3900]
@@ -45,8 +49,11 @@ def ask_arnie(prompt, fallback):
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        return res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except: return fallback
+        data = res.json()
+        if "candidates" in data and data["candidates"]:
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except: pass
+    return fallback
 
 # --- РАСЧЕТЫ ---
 def estimate_vo2max(activities, weight=88.0):
@@ -57,7 +64,6 @@ def estimate_vo2max(activities, weight=88.0):
         if a.get("type") not in ["Ride", "VirtualRide"]: continue
         w = a.get("average_watts")
         hr = a.get("average_heartrate")
-        # Сохраняем твою логику расчета
         if w and hr and float(hr) > 100:
             try:
                 w_f, hr_f = float(w), float(hr)
@@ -128,7 +134,6 @@ def main():
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
-    # 1. ЧИСТКА ДАННЫХ (Твоя логика масштабирования)
     rhr = safe_float(morning.get("Resting_HR"), 60)
     hrv = safe_float(morning.get("HRV"), 45)
     weight = safe_float(morning.get("Weight"), 88.0)
@@ -139,11 +144,10 @@ def main():
     sleep_raw = safe_float(morning.get("Sleep_Hours"), 0)
     sleep = sleep_raw / 10 if sleep_raw > 24 else sleep_raw
 
-    # 2. ОСНОВНЫЕ РАСЧЕТЫ
     vo2_val = estimate_vo2max(activities, weight=weight)
     f_age = fitness_age(rhr, hrv, vo2_val, fat=fat)
     
-    # Форма (TSB) - с защитой FTP
+    # Форма (TSB)
     ctl, atl, safe_ftp = 0, 0, (FTP if FTP > 0 else 250)
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
         if a.get("type") in ["Ride", "VirtualRide"]:
@@ -154,7 +158,6 @@ def main():
             atl += (tss - atl) / 7
     tsb = round(ctl - atl, 1)
 
-    # 3. TOTAL DEBUG
     print(f"--- TOTAL DEBUG ---")
     print(f"Weight: {weight} | Fat: {fat} | Sleep: {sleep}")
     print(f"VO2: {vo2_val} | FitAge: {f_age} | RHR: {rhr} | HRV: {hrv}")
@@ -162,20 +165,22 @@ def main():
 
     update_fitness_age(today, f_age)
 
-    # 4. ОТЧЕТ
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
+    
     if not today_acts:
-        prompt = f"Арнольд, утренний статус: HRV {hrv}, Пульс {rhr}, Сон {sleep}ч, Fit Age {f_age}, TSB {tsb}. Будь краток, ПИШИ НА РУССКОМ."
-        ai_msg = ask_arnie(prompt, "Готов к работе.").replace("_", " ").replace("*", " ")
+        # УТРЕННИЙ ОТЧЕТ
+        prompt = (f"Ты Арнольд, элитный коуч. HRV {hrv}, Пульс {rhr}, Сон {sleep}ч, Fit Age {f_age}, TSB {tsb}. "
+                  f"Дай краткий план на день. ПИШИ НА РУССКОМ.")
+        ai_msg = ask_arnie(prompt, "Вставай, чемпион!").replace("_", " ").replace("*", " ")
         report = f"🌅 *УТРЕННИЙ СТАТУС*\n\n❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n📊 TSB: {tsb} | 🧬 Fit Age: {f_age}\n\n🤖 *АРНИ:* \n_{ai_msg}_"
         send_tg(report)
     else:
+        # ОТЧЕТ ПО ТРЕНИРОВКЕ
         last = today_acts[-1]
         dist = round(last.get("distance", 0) / 1000, 2)
-        # Для тренировки тоже добавим Арнольда, раз он тебе важен
-        prompt = f"Арнольд, оцени тренировку: {dist}км, TSB сейчас {tsb}. Кратко на русском."
-        ai_msg = ask_arnie(prompt, "Отличная работа!").replace("_", " ").replace("*", " ")
-        report = f"🚲 *ТРЕНИРОВКА*\n\n*{last.get('name')}*\n📍 {dist} км | 🧬 Fit Age: {f_age}\n\n🤖 *АРНИ:* \n_{ai_msg}_"
+        prompt = f"Арнольд, оцени тренировку: {dist}км, TSB {tsb}. Будь краток, на русском."
+        ai_msg = ask_arnie(prompt, "Хорошая работа.").replace("_", " ").replace("*", " ")
+        report = f"🚲 *ТРЕНИРОВКА ЗАВЕРШЕНА*\n\n*{last.get('name')}*\n📍 {dist} км | 🧬 Fit Age: {f_age}\n\n🤖 *АРНИ:* \n_{ai_msg}_"
         send_tg(report)
 
 if __name__ == "__main__":
