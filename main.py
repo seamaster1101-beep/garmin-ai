@@ -151,49 +151,34 @@ def calc_tss(a):
 # --- VO2 ---
 def estimate_vo2max(activities, weight=88.0):
     vals = []
-    hr_rest = 44 
-    hr_max = 175 
     
     for a in activities:
+        # 1. Берем только заезды
         if a.get("type") not in ["Ride", "VirtualRide"]:
             continue
             
-        w = a.get("average_watts")
-        hr = a.get("average_heartrate")
-        s = a.get("average_speed")
-        
-        v_final = None
-
-        # 1. Сначала пробуем через МОЩНОСТЬ (самый точный)
-        if w and hr and hr > 110:
-            intensity = (hr - hr_rest) / (hr_max - hr_rest)
-            if intensity > 0.5:
-                v_metabolic = (12.0 * w / weight) + 7
-                v_final = v_metabolic / (intensity * 0.7 + 0.3)
-        
-        # 2. Если через мощность не вышло, пробуем через СКОРОСТЬ
-        elif s and hr and hr > 110:
-            speed_kmh = s * 3.6
-            if 15 < speed_kmh < 50:
-                v_final = (speed_kmh * 0.2 + 3.5) * 1.2
-
-        # Проверяем, попал ли результат в разумные границы
-        if v_final and 15 < v_final < 65:
-            vals.append(v_final)
+        try:
+            # 2. Принудительно превращаем в числа, чтобы не было ошибок сравнения
+            w = float(a.get("average_watts", 0))
+            hr = float(a.get("average_heartrate", 0))
+            
+            # 3. Минимальный порог: если есть пульс и мощность — считаем!
+            if w > 50 and hr > 100:
+                # Упрощенная формула: (Ватты / Вес * 12 + 7) / (Интенсивность)
+                # Интенсивность считаем грубо: HR / 175, чтобы не зависеть от hr_rest
+                intensity = hr / 175
+                v_final = ((12.0 * w / weight) + 7) / (intensity * 0.7 + 0.3)
+                
+                if 20 < v_final < 65:
+                    vals.append(v_final)
+        except:
+            continue
     
-    # ИТОГОВЫЙ РАСЧЕТ
-    if not vals:
-        return None
-        
-    # Сортируем и берем среднее последних (до 10 тренировок)
-    sorted_vals = sorted(vals)
-    # Если данных много, отсекаем 1 худший и 1 лучший (для стабильности)
-    if len(sorted_vals) > 5:
-        trimmed = sorted_vals[1:-1]
-    else:
-        trimmed = sorted_vals
-        
-    return round(sum(trimmed) / len(trimmed), 1)
+    # 4. Если нашли хоть что-то — отдаем среднее
+    if vals:
+        return round(sum(vals) / len(vals), 1)
+    
+    return None
     
 # --- FITNESS AGE ---
 def fitness_age(rhr, hrv, vo2=None, fat=18.3):
@@ -221,7 +206,7 @@ def fitness_age(rhr, hrv, vo2=None, fat=18.3):
         calculated = actual_age + rhr_diff + fat_diff - hrv_bonus - vo2_bonus
         
         # Лимиты: не моложе 45 и не старше фактического + 2
-        return round(max(45, min(actual_age + 2, calculated)), 1)
+        return round(max(40, calculated), 1)
     except Exception:
         return 63
 
