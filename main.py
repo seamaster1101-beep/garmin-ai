@@ -111,12 +111,19 @@ def main():
     morning = next((row for row in reversed(records) if today in str(row.get('Date', ''))), 
                    (records[-1] if records else {}))
 
-    rhr, hrv = safe_float(morning.get("Resting_HR"), 60), safe_float(morning.get("HRV"), 45)
-    weight, fat = safe_float(morning.get("Weight"), 88.0), safe_float(morning.get("Body_Fat"), 18.3)
+    # --- СБОР ДАННЫХ ---
+    rhr = safe_float(morning.get("Resting_HR"), 60)
+    hrv = safe_float(morning.get("HRV"), 45)
+    weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
+    fat = safe_float(morning.get("Body_Fat"), 18.3)
     if fat > 100: fat /= 10
-    sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
-    if sleep > 24: sleep /= 10
+    
+    sleep_h = safe_float(morning.get("Sleep_Hours"), 7.0)
+    deep_sleep = morning.get("Deep_Sleep", "н/д")
+    sleep_score = safe_float(morning.get("Sleep_Score"), 70)
+    recovery_h = safe_float(morning.get("Recovery_Time"), 0)
+    body_battery = morning.get("Body_Battery", "н/д")
 
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
     
@@ -136,8 +143,8 @@ def main():
     elif hrv < 45: score -= 1.0
     if rhr < 50: score += 0.5
     elif rhr > 60: score -= 0.5
-    if sleep >= 7.5: score += 1.0
-    elif sleep < 6.0: score -= 1.0
+    if sleep_h >= 7.5: score += 1.0
+    elif sleep_h < 6.0: score -= 1.0
     if tsb < -25: score -= 2.0
     elif -25 <= tsb <= -10: score += 0.5
     score = max(0, min(5, round(score, 1)))
@@ -157,24 +164,29 @@ def main():
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
     
     if not today_acts:
-        prompt = (f"Ты — опытный спортивный наставник. Атлет (63 года): HRV {int(hrv)} (норма 30, у него 100), Пульс {int(rhr)}, TSB {tsb}. "
-                  f"Завтра TSB {tsb_tomorrow}. Сравни с ровесниками. Краткий совет + цитата Арнольда в конце. На русском.")
-        ai_msg = ask_expert(prompt, "Тренер на связи. Показатели элитные.")
+        prompt = (
+            f"Ты — легендарный Арнольд, элитный коуч атлета 63 лет. Дай профессиональный анализ состояния. "
+            f"ДАННЫЕ: HRV {hrv} (у него 100 — это элитно!), Пульс {rhr}, Сон {sleep_h}ч (Глубокий: {deep_sleep}), "
+            f"Sleep Score: {sleep_score}/100, Recovery Time: {recovery_h}ч, Body Battery: {body_battery}, "
+            f"Fit Age: {f_age}, VO2max: {vo2_val if vo2_val else 'н/д'}. "
+            f"ФОРМА: CTL {round(ctl,1)} (Фитнес), TSB {tsb} (Баланс). ГОТОВНОСТЬ: {score}/5. "
+            f"\nИНСТРУКЦИИ: "
+            f"1. Не просто читай цифры, а интерпретируй их! Сравнивай с нормой для 60+. ПИШИ НА РУССКОМ. "
+            f"2. Если Recovery Time > 24ч или Sleep Score < 65 — СТРОГО ЗАПРЕТИ рекорды. "
+            f"3. Трактуй TSB {tsb}: >10 (застой), -10...-25 (зона чемпионов), < -25 (риск перетрена). "
+            f"4. ДАЙ ПЛАН: укажи зону (Z1, Z2 или Отдых) и время в минутах. "
+            f"5. Если Fit Age {f_age} ниже 63 — вставь мощный комментарий. "
+            f"6. Будь лаконичен (2-3 абзаца), сохрани дух Терминатора. Фирменная фраза в конце."
+        )
+        ai_msg = ask_expert(prompt, "Показатели в норме, работаем.")
         report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n{header_ftp}\n\n"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n📊 TSB: {tsb} (завтра: {tsb_tomorrow})\n"
                   f"🔋 *Готовность: {score}/5*\n🧬 Fit Age: {f_age} | VO2max: {vo2_val if vo2_val else 'н/д'}\n\n"
                   f"🤖 *ТРЕНЕР:* \n_{ai_msg}_")
     else:
-        last = today_acts[-1]
+        last = sorted(today_acts, key=lambda x: x.get("start_date_local"))[-1]
         dist = round(last.get("distance", 0) / 1000, 2)
-        prompt = (f"Ты — спортивный тренер. Разбери велотренировку атлета 63 лет: {dist}км, TSB {tsb}, eFTP {eftp_val}. "
-                  f"Сравни с ровесниками. Хвали за успехи. Цитата Арнольда в конце. На русском.")
-        ai_msg = ask_expert(prompt, "Тренировка зафиксирована. Продолжаем!")
-        report = (f"🏃 *ТРЕНИРОВКА* {icon}\n{header_ftp}\n\n"
-                  f"*{last.get('name')}*\n📍 {dist} км | 🧬 Fit Age: {f_age}\n"
-                  f"📊 TSB: {tsb}\n\n🤖 *ТРЕНЕР:* \n_{ai_msg}_")
-
-    send_tg(report)
-
-if __name__ == "__main__":
-    main()
+        prompt = (
+            f"Ты — коуч Арнольд. Разбери велотренировку атлета 63 лет: {last.get('name')}. "
+            f"Дистанция: {dist}км, eFTP {eftp_val}. Утренний HRV был {hrv}, TSB {tsb}. "
+            f
