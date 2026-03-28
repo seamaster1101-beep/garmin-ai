@@ -166,7 +166,8 @@ def estimate_vo2max(activities, weight=88.0):
         # 1. ОСНОВНОЙ ВАРИАНТ (ЧЕРЕЗ МОЩНОСТЬ)
         if w and hr and hr > 110:
             intensity = (hr - hr_rest) / (hr_max - hr_rest)
-            if intensity > 0.6: # Добавили этот фильтр для точности
+            print(f"DEBUG VO2: HR={hr}, Int={round(intensity, 2)}, W={w}")
+            if intensity > 0.5: # Добавили этот фильтр для точности
                 v_metabolic = (12.0 * w / weight) + 7
                 v_final = v_metabolic / (intensity * 0.7 + 0.3)
             
@@ -228,10 +229,18 @@ def fitness_age(rhr, hrv, vo2=None, fat=18.3):
 # --- AI ---
 def ask_arnie(prompt, fallback_text):
     try:
-        # Мы используем прямой путь к модели 1.5-flash. 
-        # Это самое стабильное название на данный момент.
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # 1. Сначала узнаем, какая модель сейчас актуальна (Flash или Pro)
+        res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", timeout=10)
+        models = res_m.json().get("models", [])
         
+        # Ищем любую модель, которая поддерживает генерацию контента и имеет в названии gemini
+        target_model = next((m["name"] for m in models if "generateContent" in m.get("supportedGenerationMethods", []) and "gemini" in m["name"]), None)
+        
+        if not target_model:
+            return fallback_text
+
+        # 2. Делаем запрос по найденному пути
+        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
         res_ai = requests.post(
             url, 
             json={"contents": [{"parts": [{"text": prompt}]}]}, 
@@ -239,19 +248,11 @@ def ask_arnie(prompt, fallback_text):
         )
         
         data = res_ai.json()
-        
-        # Если вдруг Google отдаст ошибку (например, модель устарела), 
-        # мы увидим это в консоли, а не просто получим пустоту.
-        if "error" in data:
-            print(f"❌ Ошибка AI: {data['error'].get('message')}")
-            return fallback_text
-
         if "candidates" in data and data["candidates"]:
             return data["candidates"][0]["content"]["parts"][0]["text"].strip()
             
     except Exception as e:
-        print(f"AI Error: {e}")
-        
+        print(f"❌ Ошибка AI: {e}")
     return fallback_text
 
 # --- READINESS CALCULATION ---
@@ -381,16 +382,23 @@ def main():
         recovery_h = morning.get("Recovery_Time", 0)
         acute_load = morning.get("Acute_Load", 0)
         
-        # Динамические параметры для точности расчетов
-        weight_raw = morning.get("Weight", 88.0)
-        user_weight = float(str(weight_raw).replace(',', '.')) if weight_raw else 88.0
-        
+        # --- РАБОТА С ВЕСОМ ВНУТРИ TRY ---
+        weight_raw = morning.get("Weight") 
+        if weight_raw:
+            try:
+                user_weight = float(str(weight_raw).replace(',', '.'))
+            except:
+                user_weight = 88.0
+        else:
+            user_weight = 88.0
+
         body_fat_raw = morning.get("Body_Fat", 18.3)
         user_fat = float(str(body_fat_raw).replace(',', '.')) if body_fat_raw else 18.3
-    except:
+
+    except Exception as e:
+        print(f"⚠️ Ошибка сбора метрик: {e}")
+        user_weight, user_fat = 88.0, 18.3
         deep_sleep, rem_sleep, sleep_score, recovery_h, acute_load = 0, 0, 0, 0, 0
-        user_weight = 88.0
-        user_fat = 18.3
     
     # 2. Расчеты (теперь передаем weight и fat)
     # Используем твою новую версию estimate_vo2max(activities, weight=...)
