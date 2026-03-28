@@ -150,34 +150,37 @@ def calc_tss(a):
 
 # --- VO2 ---
 def estimate_vo2max(activities, weight=88.0):
+    print(f"DEBUG: Всего получено активностей из Strava: {len(activities)}")
     vals = []
     
     for a in activities:
-        # 1. Берем только заезды
+        # Проверяем только заезды
         if a.get("type") not in ["Ride", "VirtualRide"]:
             continue
             
-        try:
-            # 2. Принудительно превращаем в числа, чтобы не было ошибок сравнения
-            w = float(a.get("average_watts", 0))
-            hr = float(a.get("average_heartrate", 0))
-            
-            # 3. Минимальный порог: если есть пульс и мощность — считаем!
-            if w > 50 and hr > 100:
-                # Упрощенная формула: (Ватты / Вес * 12 + 7) / (Интенсивность)
-                # Интенсивность считаем грубо: HR / 175, чтобы не зависеть от hr_rest
-                intensity = hr / 175
-                v_final = ((12.0 * w / weight) + 7) / (intensity * 0.7 + 0.3)
-                
-                if 20 < v_final < 65:
+        w = a.get("average_watts")
+        hr = a.get("average_heartrate")
+        
+        # Печатаем данные каждой тренировки в лог, чтобы понять, почему они не подходят
+        # print(f"DEBUG ACT: Watts={w}, HR={hr}") 
+
+        if w and hr:
+            try:
+                w_f = float(w)
+                hr_f = float(hr)
+                if w_f > 50 and hr_f > 80:
+                    intensity = hr_f / 175
+                    v_final = ((12.0 * w_f / weight) + 7) / (intensity * 0.7 + 0.3)
                     vals.append(v_final)
-        except:
-            continue
+            except:
+                continue
     
-    # 4. Если нашли хоть что-то — отдаем среднее
     if vals:
-        return round(sum(vals) / len(vals), 1)
+        res = round(sum(vals) / len(vals), 1)
+        print(f"DEBUG: VO2max рассчитан: {res}")
+        return res
     
+    print("DEBUG: Не найдено подходящих тренировок (ватты + пульс)")
     return None
     
 # --- FITNESS AGE ---
@@ -205,8 +208,8 @@ def fitness_age(rhr, hrv, vo2=None, fat=18.3):
         # Итоговая формула: База + Разница по пульсу/жиру - Бонусы HRV/VO2
         calculated = actual_age + rhr_diff + fat_diff - hrv_bonus - vo2_bonus
         
-        # Лимиты: не моложе 45 и не старше фактического + 2
-        return round(max(40, calculated), 1)
+        # Лимиты: не моложе 40 и не старше фактического + 5
+        return round(max(40, min(actual_age + 5, calculated)), 1)
     except Exception:
         return 63
 
