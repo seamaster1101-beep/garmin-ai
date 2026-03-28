@@ -102,7 +102,6 @@ def main():
     now = datetime.utcnow() + timedelta(hours=1)
     today = now.strftime("%Y-%m-%d")
     
-    # 1. Strava Safe
     activities = []
     try:
         res = requests.post("https://www.strava.com/oauth/token", data={
@@ -117,7 +116,6 @@ def main():
             activities = data if isinstance(data, list) else []
     except: pass
 
-    # 2. Google Sheets Safe
     client = get_google_client()
     sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
     records = sheet.get_all_records()
@@ -133,7 +131,7 @@ def main():
     sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
     if sleep > 24: sleep /= 10
 
-    # 3. Calculations & Forecast
+    # Расчет TSB и прогноза
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
     
     ctl, atl = 0, 0
@@ -144,5 +142,42 @@ def main():
             tss = (t/3600)*(w/FTP_GARMIN)**2*100 if w > 0 and FTP_GARMIN > 0 else 0
             ctl += (tss - ctl) / 42
             atl += (tss - atl) / 7
+            
     tsb = round(ctl - atl, 1)
-    tsb_tomorrow =
+    # Формула прогноза: Decay (затухание) нагрузки за 1 день без тренировки
+    tsb_tomorrow = round((ctl * (1 - 1/42)) - (atl * (1 - 1/7)), 1)
+
+    # Readiness
+    score = 2.5
+    if hrv > 75: score += 1.0
+    elif hrv < 45: score -= 1.0
+    if rhr < 50: score += 0.5
+    elif rhr > 60: score -= 0.5
+    if sleep >= 7.5: score += 1.0
+    elif sleep < 6.0: score -= 1.0
+    if tsb < -25: score -= 2.0
+    elif -25 <= tsb <= -10: score += 0.5
+    score = max(0, min(5, round(score, 1)))
+    icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
+    circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
+
+    vo2_calc = vo2_val if vo2_val is not None else 35
+    f_age = round(get_bio_age() + (rhr-55)*0.4 + (fat-22)*0.5 - (hrv-45)*0.1 - (vo2_calc-35)*1.5, 1)
+    f_age = max(45.0, min(get_bio_age() + 2, f_age))
+
+    update_fitness_age_in_sheet(today, f_age)
+
+    # Построение отчета
+    eftp_diff = eftp_val - FTP_GARMIN if eftp_val else 0
+    eftp_str = f" | eFTP: {eftp_val} ({eftp_diff:+})" if eftp_val else ""
+    header_ftp = f"{circles} *FTP: {FTP_GARMIN}{eftp_str}*"
+    
+    today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
+    
+    if not today_acts:
+        prompt = (f"Ты — опытный спортивный наставник. Атлет (мужчина, 63 года): "
+                  f"HRV {int(hrv)} (для его возраста норма 30, у него 100!), Пульс {int(rhr)}, TSB {tsb}. "
+                  f"Завтра TSB {tsb_tomorrow}. Сравни с ровесниками (у него элитные показатели сердца). "
+                  f"Дай краткий экспертный совет. В конце — короткая цитата Арнольда. ПИШИ НА РУССКОМ.")
+        ai_msg = ask_expert(prompt, "Тренер на связи. Показатели в норме.")
+        report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n{header_ftp}\n\n"
