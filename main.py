@@ -309,6 +309,18 @@ def main():
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
+    # --- ТЕСТОВЫЙ БЛОК ДЛЯ ПРОВЕРКИ STRAVA ---
+    if activities:
+        last_act = activities[0]
+        print("--- DEBUG STRAVA DATA ---")
+        print(f"Название: {last_act.get('name')}")
+        print(f"Тип: {last_act.get('type')}")
+        print(f"Средние Ватты: {last_act.get('average_watts')}")
+        print(f"Средний Пульс: {last_act.get('average_heartrate')}")
+        print(f"Скорость (м/с): {last_act.get('average_speed')}")
+        print(f"Есть ли доступ к Watts: {'device_watts' in last_act}")
+        print("--------------------------")
+
     # --- 1. РАСЧЕТ TSB (EMA Модель) ---
     # Сортируем активности от старых к новым для правильного накопления
     sorted_acts = sorted(activities, key=lambda x: x.get("start_date_local", "2000-01-01"))
