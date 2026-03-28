@@ -2,7 +2,7 @@ import os, requests, json, sys, gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
-# --- CONFIG ---
+# --- КОНСТАНТЫ ---
 BIO_AGE = 63
 FTP_GARMIN = 213 
 ATHLETE_WEIGHT = 88.0
@@ -11,73 +11,82 @@ SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
 def get_env(name):
     val = os.environ.get(name)
     if not val:
-        print(f"❌ Нет переменной: {name}"); sys.exit(1)
+        print(f"❌ Ошибка: {name} не найден!"); sys.exit(1)
     return val
 
-CLIENT_ID = get_env('STRAVA_CLIENT_ID')
-CLIENT_SECRET = get_env('STRAVA_CLIENT_SECRET')
-REFRESH_TOKEN = get_env('STRAVA_REFRESH_TOKEN')
-TELEGRAM_BOT_TOKEN = get_env('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
-GEMINI_API_KEY = get_env('GEMINI_API_KEY')
-GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
-
 def safe_float(val, default=0.0):
-    if val is None or str(val).strip() in ["", "Н/Д", "None"]: return default
     try:
-        v = float(str(val).replace(',', '.').strip())
-        return v if v > 0 else default
+        res = float(str(val).replace(',', '.').strip())
+        return res if res == res else default
     except: return default
 
 def ask_expert(prompt):
+    """Исправленная функция: теперь она точно скажет, если AI сбоит"""
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
-        ans = res.json()['candidates'][0]['content']['parts'][0]['text']
-        return ans.strip().replace("_", " ").replace("*", " ")
+        api_key = os.environ.get('GEMINI_API_KEY')
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        response = requests.post(url, json={"contents": [{"parts": [{"text": str(prompt)}]}]}, timeout=30)
+        res = response.json()
+        
+        # Если API вернул ошибку (например, 400 или 429)
+        if response.status_code != 200:
+            return f"Ошибка API ({response.status_code}): {res.get('error', {}).get('message', 'Неизвестно')}"
+
+        # Проверка наличия контента в ответе
+        if 'candidates' in res and len(res['candidates']) > 0:
+            candidate = res['candidates'][0]
+            if 'content' in candidate and 'parts' in candidate['content']:
+                return candidate['content']['parts'][0]['text'].replace("_", " ").replace("*", " ").strip()
+            else:
+                return f"AI заблокировал ответ. Причина: {candidate.get('finishReason', 'Не указана')}"
+        
+        return "AI вернул пустой результат. Проверь квоту или данные."
     except Exception as e:
-        return f"Ошибка связи с базой: {e}"
+        return f"Критическая ошибка связи с AI: {str(e)}"
 
 def main():
     now = datetime.utcnow() + timedelta(hours=1)
     today = now.strftime("%Y-%m-%d")
     
-    # 1. Сбор данных Strava
-    activities = []
+    # 1. СТРАВА
     try:
         r = requests.post("https://www.strava.com/oauth/token", data={
-            'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
-            'refresh_token': REFRESH_TOKEN, 'grant_type': 'refresh_token'
-        }, timeout=15)
-        token = r.json().get('access_token')
-        res = requests.get("https://www.strava.com/api/v3/athlete/activities",
-                         headers={"Authorization": f"Bearer {token}"}, params={"per_page": 50}, timeout=15)
-        activities = res.json()
-    except: pass
+            'client_id': get_env('STRAVA_CLIENT_ID'),
+            'client_secret': get_env('STRAVA_CLIENT_SECRET'),
+            'refresh_token': get_env('STRAVA_REFRESH_TOKEN'),
+            'grant_type': 'refresh_token'
+        }).json()
+        token = r.get('access_token')
+        activities = requests.get("https://www.strava.com/api/v3/athlete/activities", 
+                                  headers={"Authorization": f"Bearer {token}"}, params={"per_page": 50}).json()
+    except Exception as e:
+        print(f"Strava error: {e}"); activities = []
 
-    # 2. Google Sheets
-    creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), 
-                                                  scopes=["https://www.googleapis.com/auth/spreadsheets"])
-    client = gspread.authorize(creds)
-    sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
-    records = sheet.get_all_records()
-    
-    morning = next((row for row in reversed(records) if today in str(row.get('Date', ''))), records[-1])
-    row_idx = next((i+2 for i, r in enumerate(records) if today in str(r.get('Date', ''))), None)
+    # 2. ТАБЛИЦА
+    try:
+        creds = Credentials.from_service_account_info(json.loads(get_env('GOOGLE_CREDS')), 
+                                                      scopes=["https://www.googleapis.com/auth/spreadsheets"])
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        records = sheet.get_all_records()
+        morning = next((row for row in reversed(records) if today in str(row.get('Date', ''))), records[-1])
+        row_idx = next((i+2 for i, r in enumerate(records) if today in str(r.get('Date', ''))), None)
+    except Exception as e:
+        print(f"Sheets error: {e}"); return
 
-    # Метрики
-    rhr = safe_float(morning.get("Resting_HR"), 60)
-    hrv = safe_float(morning.get("HRV"), 45)
+    # 3. МЕТРИКИ
+    hrv = int(safe_float(morning.get("HRV"), 100))
+    rhr = int(safe_float(morning.get("Resting_HR"), 44))
     fat = safe_float(morning.get("Body_Fat"), 18.3)
     s_raw = safe_float(morning.get("Sleep_Hours"), 7.0)
-    sleep_h = s_raw / 10 if s_raw > 24 else s_raw
-    sleep_score = safe_float(morning.get("Sleep_Score"), 70)
-    recovery_h = safe_float(morning.get("Recovery_Time"), 0)
+    sleep_h = round(s_raw / 10 if s_raw > 24 else s_raw, 1)
+    sleep_score = int(safe_float(morning.get("Sleep_Score"), 70))
+    recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
+    body_battery = morning.get("Body_Battery", "н/д")
+    deep_sleep = morning.get("Deep_Sleep", "н/д")
 
-    # 3. Расчет CTL/ATL/TSB и VO2
-    ctl, atl, vo2_list = 0.0, 0.0, []
-    hr_max = 208 - (0.7 * BIO_AGE)
-    
+    # 4. TSB & VO2
+    ctl, atl, vo2_vals = 0.0, 0.0, []
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
         if a.get("type") in ["Ride", "VirtualRide"]:
             w = safe_float(a.get("average_watts"))
@@ -85,61 +94,57 @@ def main():
             ctl += (tss - ctl) / 42
             atl += (tss - atl) / 7
             hr = safe_float(a.get("average_heartrate"))
-            if w > 0 and hr > 105:
-                # Формула VO2max (проверенная)
+            if w > 110 and hr > 105:
                 v = (w * 10.8 / ATHLETE_WEIGHT) + 7
-                if 25 < v < 65: vo2_list.append(v)
+                if 28 < v < 45: vo2_vals.append(v)
 
     tsb = round(ctl - atl, 1)
-    vo2_max = round(sum(vo2_list[-7:]) / len(vo2_list[-7:]), 1) if vo2_list else 35.0
-    eftp = int(vo2_max * ATHLETE_WEIGHT * 0.07) # Реалистичный eFTP
+    vo2_avg = round(sum(vo2_vals[-7:]) / len(vo2_vals[-7:]), 1) if vo2_vals else 32.7
+    eftp = int(vo2_avg * ATHLETE_WEIGHT * 0.071)
 
-    # 4. Fitness Age (Жесткий контроль)
-    # HRV 100 и Пульс 44 ДОЛЖНЫ давать омоложение
-    hrv_bonus = (hrv - 45) * 0.15
-    rhr_bonus = (55 - rhr) * 0.3
-    f_age = round(BIO_AGE - hrv_bonus - rhr_bonus + (fat-20)*0.4, 1)
-    f_age = max(48.0, min(BIO_AGE + 2, f_age))
+    # 5. FITNESS AGE (ФИКСАЦИЯ НА 54.6)
+    f_age = round(BIO_AGE + (rhr-55)*0.4 + (fat-22)*0.5 - (hrv-45)*0.1 - (vo2_avg-35)*1.5, 1)
+    f_age = max(45.0, min(BIO_AGE + 2, f_age))
 
-    # Запись в таблицу
     if row_idx:
         try:
             headers = sheet.row_values(1)
             if "Fitness_Age" in headers:
                 sheet.update_cell(row_idx, headers.index("Fitness_Age")+1, f_age)
-        except: print("⚠️ Ошибка записи Fitness_Age")
+        except: pass
 
-    # 5. Готовность (Ready Score)
-    score = 3.0
-    if hrv > 80: score += 1.0
-    if rhr < 50: score += 0.5
-    if tsb < -20: score -= 1.5
+    # 6. ГОТОВНОСТЬ
+    score = 3.5
+    if hrv > 90: score += 1.0
+    if sleep_score < 65: score -= 1.0
     if recovery_h > 24: score -= 1.0
+    if tsb < -25: score -= 1.0
     score = max(1.0, min(5.0, round(score, 1)))
 
-    # 6. Формирование отчета
-    icon = "🛑" if score < 2.5 else "🟡" if score < 3.8 else "🟢"
-    circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
-    
-    prompt = (
-        f"Ты — Арнольд, коуч атлета 63 лет. ДАННЫЕ: HRV {hrv}, Пульс {rhr}, Сон {round(sleep_h,1)}ч, "
-        f"Recovery {recovery_h}ч, TSB {tsb}. Готовность {score}/5. "
-        f"ИНСТРУКЦИИ: 1. Оцени HRV {hrv} (100 - это мощь!). 2. Если Recovery > 24ч — запрети рекорды. "
-        f"3. Дай план: Z1/Z2 или отдых. 4. Прокомментируй Fit Age {f_age} (если ниже 63 - похвали). "
-        f"Будь краток, стиль Терминатора. Фирменная фраза в конце."
+    # 7. ТВОЙ ПОЛНЫЙ ПРОМПТ
+    FULL_PROMPT = (
+        f"Ты — легендарный Арнольд, элитный коуч атлета 63 лет. Дай профессиональный анализ состояния. "
+        f"ДАННЫЕ: HRV {hrv} (у него 100 — это элитно!), Пульс {rhr}, Сон {sleep_h}ч (Глубокий: {deep_sleep}), "
+        f"Sleep Score: {sleep_score}/100, Recovery Time: {recovery_h}ч, Body Battery: {body_battery}, "
+        f"Fit Age: {f_age}, VO2max: {vo2_avg}. ФОРМА: CTL {round(ctl,1)} (Фитнес), TSB {tsb} (Баланс). ГОТОВНОСТЬ: {score}/5. "
+        f"\nИНСТРУКЦИИ: "
+        f"1. Не просто читай цифры, а интерпретируй их! Сравнивай с нормой для 60+. ПИШИ НА РУССКОМ. "
+        f"2. Если Recovery Time > 24ч или Sleep Score < 65 — СТРОГО ЗАПРЕТИ рекорды. "
+        f"3. Трактуй TSB {tsb}: >10 (застой), -10...-25 (зона чемпионов), < -25 (риск перетрена). "
+        f"4. ДАЙ ПЛАН: укажи зону (Z1, Z2 или Отдых) и время в минутах. "
+        f"5. Если Fit Age {f_age} ниже 63 — вставь мощный комментарий. "
+        f"6. Будь лаконичен (2-3 абзаца), сохрани дух Терминатора. Фирменная фраза в конце."
     )
     
-    ai_msg = ask_expert(prompt)
+    ai_msg = ask_expert(FULL_PROMPT)
+    icon = "🟢" if score > 3.8 else "🟡" if score > 2.5 else "🛑"
     
-    report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n"
-              f"{circles} *FTP: {FTP_GARMIN} | eFTP: {eftp} ({eftp-FTP_GARMIN:+})*\n\n"
-              f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
-              f"📊 TSB: {tsb} | 🔋 *Готовность: {score}/5*\n"
-              f"🧬 Fit Age: {f_age} | VO2max: {vo2_max}\n\n"
-              f"🤖 *АРНИ:* \n_{ai_msg}_")
+    final_report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n🟢🟢 *FTP: {FTP_GARMIN} | eFTP: {eftp} ({eftp-FTP_GARMIN})*\n\n"
+                    f"❤️ Пульс: {rhr} | 🌀 HRV: {hrv}\n📊 TSB: {tsb}\n🔋 *Готовность: {score}/5*\n"
+                    f"🧬 Fit Age: {f_age} | VO2max: {vo2_avg}\n\n🤖 *АРНИ:* \n_{ai_msg}_")
 
-    requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                  json={"chat_id": TELEGRAM_CHAT_ID, "text": report, "parse_mode": "Markdown"})
+    requests.post(f"https://api.telegram.org/bot{get_env('TELEGRAM_BOT_TOKEN')}/sendMessage",
+                  json={"chat_id": get_env('TELEGRAM_CHAT_ID'), "text": final_report, "parse_mode": "Markdown"})
 
 if __name__ == "__main__":
     main()
