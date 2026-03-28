@@ -144,27 +144,35 @@ def calc_tss(a):
     return round((t/3600)*(w/FTP)**2*100,1)
 
 # --- VO2 ---
-def estimate_vo2max(activities, weight=88): # Добавили weight
+def estimate_vo2max(activities, weight=88.0):
     vals = []
     for a in activities:
         if a.get("type") not in ["Ride", "VirtualRide"]:
             continue
             
-        watts = a.get("average_watts")
+        w = a.get("average_watts")
         hr = a.get("average_heartrate")
+        s = a.get("average_speed")
         
-        # Считаем через мощность, используя актуальный вес
-        if watts and hr and hr > 100:
-            # Формула: VO2 = (10.8 * W / mass) + 7
-            v = (10.8 * watts / weight) + 7
-            vals.append(v)
+        # 1. Считаем через мощность (научный подход а-ля Garmin)
+        if w and hr and hr > 110:
+            v_base = (12.0 * w / weight) + 7
+            hr_max = 160 # Твой макс. пульс (примерно для 63 лет)
+            hr_intensity = hr / hr_max 
+            # Учитываем "цену" пульса: чем он ниже при тех же Ваттах, тем выше VO2max
+            v_final = v_base / (hr_intensity * 0.7 + 0.3)
+            vals.append(v_final)
         
-        elif not watts:
-            s = a.get("average_speed")
-            if s and hr and 2 < s < 15 and 80 < hr < 180:
-                vals.append((s * 3.6) * 0.2 + 3.5)
+        # 2. ЗАПАСНОЙ ВАРИАНТ: Если мощности нет, считаем по скорости
+        elif not w and s and hr:
+            if 2 < s < 15 and 80 < hr < 180:
+                # Стандартная формула ACSM (скорость км/ч * 0.2 + 3.5)
+                # Умножаем на 1.2 для вело, чтобы не занижало относительно Garmin
+                v_speed = ((s * 3.6) * 0.2 + 3.5) * 1.2
+                vals.append(v_speed)
                 
     if len(vals) >= 3:
+        # Берем 5 последних качественных заездов
         recent_vals = vals[-5:]
         return round(sum(recent_vals) / len(recent_vals), 1)
     return None
@@ -189,7 +197,7 @@ def fitness_age(rhr, hrv, vo2=None, fat=18.3): # Жир 18.3 из твоего �
         vo2_impact = 0
         if vo2 and isinstance(vo2, (int, float)):
             # Чем выше VO2max, тем больше вычитаем из возраста (бонус до -5 лет)
-            vo2_impact = (vo2 - 40) * 0.5
+            vo2_impact = (vo2 - 35) * 1.0  # Каждый пункт выше 35 "омолаживает" на 1 год
 
         # Итоговый расчет
         calculated = actual_age + rhr_impact + fat_impact - hrv_impact - vo2_impact
