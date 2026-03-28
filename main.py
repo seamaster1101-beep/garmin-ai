@@ -150,32 +150,31 @@ def calc_tss(a):
 
 # --- VO2 ---
 def estimate_vo2max(activities, weight=88.0):
+    # Добавляем сортировку в самом начале функции
+    activities = sorted(activities, key=lambda x: x.get("start_date_local", ""))
     vals = []
+    HR_MAX = 175 
+
     for a in activities:
         if a.get("type") not in ["Ride", "VirtualRide"]: continue
-        
         w = a.get("average_watts")
         hr = a.get("average_heartrate")
         
         if w and hr and float(hr) > 110:
             try:
-                w_f = float(w)
-                hr_f = float(hr)
-                # Рассчитываем предполагаемую мощность на HR_MAX (175)
-                # Если при 141 пульсе у тебя 188 ватт, то при 175 будет около 230
-                estimated_max_w = w_f * (175 / hr_f)
+                w_f, hr_f = float(w), float(hr)
+                estimated_max_watts = w_f * (HR_MAX / hr_f)
+                v_final = (10.51 * estimated_max_watts / weight) + 7
                 
-                # Формула Storer для VO2max
-                v_final = (10.51 * estimated_max_w / weight) + 7
-                
-                if 25 < v_final < 65:
+                if 20 < v_final < 65: # Чуть расширим фильтр вниз
                     vals.append(v_final)
             except: continue
-            
+    
+    # ИСПРАВЛЕННЫЙ ФИНАЛ: берем столько, сколько есть, но не больше 7
     if vals:
-        # Берем среднее последних 5 тренировок для стабильности
-        res = round(sum(vals[-5:]) / len(vals[-5:]), 1)
-        return res
+        count = min(len(vals), 7)
+        recent = vals[-count:]
+        return round(sum(recent) / len(recent), 1)
     return None
     
 # --- FITNESS AGE ---
@@ -327,6 +326,13 @@ def main():
         print(f"Скорость (м/с): {last_act.get('average_speed')}")
         print(f"Есть ли доступ к Watts: {'device_watts' in last_act}")
         print("--------------------------")
+        # --- НОВЫЙ БЛОК ДЛЯ ПРОВЕРКИ ---
+        print(f"--- TOTAL DEBUG ---")
+        print(f"Morning Row Data: {morning}")
+        print(f"RHR for calc: {rhr_for_calc} | HRV for calc: {hrv_for_calc}")
+        print(f"VO2 value: {vo2_val}")
+        print(f"Fitness Age result: {f_age}")
+        print(f"-------------------")
 
     # --- 1. РАСЧЕТ TSB (EMA Модель) ---
     # Сортируем активности от старых к новым для правильного накопления
@@ -347,14 +353,16 @@ def main():
     rhr = morning.get("Resting_HR", "Н/Д")
     hrv = morning.get("HRV", "Н/Д")
 
-    # Если ключевых данных нет, ставим безопасные заглушки для расчетов
-    if rhr == "Н/Д":
-        # Чтобы Fitness Age и Readiness не выдали ошибку
+    # Проверка на пустые данные или "Н/Д"
+    if not rhr or rhr == "Н/Д":
         rhr_for_calc = 60 
         hrv_for_calc = 45
     else:
-        rhr_for_calc = rhr
-        hrv_for_calc = hrv
+        try:
+            rhr_for_calc = float(rhr)
+            hrv_for_calc = float(hrv)
+        except:
+            rhr_for_calc, hrv_for_calc = 60, 45
 
     # 1. Извлекаем ВСЕ данные для анализа Арнольдом (сохраняем твой блок try/except)
     try:
