@@ -1,20 +1,19 @@
-import os
-import requests
-import json
+import os, requests, json, sys
 from datetime import datetime, timedelta
-import sys
 
-# --- CONFIG ---
-BIO_AGE = 63  # твой возраст
+# --- 1. CONFIG ---
+BIRTH_DATE = datetime(1963, 5, 15) 
+FTP = 213  # Твой актуальный FTP
+SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
+
+def get_bio_age():
+    """Динамический расчет возраста на момент запуска"""
+    return (datetime.utcnow() - BIRTH_DATE).days / 365.25
 
 def get_env(name):
     val = os.environ.get(name)
-    if not val:
-        print(f"❌ Нет переменной: {name}")
-        sys.exit(1)
+    if not val: print(f"❌ Нет переменной: {name}"); sys.exit(1)
     return val
-
-SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
 
 CLIENT_ID = get_env('STRAVA_CLIENT_ID')
 CLIENT_SECRET = get_env('STRAVA_CLIENT_SECRET')
@@ -24,454 +23,181 @@ TELEGRAM_CHAT_ID = get_env('TELEGRAM_CHAT_ID')
 GEMINI_API_KEY = get_env('GEMINI_API_KEY')
 GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
-FTP = 250
-
-# --- TELEGRAM ---
-def send_tg(msg):
-    if len(msg) > 4000:
-        msg = msg[:3900]
+# --- 2. СЕРВИСНЫЕ ФУНКЦИИ ---
+def safe_float(val, default=0.0):
+    if val is None or str(val).strip() in ["", "Н/Д", "None"]: return default
     try:
-        res = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
-            timeout=15
-        )
-        # Если Telegram вернул ошибку (например, кривой Markdown), мы это увидим в консоли
-        if res.status_code != 200:
-            print(f"❌ Ошибка Telegram API: {res.text}")
-            
-    except Exception as e:
-        # Если вообще нет связи или другой сбой
-        print(f"❌ Ошибка сети/отправки: {e}")
+        v = float(str(val).replace(',', '.').strip())
+        return v if v >= 0 else default
+    except: return default
 
-# --- STRAVA ---
+def send_tg(msg):
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                     json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
+    except: pass
+
+# --- 3. ДАННЫЕ ---
 def get_strava_data():
     try:
         res = requests.post("https://www.strava.com/oauth/token", data={
-            'client_id': CLIENT_ID,
-            'client_secret': CLIENT_SECRET,
-            'refresh_token': REFRESH_TOKEN,
-            'grant_type': 'refresh_token'
+            'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
+            'refresh_token': REFRESH_TOKEN, 'grant_type': 'refresh_token'
         }, timeout=15)
-
         token = res.json().get('access_token')
-        if not token:
-            return []
+        if not token: return []
+        r = requests.get("https://www.strava.com/api/v3/athlete/activities",
+                         headers={"Authorization": f"Bearer {token}"}, params={"per_page": 100}, timeout=15)
+        return r.json() if r.status_code == 200 else []
+    except: return []
 
-        r = requests.get(
-            "https://www.strava.com/api/v3/athlete/activities",
-            headers={"Authorization": f"Bearer {token}"},
-            params={"per_page": 100},
-            timeout=15
-        )
-
-        data = r.json()
-        return data if r.status_code == 200 and isinstance(data, list) else []
-
-    except Exception as e:
-        print("Strava error:", e)
-        return []
-
-# --- GOOGLE SHEETS ---
 def get_morning_metrics(target_date):
     try:
         import gspread
         from google.oauth2.service_account import Credentials
-
-        creds = Credentials.from_service_account_info(
-            json.loads(GOOGLE_CREDS_JSON),
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-
+        creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), 
+                                                      scopes=["https://www.googleapis.com/auth/spreadsheets"])
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
         records = sheet.get_all_records()
-
         for row in reversed(records):
-            if target_date in str(row.get('Date', '')):
-                return row
-
-        yesterday = (datetime.strptime(target_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
-        for row in reversed(records):
-            if yesterday in str(row.get('Date', '')):
-                print("⚠️ Использую вчерашние данные")
-                return row
-
-    except Exception as e:
-        print("Sheets error:", e)
-
+            if target_date in str(row.get('Date', '')): return row
+    except: pass
     return {}
 
-# НОВАЯ ФУНКЦИЯ ЗАПИСИ (Вставляем сюда)
 def update_fitness_age(target_date, f_age_val):
     try:
         import gspread
         from google.oauth2.service_account import Credentials
-        
-        creds = Credentials.from_service_account_info(
-            json.loads(GOOGLE_CREDS_JSON),
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-        
+        creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), 
+                                                      scopes=["https://www.googleapis.com/auth/spreadsheets"])
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
-        
-        # 1. Получаем все значения из первой колонки (Date)
-        dates_col = sheet.col_values(1) 
-        
-        # 2. Ищем строку, в которой содержится наша дата (target_date)
-        row_idx = -1
-        for i, val in enumerate(dates_col):
-            if target_date in val: # Ищем вхождение текста "2026-03-28" в "2026-03-28 03:15"
-                row_idx = i + 1
-                break
-        
-        if row_idx != -1:
-            header = sheet.row_values(1)
-            if "Fitness_Age" in header:
-                col_idx = header.index("Fitness_Age") + 1
-                sheet.update_cell(row_idx, col_idx, f_age_val)
-                print(f"✅ Fitness Age ({f_age_val}) успешно записан в строку {row_idx}")
-            else:
-                print("❌ Колонки Fitness_Age не существует")
-        else:
-            print(f"❌ Дата {target_date} не найдена в колонке Date")
-            
-    except Exception as e:
-        print(f"Ошибка записи: {e}")
+        dates = sheet.col_values(1)
+        for i, val in enumerate(dates):
+            if target_date in val:
+                header = sheet.row_values(1)
+                if "Fitness_Age" in header:
+                    sheet.update_cell(i + 1, header.index("Fitness_Age") + 1, f_age_val)
+                    break
+    except: pass
 
-# --- TSS ---
-def calc_tss(a):
-    w = a.get("average_watts")
-    t = a.get("moving_time", 0)
-    if not w:
-        return 0
-    return round((t/3600)*(w/FTP)**2*100,1)
-
-# --- VO2 ---
+# --- 4. МАТЕМАТИКА ---
 def estimate_vo2max(activities, weight=88.0):
-    # Добавляем сортировку в самом начале функции
-    activities = sorted(activities, key=lambda x: x.get("start_date_local", ""))
+    HR_MAX = 175
     vals = []
-    HR_MAX = 175 
+    # Сортировка для корректного среза последних активностей
+    acts = sorted(activities, key=lambda x: x.get("start_date_local", ""))
+    if weight < 50 or weight > 150: weight = 88.0
 
-    for a in activities:
+    for a in acts:
         if a.get("type") not in ["Ride", "VirtualRide"]: continue
-        w = a.get("average_watts")
-        hr = a.get("average_heartrate")
+        w = safe_float(a.get("average_watts"), 0)
+        hr = safe_float(a.get("average_heartrate"), 0)
+        t = safe_float(a.get("moving_time"), 0)
         
-        if w and hr and float(hr) > 110:
+        # FIX: Фильтр по времени (минимум 20 минут) для точности VO2
+        if w > 0 and hr > 100 and t > 1200:
             try:
-                w_f, hr_f = float(w), float(hr)
-                estimated_max_watts = w_f * (HR_MAX / hr_f)
-                v_final = (10.51 * estimated_max_watts / weight) + 7
-                
-                if 20 < v_final < 65: # Чуть расширим фильтр вниз
-                    vals.append(v_final)
+                ratio = min(HR_MAX / hr, 1.35)
+                v = (10.51 * (w * ratio) / weight) + 7
+                if 20 < v < 75: vals.append(v)
             except: continue
     
-    # ИСПРАВЛЕННЫЙ ФИНАЛ: берем столько, сколько есть, но не больше 7
     if vals:
-        count = min(len(vals), 7)
-        recent = vals[-count:]
+        recent = vals[-min(len(vals), 7):]
+        if len(recent) > 4: recent = sorted(recent)[1:-1]
         return round(sum(recent) / len(recent), 1)
     return None
+
+def fitness_age(rhr, hrv, vo2, fat):
+    bio_age = get_bio_age()
+    vo2_calc = vo2 if vo2 is not None else 35.0
     
-# --- FITNESS AGE ---
-def fitness_age(rhr, hrv, vo2=None, fat=18.3):
-    try:
-        actual_age = BIO_AGE
-        
-        # 1. Пульс покоя (База 55). Твой 44 даст ~ минус 4.4 года
-        rhr_val = int(rhr) if rhr and rhr != "Н/Д" else 60
-        rhr_diff = (rhr_val - 55) * 0.4 
-        
-        # 2. Жир (База 22%). Твой 18.3 даст ~ минус 1.8 года
-        fat_val = float(fat)
-        fat_diff = (fat_val - 22) * 0.5 
-        
-        # 3. Вариабельность (HRV). Каждый пункт выше 45 — бонус
-        hrv_val = int(hrv) if hrv and hrv != "Н/Д" else 45
-        hrv_bonus = (hrv_val - 45) * 0.1
-
-        # 4. VO2max (База 35). Твой 42 даст минус 10.5 лет!
-        vo2_bonus = 0
-        if vo2 and isinstance(vo2, (int, float)):
-            vo2_bonus = (vo2 - 35) * 1.5
-
-        # Итоговая формула: База + Разница по пульсу/жиру - Бонусы HRV/VO2
-        calculated = actual_age + rhr_diff + fat_diff - hrv_bonus - vo2_bonus
-        
-        # Лимиты: не моложе 40 и не старше фактического + 5
-        return round(max(40, min(BIO_AGE + 5, calculated)), 1)
-    except Exception as e:
-        print(f"⚠️ Ошибка в расчете Fitness Age: {e}")
-        return float(BIO_AGE) # Возвращаем базовый возраст, если расчет сломался
-
-# --- AI ---
-def ask_arnie(prompt, fallback_text):
-    try:
-        # 1. Сначала узнаем, какая модель сейчас актуальна (Flash или Pro)
-        res_m = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", timeout=10)
-        models = res_m.json().get("models", [])
-        
-        # Ищем любую модель, которая поддерживает генерацию контента и имеет в названии gemini
-        target_model = next((m["name"] for m in models if "generateContent" in m.get("supportedGenerationMethods", []) and "gemini" in m["name"]), None)
-        
-        if not target_model:
-            return fallback_text
-
-        # 2. Делаем запрос по найденному пути
-        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
-        res_ai = requests.post(
-            url, 
-            json={"contents": [{"parts": [{"text": prompt}]}]}, 
-            timeout=30
-        )
-        
-        data = res_ai.json()
-        if "candidates" in data and data["candidates"]:
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            
-    except Exception as e:
-        print(f"❌ Ошибка AI: {e}")
-    return fallback_text
-
-# --- READINESS CALCULATION ---
-def get_readiness(morning, tsb=0):
-    # Базовая готовность 3.0
-    readiness_score = 3.0
+    rhr_diff = (rhr - 55) * 0.4
+    fat_diff = (fat - 22) * 0.5
+    hrv_bonus = (hrv - 45) * 0.1
+    vo2_bonus = (vo2_calc - 35) * 1.5
     
-    try:
-        # 1. HRV (Вес высокий)
-        hrv_val = morning.get("HRV")
-        if hrv_val and hrv_val != "Н/Д":
-            val = int(hrv_val)
-            if val > 75: readiness_score += 0.5
-            elif val < 50: readiness_score -= 1.0
+    res = bio_age + rhr_diff + fat_diff - hrv_bonus - vo2_bonus
+    # Ограничение: не моложе 40 и не старше BIO_AGE + 5
+    return round(max(40, min(bio_age + 5, res)), 1)
 
-        # 2. ПУЛЬС ПОКОЯ (Resting HR)
-        rhr_val = morning.get("Resting_HR")
-        if rhr_val and rhr_val != "Н/Д":
-            val = int(rhr_val)
-            if 0 < val < 50: readiness_score += 0.5
-            elif val > 60: readiness_score -= 0.5
-
-        # 3. BODY BATTERY
-        bb_val = morning.get("Body_Battery")
-        if bb_val:
-            val = int(bb_val)
-            if val > 80: readiness_score += 0.5
-            elif val < 40: readiness_score -= 1.0 # Если села батарейка — это серьезно
-
-        # 4. СОН И ФАЗЫ (Новое)
-        sleep_hrs = float(str(morning.get("Sleep_Hours", 0)).replace(',', '.'))
-        deep_h = float(str(morning.get("Deep_Sleep", 0)).replace(',', '.'))
-        s_score = int(morning.get("Sleep_Score", 100))
-        
-        if sleep_hrs < 5.5: readiness_score -= 1.0
-        if deep_h < 0.7: readiness_score -= 0.8  # Штраф за дефицит глубокого сна
-        if s_score < 65: readiness_score -= 1.0  # Штраф от Garmin за качество сна
-        
-        # 5. ВРЕМЯ ВОССТАНОВЛЕНИЯ (Новое)
-        rec_time = int(morning.get("Recovery_Time", 0))
-        if rec_time > 24: readiness_score -= 1.0
-        if rec_time > 36: readiness_score -= 1.0 # Суммарно -2 если больше 36ч
-
-        # 6. ФОРМА (TSB)
-        t_val = float(tsb) if tsb else 0
-        if t_val < -25: readiness_score -= 1.5
-        elif -20 <= t_val <= -5: readiness_score += 0.5
-
-    except Exception as e:
-        print(f"Readiness Error: {e}")
-
-    # Ограничиваем рамками 0 и 5
-    readiness_score = max(0, min(5, round(readiness_score, 1)))
-    
-    # Интерпретация и иконки
-    if readiness_score >= 4:
-        text, icon = "Отличная готовность — идеальный день для рекордов", "🔥🏆"
-    elif readiness_score >= 2.8:
-        text, icon = "Хорошая готовность — можно тренироваться уверенно", "🟢🟢"
-    elif readiness_score >= 1.5:
-        text, icon = "Средняя готовность — требуются осторожность", "🟡🟠"
-    else:
-        text, icon = "Критическая усталость — строгий отдых", "🔴🔴"
-    
-    return readiness_score, text, icon
-
-# --- MAIN ---
+# --- 5. MAIN ---
 def main():
     now = datetime.utcnow() + timedelta(hours=1)
     today = now.strftime("%Y-%m-%d")
-    yesterday = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
-
+    
     activities = get_strava_data()
     morning = get_morning_metrics(today)
 
-    # Если данных за утро нет совсем, создаем пустой словарь, чтобы скрипт не упал
-    if not morning:
-        morning = {}
-        print("⚠️ Утренние метрики не найдены")
+    # 1. Данные из таблицы
+    rhr = safe_float(morning.get("Resting_HR"), 60)
+    hrv = safe_float(morning.get("HRV"), 45)
+    weight = safe_float(morning.get("Weight"), 88.0)
+    if weight > 500: weight /= 10
+    fat = safe_float(morning.get("Body_Fat"), 18.3)
+    if fat > 100: fat /= 10
 
-    # --- ТЕСТОВЫЙ БЛОК ДЛЯ ПРОВЕРКИ STRAVA ---
-    if activities:
-        last_act = activities[0]
-        print("--- DEBUG STRAVA DATA ---")
-        print(f"Название: {last_act.get('name')}")
-        print(f"Тип: {last_act.get('type')}")
-        print(f"Средние Ватты: {last_act.get('average_watts')}")
-        print(f"Средний Пульс: {last_act.get('average_heartrate')}")
-        print(f"Скорость (м/с): {last_act.get('average_speed')}")
-        print(f"Есть ли доступ к Watts: {'device_watts' in last_act}")
-        print("--------------------------")
-        # --- НОВЫЙ БЛОК ДЛЯ ПРОВЕРКИ ---
-        print(f"--- TOTAL DEBUG ---")
-        print(f"Morning Row Data: {morning}")
-        print(f"RHR for calc: {rhr_for_calc} | HRV for calc: {hrv_for_calc}")
-        print(f"VO2 value: {vo2_val}")
-        print(f"Fitness Age result: {f_age}")
-        print(f"-------------------")
-
-    # --- 1. РАСЧЕТ TSB (EMA Модель) ---
-    # Сортируем активности от старых к новым для правильного накопления
-    sorted_acts = sorted(activities, key=lambda x: x.get("start_date_local", "2000-01-01"))
+    # 2. Расчеты
+    vo2_val = estimate_vo2max(activities, weight=weight)
+    f_age = fitness_age(rhr, hrv, vo2_val, fat=fat)
     
+    # 3. TSB и Интенсивность
     ctl, atl = 0, 0
+    sorted_acts = sorted(activities, key=lambda x: x.get("start_date_local", ""))
+    
+    # FIX: Безопасный FTP для исключения деления на 0
+    safe_ftp = FTP if FTP > 0 else 200
+
     for a in sorted_acts:
-        if a.get("type") not in ["Ride", "VirtualRide"]:
-            continue
-        tss_val = calc_tss(a)
-        # Формула EMA (экспоненциальное сглаживание)
-        ctl += (tss_val - ctl) / 42
-        atl += (tss_val - atl) / 7
-    
+        if a.get("type") in ["Ride", "VirtualRide"]:
+            w = safe_float(a.get("average_watts"), 0)
+            t = safe_float(a.get("moving_time"), 0)
+            tss = round((t/3600)*(w/safe_ftp)**2*100, 1) if w > 0 else 0
+            ctl += (tss - ctl) / 42
+            atl += (tss - atl) / 7
+
     tsb = round(ctl - atl, 1)
-
-    # --- 2. МЕТРИКИ И ГОТОВНОСТЬ ---
-    rhr = morning.get("Resting_HR", "Н/Д")
-    hrv = morning.get("HRV", "Н/Д")
-
-    # Проверка на пустые данные или "Н/Д"
-    if not rhr or rhr == "Н/Д":
-        rhr_for_calc = 60 
-        hrv_for_calc = 45
-    else:
-        try:
-            rhr_for_calc = float(rhr)
-            hrv_for_calc = float(hrv)
-        except:
-            rhr_for_calc, hrv_for_calc = 60, 45
-
-    # 1. Извлекаем ВСЕ данные для анализа Арнольдом (сохраняем твой блок try/except)
-    try:
-        sleep_hrs = morning.get("Sleep_Hours", 0)
-        deep_sleep = morning.get("Deep_Sleep", 0)
-        rem_sleep = morning.get("REM_Sleep", 0)
-        sleep_score = morning.get("Sleep_Score", 0)
-        recovery_h = morning.get("Recovery_Time", 0)
-        acute_load = morning.get("Acute_Load", 0)
-        
-        # --- РАБОТА С ВЕСОМ ВНУТРИ TRY ---
-        weight_raw = morning.get("Weight") 
-        if weight_raw:
-            try:
-                user_weight = float(str(weight_raw).replace(',', '.'))
-            except:
-                user_weight = 88.0
-        else:
-            user_weight = 88.0
-
-        body_fat_raw = morning.get("Body_Fat", 18.3)
-        user_fat = float(str(body_fat_raw).replace(',', '.')) if body_fat_raw else 18.3
-
-    except Exception as e:
-        print(f"⚠️ Ошибка сбора метрик: {e}")
-        user_weight, user_fat = 88.0, 18.3
-        deep_sleep, rem_sleep, sleep_score, recovery_h, acute_load = 0, 0, 0, 0, 0
     
-    # 2. Расчеты (теперь передаем weight и fat)
-    # Используем твою новую версию estimate_vo2max(activities, weight=...)
-    vo2_val = estimate_vo2max(activities, weight=user_weight)
-    
-    # Используем твою новую версию fitness_age(..., fat=...)
-    f_age = fitness_age(rhr_for_calc, hrv_for_calc, vo2_val, fat=user_fat) 
+    # FIX: Интенсивность строго последней тренировки
+    last_act = sorted_acts[-1] if sorted_acts else None
+    last_intensity = 0
+    if last_act:
+        w_last = safe_float(last_act.get("average_watts"), 0)
+        last_intensity = round((w_last / safe_ftp) * 100, 1) if w_last > 0 else 0
 
-    # Рассчитываем готовность один раз, чтобы она была доступна в обоих типах отчетов
-    r_val, r_text, r_icon = get_readiness(morning, tsb=tsb)
+    # --- TOTAL DEBUG ---
+    print(f"--- TOTAL DEBUG ---")
+    print(f"BIO_AGE: {round(get_bio_age(), 2)} | FitAge: {f_age} | Weight: {weight}")
+    print(f"VO2: {vo2_val if vo2_val else 'NO DATA'} | TSB: {tsb} | Last Intensity: {last_intensity}%")
+    print(f"-------------------")
 
-    # 3. Запись в таблицу и расчет Готовности
     update_fitness_age(today, f_age)
-    
-    # 4. Фильтруем тренировки за сегодня
+
+    # 4. ОТЧЕТЫ
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
-
-    # --- 2. УТРЕННИЙ РЕЖИМ ---
+    
     if not today_acts:
+        # Утренний Арнольд
+        prompt = f"Арнольд, утренний статус: HRV {hrv}, Пульс {rhr}, Fit Age {f_age}, TSB {tsb}. Будь краток. НА РУССКОМ."
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        try:
+            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+            ai_msg = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except: ai_msg = "Вставай, чемпион!"
         
-        prompt = (
-            f"Ты — легендарный Арнольд, элитный коуч и спортивный директор. "
-            f"Твоя задача: дать хлесткий, профессиональный анализ утреннего состояния. Тон: харизматичный, суровый тренер. "
-            f"ДАННЫЕ: "
-            f"HRV {hrv}, Пульс {rhr}, Сон {morning.get('Sleep_Hours')}ч (Глубокий: {deep_sleep}ч), "
-            f"Sleep Score: {sleep_score}/100, Recovery Time: {recovery_h}ч, "
-            f"Body Battery: {morning.get('Body_Battery')}, Fit Age: {f_age}, VO2max: {vo2_val if vo2_val else 'н/д'}. "
-            f"ФОРМА: CTL {round(ctl,1)} (Фитнес), TSB {tsb} (Баланс). "
-            f"ИТОГОВАЯ ГОТОВНОСТЬ: {r_val}/5. "
-            f"\nИНСТРУКЦИИ: "
-            f"1. Не перечисляй цифры, а интерпретируй их! ПИШИ НА РУССКОМ. "
-            f"2. ПРИОРИТЕТ: Если Recovery Time {recovery_h} > 24ч или Sleep Score {sleep_score} < 65 — СТРОГО ЗАПРЕТИ рекорды. "
-            f"3. Если HRV {hrv} > 70 и Пульс {rhr} < 50 — отметь крутую работу сердца, но сопоставь это с качеством сна. "
-            f"4. Трактуй TSB {tsb}: >10 (застой), -10...-25 (зона чемпионов, работаем), < -25 (риск травм). "
-            f"5. ДАЙ КОНКРЕТНЫЙ ПЛАН: укажи зону (Z1, Z2 или Отдых) и время в минутах. "
-            f"6. Если Fit Age {f_age} ниже 63 — вставь мощный комментарий об этом. "
-            f"7. Будь лаконичен (2-3 абзаца), сохрани дух Терминатора. "
-            f"В конце — одна фирменная фраза."
-        )
-        ai_response = ask_arnie(prompt, r_text)
-        ai_response = ai_response.replace("_", " ").replace("*", " ")
-
-        report = (
-            f"🌅 *УТРЕННИЙ СТАТУС* {r_icon}\n\n"
-            f"❤️ Пульс: {rhr} | 🌀 HRV: {hrv}\n"
-            f"🔋 *Готовность: {r_val}/5*\n"
-            f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val if vo2_val else 'н/д'}\n"
-            f"📢 {r_text}\n"
-            f"🧬 Fitness Age: {f_age}\n\n"
-            f"🤖 *АРНИ:* \n_{ai_response}_"
-        )
+        report = f"🌅 *УТРЕННИЙ СТАТУС*\n\n❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n📊 TSB: {tsb} | 🧬 Fit Age: {f_age}\n\n🤖 *АРНИ:* \n_{ai_msg}_"
         send_tg(report)
-        print("✅ MORNING REPORT SENT")
-        return
-
-    # --- 3. АНАЛИЗ ТРЕНИРОВКИ ---
-    last = sorted(today_acts, key=lambda x: x.get("start_date_local"))[-1]
-    tss_last = calc_tss(last)
-    dist = round(last.get("distance", 0) / 1000, 2)
-    name = last.get("name", "Тренировка")
-
-    prompt = (
-        f"Ты — опытный коуч Арнольд. Профессиональный разбор сессии: {name}. "
-        f"Дистанция: {dist}км, TSS: {tss_last}. Пульс в покое утром был {rhr}. "
-        f"Контекст: Готовность была {r_val}/5, TSB {tsb}. "
-        f"\nИНСТРУКЦИИ: "
-        f"1. Оцени качество работы. "
-        f"2. ПИШИ СТРОГО НА РУССКОМ, в своем стиле, но БЕЗ ЛИШНЕЙ ВОДЫ. "
-        f"3. Дай краткий совет на завтра."
-    )
-    ai_response = ask_arnie(prompt, "Хорошая работа.")
-    ai_response = ai_response.replace("_", " ").replace("*", " ")
-
-    report = (
-        f"🏃 *ТРЕНИРОВКА*\n\n"
-        f"*{name}*\n"
-        f"📍 {dist} км | 📈 TSS {tss_last}\n"
-        f"🧬 Fitness Age: {f_age}\n\n"
-        f"🤖 *АРНИ:* \n_{ai_response}_"
-    )
-    send_tg(report)
-    print("✅ TRAINING REPORT SENT")
+    else:
+        # Тренировочный отчет
+        last = today_acts[-1]
+        dist = round(safe_float(last.get("distance", 0)) / 1000, 2)
+        w_avg = safe_float(last.get("average_watts"), 0)
+        int_pct = round((w_avg / safe_ftp) * 100, 1) if w_avg > 0 else 0
+        
+        report = f"🚲 *ТРЕНИРОВКА ЗАВЕРШЕНА*\n\n*{last.get('name')}*\n📍 {dist} км | 🔥 Интенсивность: {int_pct}% от FTP\n🧬 Fit Age: {f_age}"
+        send_tg(report)
 
 if __name__ == "__main__":
     main()
