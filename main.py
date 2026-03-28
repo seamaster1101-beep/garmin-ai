@@ -31,13 +31,18 @@ def send_tg(msg):
     if len(msg) > 4000:
         msg = msg[:3900]
     try:
-        requests.post(
+        res = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
             json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
             timeout=15
         )
-    except:
-        pass
+        # Если Telegram вернул ошибку (например, кривой Markdown), мы это увидим в консоли
+        if res.status_code != 200:
+            print(f"❌ Ошибка Telegram API: {res.text}")
+            
+    except Exception as e:
+        # Если вообще нет связи или другой сбой
+        print(f"❌ Ошибка сети/отправки: {e}")
 
 # --- STRAVA ---
 def get_strava_data():
@@ -165,8 +170,8 @@ def estimate_vo2max(activities, weight=88.0):
                 v_metabolic = (12.0 * w / weight) + 7
                 v_final = v_metabolic / (intensity * 0.7 + 0.3)
             
-            if 25 < v_final < 60:
-                vals.append(v_final)
+                if 25 < v_final < 60:
+                    vals.append(v_final)
         
         # 2. ЗАПАСНОЙ ВАРИАНТ (ЧЕРЕЗ СКОРОСТЬ)
         elif not w and s and hr:
@@ -223,25 +228,10 @@ def fitness_age(rhr, hrv, vo2=None, fat=18.3):
 # --- AI ---
 def ask_arnie(prompt, fallback_text):
     try:
-        # 1. Сначала узнаем, какие модели сейчас живы
-        res_m = requests.get(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", 
-            timeout=10
-        )
-        models_data = res_m.json()
-        available = [
-            m["name"] for m in models_data.get("models", []) 
-            if "generateContent" in m.get("supportedGenerationMethods", [])
-        ]
+        # Мы используем прямой путь к модели 1.5-flash. 
+        # Это самое стабильное название на данный момент.
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         
-        if not available:
-            return fallback_text
-            
-        # 2. Выбираем Flash (она быстрее и стабильнее)
-        target_model = next((m for m in available if "flash" in m), available[0])
-        
-        # 3. Делаем сам запрос
-        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
         res_ai = requests.post(
             url, 
             json={"contents": [{"parts": [{"text": prompt}]}]}, 
@@ -249,6 +239,13 @@ def ask_arnie(prompt, fallback_text):
         )
         
         data = res_ai.json()
+        
+        # Если вдруг Google отдаст ошибку (например, модель устарела), 
+        # мы увидим это в консоли, а не просто получим пустоту.
+        if "error" in data:
+            print(f"❌ Ошибка AI: {data['error'].get('message')}")
+            return fallback_text
+
         if "candidates" in data and data["candidates"]:
             return data["candidates"][0]["content"]["parts"][0]["text"].strip()
             
@@ -353,6 +350,8 @@ def main():
     
     ctl, atl = 0, 0
     for a in sorted_acts:
+        if a.get("type") not in ["Ride", "VirtualRide"]:
+            continue
         tss_val = calc_tss(a)
         # Формула EMA (экспоненциальное сглаживание)
         ctl += (tss_val - ctl) / 42
@@ -432,6 +431,7 @@ def main():
             f"В конце — одна фирменная фраза."
         )
         ai_response = ask_arnie(prompt, r_text)
+        ai_response = ai_response.replace("_", " ").replace("*", " ")
 
         report = (
             f"🌅 *УТРЕННИЙ СТАТУС* {r_icon}\n\n"
@@ -462,6 +462,7 @@ def main():
         f"3. Дай краткий совет на завтра."
     )
     ai_response = ask_arnie(prompt, "Хорошая работа.")
+    ai_response = ai_response.replace("_", " ").replace("*", " ")
 
     report = (
         f"🏃 *ТРЕНИРОВКА*\n\n"
