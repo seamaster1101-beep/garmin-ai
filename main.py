@@ -182,33 +182,33 @@ def estimate_vo2max(activities, weight=88.0):
     return None
     
 # --- FITNESS AGE ---
-def fitness_age(rhr, hrv, vo2=None, fat=18.3): # Жир 18.3 из твоего лога S2
+def fitness_age(rhr, hrv, vo2=None, fat=18.3):
     try:
         actual_age = 63
-        # 1. Влияние пульса покоя (RHR)
+        
+        # 1. Пульс покоя (База 55). Твой 44 даст ~ минус 4.4 года
         rhr_val = int(rhr) if rhr and rhr != "Н/Д" else 60
-        rhr_impact = (rhr_val - 55) * 0.4
+        rhr_diff = (rhr_val - 55) * 0.4 
         
-        # 2. Влияние жира (Body Fat) - атлетический уровень
+        # 2. Жир (База 22%). Твой 18.3 даст ~ минус 1.8 года
         fat_val = float(fat)
-        fat_impact = (fat_val - 22) * 0.5
+        fat_diff = (fat_val - 22) * 0.5 
         
-        # 3. Влияние HRV
+        # 3. Вариабельность (HRV). Каждый пункт выше 45 — бонус
         hrv_val = int(hrv) if hrv and hrv != "Н/Д" else 45
-        hrv_impact = (hrv_val - 45) * 0.1
+        hrv_bonus = (hrv_val - 45) * 0.1
 
-        # 4. Влияние VO2max (Новое!)
-        vo2_impact = 0
+        # 4. VO2max (База 35). Твой 42 даст минус 10.5 лет!
+        vo2_bonus = 0
         if vo2 and isinstance(vo2, (int, float)):
-            # Чем выше VO2max, тем больше вычитаем из возраста (бонус до -5 лет)
-            vo2_impact = (vo2 - 35) * 1.0  # Каждый пункт выше 35 "омолаживает" на 1 год
+            vo2_bonus = (vo2 - 35) * 1.5
 
-        # Итоговый расчет
-        calculated = actual_age + rhr_impact + fat_impact - hrv_impact - vo2_impact
+        # Итоговая формула: База + Разница по пульсу/жиру - Бонусы HRV/VO2
+        calculated = actual_age + rhr_diff + fat_diff - hrv_bonus - vo2_bonus
         
-        # Ограничиваем разумными пределами
+        # Лимиты: не моложе 45 и не старше фактического + 2
         return round(max(45, min(actual_age + 2, calculated)), 1)
-    except:
+    except Exception:
         return 63
 
 # --- AI ---
