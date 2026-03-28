@@ -4,7 +4,7 @@ from google.oauth2.service_account import Credentials
 
 # --- CONFIG ---
 # Считаем возраст автоматически на основе даты рождения
-BIRTH_DATE = datetime(1963, 5, 15)
+BIRTH_DATE = datetime(1963, 5, 29)
 def get_bio_age():
     return (datetime.utcnow() - BIRTH_DATE).days / 365.25
 
