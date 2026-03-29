@@ -148,8 +148,13 @@ def main():
     if weight > 500: weight /= 10
     fat = safe_float(morning.get("Body_Fat"), 18.3)
     if fat > 100: fat /= 10
+    
+    # Расширенные метрики сна и восстановления
     sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
     if sleep > 24: sleep /= 10
+    deep_sleep = safe_float(morning.get("Deep_Sleep"), 0.0)
+    sleep_score = int(safe_float(morning.get("Sleep_Score"), 0))
+    recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
 
     # Calculations
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
@@ -165,16 +170,24 @@ def main():
     tsb = round(ctl - atl, 1)
 
     # Readiness & FitAge
-    score = 2.5
-    if hrv > 75: score += 1.0
-    elif hrv < 45: score -= 1.0
+    score = 3.0  # Базовая точка
+    if hrv > 75: score += 0.5
+    elif hrv < 50: score -= 1.0
     if rhr < 50: score += 0.5
     elif rhr > 60: score -= 0.5
-    if sleep >= 7.5: score += 1.0
-    elif sleep < 6.0: score -= 1.0
-    if tsb < -25: score -= 2.0
-    elif -25 <= tsb <= -10: score += 0.5
+    
+    # Сон и восстановление (из сломанного кода)
+    if sleep < 6.0: score -= 1.0
+    if deep_sleep < 0.7 and deep_sleep > 0: score -= 0.8
+    if sleep_score < 65 and sleep_score > 0: score -= 1.0
+    if recovery_h > 24: score -= 1.0
+    
+    # Форма
+    if tsb < -25: score -= 1.5
+    elif -20 <= tsb <= -5: score += 0.5
+    
     score = max(0, min(5, round(score, 1)))
+    
     icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
     circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
 
@@ -191,19 +204,55 @@ def main():
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
     
     if not today_acts:
-        prompt = (f"Ты Арнольд. HRV {int(hrv)}, Пульс {int(rhr)}, TSB {tsb}, Готовность {score}/5. "
-                  f"eFTP {eftp_val} vs Garmin {FTP_GARMIN}. Кратко, сурово, на русском.")
-        ai_msg = ask_arnie(prompt, "В строю.")
+        prompt = (
+            f"Ты — опытный коуч и спортивный директор. Твой атлет — мужчина 63 лет. "
+            f"Дай глубокий, человечный анализ утреннего состояния. "
+            f"ДАННЫЕ: HRV {int(hrv)}, Пульс {int(rhr)}, Сон {sleep}ч (Глубокий: {deep_sleep}ч), "
+            f"Sleep Score: {sleep_score}/100, Recovery Time: {recovery_h}ч, TSB {tsb}, Готовность {score}/5. "
+            f"Fit Age {f_age}. VO2max: {vo2_val if vo2_val else 'н/д'}. "
+            f"\nИНСТРУКЦИИ: "
+            f"1. ГОВОРИ КАК ЧЕЛОВЕК: Будь мудрым наставником. Сравни Fit Age {f_age} и форму с активными ровесниками (60-65 лет). "
+            f"2. ЧЕСТНОСТЬ И ПОДДЕРЖКА: Если восстановление провалено ({score}/5), поддержи атлета, объясни, что отдых — это тоже тренировка. "
+            f"3. БЕЗ ВОДЫ: Не перечисляй цифры (они есть в отчете), а делай выводы. "
+            f"4. ПЛАН: Четко скажи, что делать сегодня (Z1, Z2 или полный отдых) и на сколько минут. "
+            f"5. ФИНАЛ: Весь текст пиши нормальным языком, но в самом конце добавь ОДНУ легендарную фразу Арнольда для настроя. "
+            f"Пиши строго на русском."
+        )
+        ai_msg = ask_arnie(prompt, "В строю. Жду работу.")
+        
         report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n{header_ftp}\n\n"
-                  f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n🔋 *Готовность: {score}/5*\n"
+                  f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
+                  f"🔋 *Готовность: {score}/5* (Сон: {sleep_score})\n"
                   f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val if vo2_val else 'н/д'}\n"
-                  f"🧬 Fit Age: {f_age}\n\n🤖 *АРНИ:* \n_{ai_msg}_")
+                  f"🧬 Fit Age: {f_age}\n\n"
+                  f"🤖 *АРНИ:* \n_{ai_msg}_")
     else:
-        last = today_acts[-1]
+        # Анализ последней тренировки за сегодня
+        last = sorted(today_acts, key=lambda x: x.get("start_date_local"))[-1]
         dist = round(last.get("distance", 0) / 1000, 2)
+        name = last.get("name", "Тренировка")
+        
+        # Для расчета TSS нам нужен FTP_GARMIN
+        w_avg = last.get("average_watts", 0)
+        t_sec = last.get("moving_time", 0)
+        tss_last = round((t_sec/3600)*(w_avg/FTP_GARMIN)**2*100, 1) if w_avg else 0
+
+        prompt = (
+            f"Ты — опытный тренер. Разбери тренировку атлета 63 лет: {name}. "
+            f"Дистанция: {dist}км, TSS: {tss_last}. Утренняя готовность была {score}/5. "
+            f"\nИНСТРУКЦИИ: "
+            f"1. Оцени, не была ли нагрузка чрезмерной для текущего состояния и возраста. "
+            f"2. Похвали за дисциплину, укажи на успехи или халтуру (если TSS слишком мал). "
+            f"3. Дай совет на завтра. Пиши на русском. "
+            f"В конце — одна фраза Арнольда."
+        )
+        ai_msg = ask_arnie(prompt, "Работа сделана. Отдыхай.")
+
         report = (f"🏃 *ТРЕНИРОВКА* {icon}\n{header_ftp}\n\n"
-                  f"*{last.get('name')}*\n📍 {dist} км | 🧬 Fit Age: {f_age}\n"
-                  f"📊 TSB: {tsb}\n\n🤖 *АРНИ:* \n_{ask_arnie('Разбери тренировку кратко.', 'Работа сделана!')}_")
+                  f"*{name}*\n"
+                  f"📍 {dist} км | 📈 TSS: {tss_last}\n"
+                  f"🧬 Fit Age: {f_age}\n\n"
+                  f"🤖 *АРНИ:* \n_{ai_msg}_")
 
     send_tg(report)
 
