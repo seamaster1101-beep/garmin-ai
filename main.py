@@ -1,11 +1,20 @@
-import os, requests, json, sys, gspread
+import os, requests, json, sys, gspread, base64, tarfile, garth
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
+from garminconnect import Garmin
 
 # --- CONFIG ---
 BIRTH_DATE = datetime(1963, 5, 29)
 FTP_GARMIN = 213 
 SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
+
+def get_garmin_client():
+    gar = Garmin(os.environ.get('GARMIN_EMAIL'), os.environ.get('GARMIN_PASSWORD'))
+    try:
+        gar.login()
+    except:
+        print("❌ Ошибка входа в Garmin"); return None
+    return gar
 
 def get_bio_age():
     return (datetime.utcnow() - BIRTH_DATE).days / 365.25
@@ -134,27 +143,47 @@ def main():
     except Exception as e: 
         print(f"❌ Strava fail: {e}"); activities = []
 
-    # Google Sheets Data
-    client = get_google_client()
-    sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
-    records = sheet.get_all_records()
-    morning = next((row for row in reversed(records) if today in str(row.get('Date', ''))), 
-                   (records[-1] if records else {}))
-
-    # Metrics
-    rhr = safe_float(morning.get("Resting_HR"), 60)
-    hrv = safe_float(morning.get("HRV"), 45)
-    weight = safe_float(morning.get("Weight"), 88.0)
-    if weight > 500: weight /= 10
-    fat = safe_float(morning.get("Body_Fat"), 18.3)
-    if fat > 100: fat /= 10
+    # 1. Забираем данные из Garmin (с проверкой на доступность)
+    gar = get_garmin_client()
+    if not gar:
+        print("❌ Garmin недоступен, пропускаем блок"); summary, hrv_res = {}, {}
+    else:
+        summary = gar.get_user_summary(today) or {}
+        hrv_res = gar.get_hrv_data(today) or {}
     
-    # Расширенные метрики сна и восстановления
-    sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
-    if sleep > 24: sleep /= 10
-    deep_sleep = safe_float(morning.get("Deep_Sleep"), 0.0)
-    sleep_score = int(safe_float(morning.get("Sleep_Score"), 0))
-    recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
+    # Безопасный поиск сна (добавлен or {})
+    sleep_data = {}
+    for d in [today, (now - timedelta(days=1)).strftime("%Y-%m-%d")]:
+        try:
+            sd = gar.get_sleep_data(d) or {}
+            if sd.get("dailySleepDTO", {}).get("sleepTimeSeconds", 0) > 0:
+                sleep_data = sd; break
+        except: continue
+    
+    dto = sleep_data.get("dailySleepDTO", {})
+
+    # 2. Раскладываем по переменным (теперь безопасно)
+    rhr = safe_float(summary.get("restingHeartRate"), 51)
+    hrv = safe_float(hrv_res.get("hrvSummary", {}).get("lastNightAvg"), 85)
+    sleep = round(safe_float(dto.get("sleepTimeSeconds"), 25200) / 3600, 1)
+    sleep_score = int(dto.get("sleepScores", {}).get("overall", {}).get("value") or 0)
+    deep_sleep = round(safe_float(dto.get("deepSleepSeconds"), 0) / 3600, 1)
+    rem_sleep = round(safe_float(dto.get("remSleepSeconds"), 0) / 3600, 1)
+    recovery_h = int(summary.get("recoveryTime") or 0)
+    acute_load = int(summary.get("trainingLoad") or 0)
+    bb_max = summary.get("bodyBatteryHighestValue", 0)
+
+    # Вес и жир (безопасное получение из Garmin S2)
+    weight, fat = 87.5, 18.4 
+    try:
+        w_data = gar.get_body_composition(today, today) or {}
+        lst = w_data.get('dateWeightList', [])
+        if lst:
+            last_w = lst[-1]
+            weight = round(float(last_w.get('weight', 87500)) / 1000, 1)
+            fat = safe_float(last_w.get('bodyFat'), 18.4)
+    except Exception as e:
+        print(f"⚠️ Ошибка получения веса: {e}")
 
     # Calculations
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
@@ -195,29 +224,57 @@ def main():
     icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
     circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
 
-    # --- 1. БАЗОВАЯ ФОРМА (Долгосрочная) ---
-    # VO2max и Жир — это фундамент. VO2max 32.7 для 63 лет — это мощно.
-    vo2_calc = vo2_val if vo2_val else 32.7  # <-- ДОБАВЬ ЭТУ СТРОКУ
-    base_age = get_bio_age() + (fat - 22) * 0.5 - (vo2_calc - 32) * 1.3
+    # --- BASE (долгосрочная форма) ---
+    vo2_calc = vo2_val if vo2_val else 35
+    base_age = get_bio_age() + (fat - 22) * 0.5 - (vo2_calc - 35) * 1.2
 
-    # --- 2. КОРРЕКЦИЯ СОСТОЯНИЯ (Краткосрочная) ---
-    # HRV: считаем отклонение от твоей нормы 85. Ограничиваем влияние!
+    # --- HRV (мягкое влияние) ---
     hrv_dev = (hrv - 85) / 85
-    hrv_penalty = max(-1.0, min(1.0, -hrv_dev * 3)) 
+    hrv_penalty = max(-0.7, min(0.7, -hrv_dev * 2))
 
-    # Пульс: отклонение от нормы 51.
-    rhr_penalty = max(-0.5, min(0.5, (rhr - 51) * 0.05))
+    # --- Пульс ---
+    rhr_penalty = max(-0.5, min(0.5, (rhr - 51) * 0.04))
 
-    # Сон: штраф к возрасту только при явном недосыпе
-    sleep_p = 1.0 if 0 < sleep_score < 60 else 0.4 if sleep_score < 75 else 0
+    # --- Сон ---
+    sleep_penalty = 0
+    if sleep_score > 0:
+        if sleep_score < 55:
+            sleep_penalty = 0.8
+        elif sleep_score < 70:
+            sleep_penalty = 0.4
 
-    # --- 3. ИТОГ ---
-    f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_p, 1)
-    
-    # Жесткий фиксатор, чтобы не прыгало выше реальности
-    f_age = max(45.0, min(get_bio_age() + 1.5, f_age))
+    # --- ИТОГ ---
+    f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_penalty, 1)
 
-    update_fitness_age_in_sheet(today, f_age)
+    # Жесткий фиксатор, чтобы не прыгало выше реальности (лимит +3 года к био)
+    f_age = max(45.0, min(get_bio_age() + 3, f_age))
+
+    # 3. ЗАПИСЬ В ТАБЛИЦУ (Обновляем всё сразу)
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        
+        # Готовим список данных ровно по порядку твоих столбцов:
+        # Date, Weight, Fat, Muscle, RHR, HRV, BB, Score, Hours, Deep, REM, Recov, Acute, Age, FitAge
+        morning_row = [
+            today, weight, fat, "", int(rhr), int(hrv), 
+            bb_max, sleep_score, sleep, deep_sleep, rem_sleep, 
+            recovery_h, acute_load, 62, f_age
+        ]
+
+        try:
+            cell = sheet.find(today)
+            if cell:
+                # Если строка за сегодня есть — обновляем её полностью
+                sheet.update(range_name=f"A{cell.row}:O{cell.row}", values=[morning_row])
+                print(f"✅ Данные за {today} обновлены в таблице.")
+        except:
+            # Если строки нет — добавляем новую
+            sheet.append_row(morning_row)
+            print(f"✅ Добавлена новая строка за {today}.")
+            
+    except Exception as e:
+        print(f"⚠️ Ошибка при записи в таблицу: {e}")
 
     # Report
     eftp_str = f" | eFTP: {eftp_val} ({eftp_val - FTP_GARMIN:+})" if eftp_val else ""
