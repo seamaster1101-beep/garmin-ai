@@ -9,12 +9,26 @@ FTP_GARMIN = 213
 SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
 
 def get_garmin_client():
-    gar = Garmin(os.environ.get('GARMIN_EMAIL'), os.environ.get('GARMIN_PASSWORD'))
+    email = os.environ.get('GARMIN_EMAIL')
+    password = os.environ.get('GARMIN_PASSWORD')
+    token_store = "/tmp/garmin_tokens"
+    
+    # Используем garth для управления сессией
     try:
-        gar.login()
-    except:
-        print("❌ Ошибка входа в Garmin"); return None
-    return gar
+        if os.path.exists(token_store):
+            garth.resume(token_store)
+            gar = Garmin()
+            gar.garth = garth.client
+            print("✅ Сессия Garmin возобновлена из кэша")
+        else:
+            gar = Garmin(email, password)
+            gar.login()
+            gar.garth.dump(token_store)
+            print("✅ Новый вход в Garmin выполнен и кэширован")
+        return gar
+    except Exception as e:
+        print(f"❌ Ошибка входа в Garmin: {e}")
+        return None
 
 def get_bio_age():
     return (datetime.utcnow() - BIRTH_DATE).days / 365.25
