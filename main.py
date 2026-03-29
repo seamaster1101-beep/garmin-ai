@@ -241,6 +241,16 @@ def main():
             f"Пиши строго на русском."
         )
         ai_msg = ask_arnie(prompt, "В строю. Жду работу.")
+
+        # 1. Сначала определяем текстовый статус (s_status)
+        if sleep_score < 55:
+            s_status = "Плохо"
+        elif sleep_score < 75:
+            s_status = "Средне"
+        else:
+            s_status = "Отлично"
+
+        # 2. И только потом используем его в отчете
         
         report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n{header_ftp}\n\n"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
