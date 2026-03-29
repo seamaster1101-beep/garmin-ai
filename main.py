@@ -176,10 +176,14 @@ def main():
     if rhr < 50: score += 0.5
     elif rhr > 60: score -= 0.5
     
-    # Сон и восстановление (из сломанного кода)
-    if sleep < 6.0: score -= 1.0
-    if deep_sleep < 0.7 and deep_sleep > 0: score -= 0.8
-    if sleep_score < 65 and sleep_score > 0: score -= 1.0
+    # Оценка качества сна (Sleep Score от Garmin)
+    if 0 < sleep_score < 55: 
+        score -= 1.5   # Плохое качество: циклы и фазы нарушены
+    elif 55 <= sleep_score < 75: 
+        score -= 1.0   # Среднее качество
+    elif sleep_score > 85: 
+        score += 0.5   # Отличное восстановление
+
     if recovery_h > 24: score -= 1.0
     
     # Форма
@@ -197,21 +201,21 @@ def main():
     base_age = get_bio_age() + (fat - 22) * 0.5 - (vo2_calc - 32) * 1.3
 
     # --- 2. КОРРЕКЦИЯ СОСТОЯНИЯ (Краткосрочная) ---
-    # HRV: считаем отклонение от твоей нормы 85. Ограничиваем влияние до +-1.5 года.
+    # HRV: считаем отклонение от твоей нормы 85. Ограничиваем влияние!
     hrv_dev = (hrv - 85) / 85
-    hrv_penalty = max(-1.5, min(1.5, -hrv_dev * 4)) 
+    hrv_penalty = max(-1.0, min(1.0, -hrv_dev * 3)) 
 
-    # Пульс: отклонение от нормы 51. Ограничение +-1.0 год.
-    rhr_penalty = max(-1.0, min(1.0, (rhr - 51) * 0.1))
+    # Пульс: отклонение от нормы 51.
+    rhr_penalty = max(-0.5, min(0.5, (rhr - 51) * 0.05))
 
-    # Сон: штраф только если совсем мало.
-    sleep_penalty = 1.0 if sleep < 6 else 0.5 if sleep < 7 else 0
+    # Сон: штраф к возрасту только при явном недосыпе
+    sleep_p = 1.0 if 0 < sleep_score < 60 else 0.4 if sleep_score < 75 else 0
 
     # --- 3. ИТОГ ---
-    f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_penalty, 1)
+    f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_p, 1)
     
-    # Жесткий лимит, чтобы не вылетать за рамки реальности
-    f_age = max(45.0, min(get_bio_age() + 2, f_age))
+    # Жесткий фиксатор, чтобы не прыгало выше реальности
+    f_age = max(45.0, min(get_bio_age() + 1.5, f_age))
 
     update_fitness_age_in_sheet(today, f_age)
 
@@ -240,7 +244,8 @@ def main():
         
         report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n{header_ftp}\n\n"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
-                  f"🔋 *Готовность: {score}/5* (Сон: {sleep_score})\n"
+                  f"🔋 *Готовность: {score}/5*\n"
+                  f"😴 Качество сна: {sleep_score} ({s_status})\n"
                   f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val if vo2_val else 'н/д'}\n"
                   f"🧬 Fit Age: {f_age}\n\n"
                   f"🤖 *АРНИ:* \n_{ai_msg}_")
