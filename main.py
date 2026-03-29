@@ -192,7 +192,7 @@ def main():
     circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
 
     vo2_calc = vo2_val if vo2_val is not None else 35
-    f_age = round(get_bio_age() + (rhr-55)*0.4 + (fat-22)*0.5 - (hrv-45)*0.1 - (vo2_calc-35)*1.5, 1)
+    f_age = round(get_bio_age() + (rhr-51)*0.2 + (fat-22)*0.5 - (hrv-85)*0.05 - (vo2_calc-35)*1.2, 1)
     f_age = max(45.0, min(get_bio_age() + 2, f_age))
 
     update_fitness_age_in_sheet(today, f_age)
