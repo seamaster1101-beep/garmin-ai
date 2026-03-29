@@ -20,7 +20,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Устанавливаем всё, что нужно для Strava, Google Sheets и Gemini
-          pip install requests gspread oauth2client google-generativeai
+          pip install requests gspread google-auth garth garminconnect google-generativeai
 
       - name: Run main.py
         env:
