@@ -9,28 +9,19 @@ FTP_GARMIN = 213
 SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
 
 def get_garmin_client():
-    token_store = "/tmp/garmin_tokens" # В GitHub Actions используем /tmp/
-    # Твой подтвержденный ID
+    # Твой подтвержденный ID, который лечит ошибку 401
     my_id = "37dc1280-cc92-4ed1-895d-473d1d18cbdc"
     
     email = os.environ.get('GARMIN_EMAIL')
     password = os.environ.get('GARMIN_PASSWORD')
 
     try:
+        # Прямой логин как в старом добром коде
         gar = Garmin(email, password)
-        
-        if os.path.exists(token_store):
-            # Пробуем войти через кэш
-            garth.resume(token_store)
-            gar.garth = garth.client
-            print("✅ Сессия Garmin возобновлена из кэша")
-        else:
-            # Если кэша нет, логинимся один раз
-            gar.login()
-            gar.garth.dump(token_store)
-            print("✅ Новый вход в Garmin выполнен")
+        gar.login()
+        print("✅ Чистый вход в Garmin выполнен")
 
-        # КРИТИЧЕСКАЯ ПРАВКА: принудительно ставим твой ID, чтобы не было 401
+        # Добавляем "магию" с ID, чтобы данные не были пустыми
         gar.garth.__dict__['profile'] = {"profileNumber": my_id, "displayName": "User"}
         gar.display_name = "User"
         
