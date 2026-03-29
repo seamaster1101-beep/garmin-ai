@@ -191,8 +191,25 @@ def main():
     icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
     circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
 
-    vo2_calc = vo2_val if vo2_val is not None else 35
-    f_age = round(get_bio_age() + (rhr-51)*0.2 + (fat-22)*0.5 - (hrv-85)*0.05 - (vo2_calc-35)*1.2, 1)
+    # --- 1. БАЗОВАЯ ФОРМА (Долгосрочная) ---
+    # VO2max и Жир — это фундамент. VO2max 32.7 для 63 лет — это мощно.
+    base_age = get_bio_age() + (fat - 22) * 0.5 - (vo2_calc - 32) * 1.3
+
+    # --- 2. КОРРЕКЦИЯ СОСТОЯНИЯ (Краткосрочная) ---
+    # HRV: считаем отклонение от твоей нормы 85. Ограничиваем влияние до +-1.5 года.
+    hrv_dev = (hrv - 85) / 85
+    hrv_penalty = max(-1.5, min(1.5, -hrv_dev * 4)) 
+
+    # Пульс: отклонение от нормы 51. Ограничение +-1.0 год.
+    rhr_penalty = max(-1.0, min(1.0, (rhr - 51) * 0.1))
+
+    # Сон: штраф только если совсем мало.
+    sleep_penalty = 1.0 if sleep < 6 else 0.5 if sleep < 7 else 0
+
+    # --- 3. ИТОГ ---
+    f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_penalty, 1)
+    
+    # Жесткий лимит, чтобы не вылетать за рамки реальности
     f_age = max(45.0, min(get_bio_age() + 2, f_age))
 
     update_fitness_age_in_sheet(today, f_age)
