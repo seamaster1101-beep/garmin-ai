@@ -27,11 +27,15 @@ GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def safe_float(val, default=0.0):
-    if val is None or str(val).strip() in ["", "Н/Д", "None"]: return default
+    if val is None: return default
+    # Превращаем в строку, убираем пробелы и заменяем запятую на точку
+    s_val = str(val).replace(',', '.').strip()
+    if s_val in ["", "Н/Д", "None"]: return default
     try:
-        v = float(str(val).replace(',', '.').strip())
-        return v if v > 0 else default
-    except: return default
+        v = float(s_val)
+        return v if v >= 0 else default
+    except:
+        return default
 
 def send_tg(msg):
     if len(msg) > 4000: msg = msg[:3900]
@@ -179,7 +183,20 @@ def main():
     # Расширенные метрики сна и восстановления
     sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
     if sleep > 24: sleep /= 10
-    deep_sleep = safe_float(morning.get("Deep_Sleep"), 0.0)
+        
+    # Читаем глубокий сон (теперь safe_float точно съест запятую)
+    ds_val = safe_float(morning.get("Deep_Sleep"), 0.0)
+
+    # Если число меньше 1.0 (например 0.6), пересчитываем в часы от общего сна
+    if 0 < ds_val < 1.0:
+        deep_sleep = round(sleep * ds_val, 1)
+    else:
+        deep_sleep = ds_val
+
+    # Финальная страховка, чтобы не было "невозможных данных" для ИИ
+    if deep_sleep >= sleep and sleep > 0:
+        deep_sleep = round(sleep * 0.25, 1) # Если баг, ставим 25% от общего
+        
     sleep_score = int(safe_float(morning.get("Sleep_Score"), 0))
     recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
 
