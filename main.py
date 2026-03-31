@@ -43,20 +43,41 @@ def send_tg(msg):
 
 def ask_arnie(prompt, fallback_text):
     try:
-        # Используем модель напрямую, без лишних GET-запросов
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+        # 1. Сначала узнаем, какие модели сейчас доступны
+        res_m = requests.get(
+            f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", 
+            timeout=10
+        )
+        models_data = res_m.json()
+        available = [
+            m["name"] for m in models_data.get("models", []) 
+            if "generateContent" in m.get("supportedGenerationMethods", [])
+        ]
         
-        # Проверка статуса (Твой пункт №1)
-        if res_ai.status_code != 200:
+        if not available:
             return fallback_text
-
+            
+        # 2. Выбираем Flash (она быстрее и стабильнее для таких задач)
+        target_model = next((m for m in available if "flash" in m), available[0])
+        
+        # 3. Делаем сам запрос
+        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
+        res_ai = requests.post(
+            url, 
+            json={"contents": [{"parts": [{"text": prompt}]}]}, 
+            timeout=30
+        )
+        
         data = res_ai.json()
         if "candidates" in data and data["candidates"]:
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        return fallback_text
-    except:
-        return fallback_text
+            # Убираем лишние символы форматирования, которые иногда мешают в Telegram
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("_", " ").replace("*", " ")
+            
+    except Exception as e:
+        print(f"⚠️ AI Error: {e}")
+        
+    return fallback_text
+
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_google_client():
