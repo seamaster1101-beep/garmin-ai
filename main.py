@@ -37,46 +37,26 @@ def send_tg(msg):
     if len(msg) > 4000: msg = msg[:3900]
     try:
         res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                     json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
+                     json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
         if res.status_code != 200: print(f"⚠️ TG Error: {res.text}")
     except Exception as e: print(f"❌ TG Exception: {e}")
 
 def ask_arnie(prompt, fallback_text):
     try:
-        # 1. Сначала узнаем, какие модели сейчас доступны
-        res_m = requests.get(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", 
-            timeout=10
-        )
-        models_data = res_m.json()
-        available = [
-            m["name"] for m in models_data.get("models", []) 
-            if "generateContent" in m.get("supportedGenerationMethods", [])
-        ]
+        # Используем модель напрямую, без лишних GET-запросов
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        res_ai = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         
-        if not available:
+        # Проверка статуса (Твой пункт №1)
+        if res_ai.status_code != 200:
             return fallback_text
-            
-        # 2. Выбираем Flash (она быстрее и стабильнее для таких задач)
-        target_model = next((m for m in available if "flash" in m), available[0])
-        
-        # 3. Делаем сам запрос
-        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
-        res_ai = requests.post(
-            url, 
-            json={"contents": [{"parts": [{"text": prompt}]}]}, 
-            timeout=30
-        )
-        
+
         data = res_ai.json()
         if "candidates" in data and data["candidates"]:
-            # Убираем лишние символы форматирования, которые иногда мешают в Telegram
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("_", " ").replace("*", " ")
-            
-    except Exception as e:
-        print(f"⚠️ AI Error: {e}")
-        
-    return fallback_text
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return fallback_text
+    except:
+        return fallback_text
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_google_client():
@@ -105,7 +85,7 @@ def estimate_performance(activities, weight=88.0):
         if a.get("type") not in ["Ride", "VirtualRide"]: continue
         w = safe_float(a.get("average_watts"), 0)
         hr = safe_float(a.get("average_heartrate"), 0)
-        if w > 0 and hr > 105:
+        if w > 10 and hr > 105:
             v = (10.51 * (w * (hr_max / hr)) / weight) + 7
             if 20 < v < 65: vals_vo2.append(v)
     
@@ -117,29 +97,55 @@ def estimate_performance(activities, weight=88.0):
 
 # --- MAIN ---
 def main():
-    now = datetime.utcnow() + timedelta(hours=1)
+    now = datetime.utcnow() + timedelta(hours=2)
     today = now.strftime("%Y-%m-%d")
     
     # Strava Data
+    activities = []
     try:
         res = requests.post("https://www.strava.com/oauth/token", data={
             'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
             'refresh_token': REFRESH_TOKEN, 'grant_type': 'refresh_token'
         }, timeout=15)
-        token = res.json().get('access_token')
-        r = requests.get("https://www.strava.com/api/v3/athlete/activities",
-                         headers={"Authorization": f"Bearer {token}"}, params={"per_page": 100}, timeout=15)
-        data = r.json()
-        activities = data if isinstance(data, list) else []
+        
+        try:
+            token_data = res.json()
+        except Exception:
+            print("❌ Ошибка: Strava вернула не JSON")
+            token_data = {}
+
+        token = token_data.get('access_token')
+
+        if not token:
+            print(f"❌ Strava token error: {token_data}")
+        else:
+            r = requests.get("https://www.strava.com/api/v3/athlete/activities",
+                             headers={"Authorization": f"Bearer {token}"}, 
+                             params={"per_page": 100}, timeout=15)
+            data = r.json()
+            if isinstance(data, list):
+                activities = data
+            else:
+                print(f"⚠️ Strava API вернул ошибку: {data}")
+                activities = []
+            
     except Exception as e: 
-        print(f"❌ Strava fail: {e}"); activities = []
+        print(f"❌ Strava fail: {e}")
 
     # Google Sheets Data
-    client = get_google_client()
-    sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
-    records = sheet.get_all_records()
-    morning = next((row for row in reversed(records) if today in str(row.get('Date', ''))), 
-                   (records[-1] if records else {}))
+    morning = {}
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        records = sheet.get_all_records()
+        
+        if records:
+            morning = next(
+                (row for row in reversed(records) if today in str(row.get('Date', ''))), 
+                records[-1]
+            )
+    except Exception as e: 
+        print(f"❌ Sheets fail: {e}")
 
     # Metrics
     rhr = safe_float(morning.get("Resting_HR"), 60)
@@ -156,40 +162,80 @@ def main():
     sleep_score = int(safe_float(morning.get("Sleep_Score"), 0))
     recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
 
-    # Calculations
+    # Расчет производительности (обязательно!)
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
     
+    # Оставляем только один расчет today_acts здесь
+    today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
+
     ctl, atl = 0, 0
+    # 2. Цикл накопления (проходим по всей истории)
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
-        if a.get("type") in ["Ride", "VirtualRide"]:
+        tss = 0
+        a_type = a.get("type")
+        t_sec = a.get("moving_time", 0)
+
+        if a_type in ["Ride", "VirtualRide"]:
             w = safe_float(a.get("average_watts"), 0)
-            t = a.get("moving_time", 0)
-            tss = (t/3600)*(w/FTP_GARMIN)**2*100 if w > 0 else 0
+            tss = (t_sec/3600)*(w/FTP_GARMIN)**2*100 if w > 0 else 0
+        elif a_type in ["Weight Training", "Workout"]:
+            tss = (t_sec / 60) * 0.6
+        
+        # ВАЖНО: Это то, что ты удалил. Без этого CTL/ATL всегда будут 0
+        if tss > 0:
             ctl += (tss - ctl) / 42
             atl += (tss - atl) / 7
+
+    # 3. ВАЖНО: Выходим из цикла (убираем отступ!)
+    # Если за сегодня не было новых тренировок, применяем затухание
+    if not today_acts:
+        ctl *= 0.98
+        atl *= 0.90
+    
     tsb = round(ctl - atl, 1)
 
     # Readiness & FitAge
     score = 3.0  # Базовая точка
-    if hrv > 75: score += 0.5
-    elif hrv < 50: score -= 1.0
-    if rhr < 50: score += 0.5
-    elif rhr > 60: score -= 0.5
-    
-    # Оценка качества сна (Sleep Score от Garmin)
-    if 0 < sleep_score < 55: 
-        score -= 1.5   # Плохое качество: циклы и фазы нарушены
-    elif 55 <= sleep_score < 75: 
-        score -= 1.0   # Среднее качество
-    elif sleep_score > 85: 
-        score += 0.5   # Отличное восстановление
 
-    if recovery_h > 24: score -= 1.0
-    
-    # Форма
-    if tsb < -25: score -= 1.5
-    elif -20 <= tsb <= -5: score += 0.5
-    
+    # 1. HRV — Твоя суперсила
+    if hrv > 95: 
+        score += 1.5   # Рекордный отскок (как сегодня 102)
+    elif hrv > 75: 
+        score += 0.5
+    elif hrv < 50: 
+        score -= 1.0
+
+    # 2. Пульс покоя (RHR)
+    if rhr < 50: 
+        score += 0.5
+    elif rhr > 60: 
+        score -= 0.5
+
+    # 3. Качество сна (Sleep Score)
+    if 0 < sleep_score < 55: 
+        score -= 1.5   # Серьезный недосып
+    elif 55 <= sleep_score < 75: 
+        score -= 1.0   # Средне
+    elif sleep_score > 85: 
+        score += 0.5   # Идеальный сон
+
+    # 4. Время восстановления (Recovery Time) — то, что мы чуть не забыли!
+    if recovery_h > 24:
+        if hrv > 90:
+            score -= 0.5  # Если HRV высокий, тело справляется быстрее (смягчаем штраф)
+        else:
+            score -= 1.0  # Обычный штраф за недовосстановление
+
+    # 5. Форма (TSB)
+    if tsb < -25:
+        if hrv > 85:
+            score -= 0.5  # HRV "прощает" накопленную усталость
+        else:
+            score -= 1.5  # Если и HRV низкий, и TSB в минусе — пора отдыхать
+    elif -20 <= tsb <= -5:
+        score += 0.5
+
+    # Финальный зажим в рамки 0-5
     score = max(0, min(5, round(score, 1)))
     
     icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
@@ -221,23 +267,19 @@ def main():
 
     # Report
     eftp_str = f" | eFTP: {eftp_val} ({eftp_val - FTP_GARMIN:+})" if eftp_val else ""
-    header_ftp = f"{circles} *FTP: {FTP_GARMIN}{eftp_str}*"
-    
-    today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
-    
+        
     if not today_acts:
         prompt = (
-            f"Ты — опытный коуч и спортивный директор. Твой атлет — мужчина 63 лет. "
-            f"Дай глубокий, человечный анализ утреннего состояния. "
-            f"ДАННЫЕ: HRV {int(hrv)}, Пульс {int(rhr)}, Сон {sleep}ч (Глубокий: {deep_sleep}ч), "
-            f"Sleep Score: {sleep_score}/100, Recovery Time: {recovery_h}ч, TSB {tsb}, Готовность {score}/5. "
+            f"Ты — АРНИ, элитный спортивный директор. Твой стиль: лаконичный, мудрый, прямолинейный. "
+            f"Атлет: 63 года. ДАННЫЕ: HRV {int(hrv)}, Пульс {int(rhr)}, Сон {sleep}ч (Глубокий: {deep_sleep}ч), "
+            f"Sleep Score: {sleep_score}, Recovery: {recovery_h}ч, TSB {tsb}, Готовность {score}/5. "
             f"Fit Age {f_age}. VO2max: {vo2_val if vo2_val else 'н/д'}. "
             f"\nИНСТРУКЦИИ: "
-            f"1. ГОВОРИ КАК ЧЕЛОВЕК: Будь мудрым наставником. Сравни Fit Age {f_age} и форму с активными ровесниками (60-65 лет). "
-            f"2. ЧЕСТНОСТЬ И ПОДДЕРЖКА: Если восстановление провалено ({score}/5), поддержи атлета, объясни, что отдых — это тоже тренировка. "
-            f"3. БЕЗ ВОДЫ: Не перечисляй цифры (они есть в отчете), а делай выводы. "
-            f"4. ПЛАН: Четко скажи, что делать сегодня (Z1, Z2 или полный отдых) и на сколько минут. "
-            f"5. ФИНАЛ: Весь текст пиши нормальным языком, но в самом конце добавь ОДНУ легендарную фразу Арнольда для настроя. "
+            f"Выдай анализ строго по пунктам: "
+            f"1. СОСТОЯНИЕ: Связка HRV и TSB. Если HRV > 90 (сейчас {int(hrv)}), это фаза суперкомпенсации — разрешай работу, несмотря на усталость. "
+            f"2. АНАЛИЗ: Сравни Fit Age {f_age} и пульс {int(rhr)} с активными ровесниками (уровень профи). Если глубокий сон {deep_sleep}ч мал — укажи на риск для ЦНС. "
+            f"3. ВЕРДИКТ: Четкий план на день (Z-зона и время). "
+            f"\nБез лишних приветствий. В конце — одна легендарная фраза Арнольда. Пиши на русском."
             f"Пиши строго на русском."
         )
         ai_msg = ask_arnie(prompt, "В строю. Жду работу.")
@@ -252,13 +294,15 @@ def main():
 
         # 2. И только потом используем его в отчете
         
-        report = (f"🌅 *УТРЕННИЙ СТАТУС* {icon}\n{header_ftp}\n\n"
+        report = (f"🌅 УТРЕННИЙ СТАТУС {icon}\n"
+                  f"{circles} FTP: {FTP_GARMIN}{eftp_str}\n\n"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
-                  f"🔋 *Готовность: {score}/5*\n"
+                  f"🔋 Готовность: {score}/5\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
                   f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val if vo2_val else 'н/д'}\n"
                   f"🧬 Fit Age: {f_age}\n\n"
-                  f"🤖 *АРНИ:* \n_{ai_msg}_")
+                  f"🤖 АРНИ:\n{ai_msg}")
+
     else:
         # Анализ последней тренировки за сегодня
         last = sorted(today_acts, key=lambda x: x.get("start_date_local"))[-1]
@@ -268,24 +312,31 @@ def main():
         # Для расчета TSS нам нужен FTP_GARMIN
         w_avg = last.get("average_watts", 0)
         t_sec = last.get("moving_time", 0)
-        tss_last = round((t_sec/3600)*(w_avg/FTP_GARMIN)**2*100, 1) if w_avg else 0
+        a_type_last = last.get("type")
+        if a_type_last in ["Ride", "VirtualRide"]:
+            tss_last = round((t_sec/3600)*(w_avg/FTP_GARMIN)**2*100, 1) if w_avg else 0
+        elif a_type_last in ["Weight Training", "Workout"]:
+            tss_last = round((t_sec / 60) * 0.6, 1)
+        else:
+            tss_last = 0
 
         prompt = (
-            f"Ты — опытный тренер. Разбери тренировку атлета 63 лет: {name}. "
-            f"Дистанция: {dist}км, TSS: {tss_last}. Утренняя готовность была {score}/5. "
+            f"Ты — АРНИ. Разбери тренировку атлета 63 лет: {name}. "
+            f"Данные: {dist}км, TSS {tss_last}. Утренняя готовность была {score}/5. "
             f"\nИНСТРУКЦИИ: "
-            f"1. Оцени, не была ли нагрузка чрезмерной для текущего состояния и возраста. "
-            f"2. Похвали за дисциплину, укажи на успехи или халтуру (если TSS слишком мал). "
-            f"3. Дай совет на завтра. Пиши на русском. "
-            f"В конце — одна фраза Арнольда."
+            f"1. СТАТУС: Оцени адекватность нагрузки ({tss_last} TSS) текущему состоянию и возрасту. "
+            f"2. ФИДБЕК: Коротко похвали за дисциплину или укажи на халтуру, если нагрузка символическая. "
+            f"3. ЗАВТРА: Дай одну конкретную рекомендацию на следующий день. "
+            f"\nПиши лаконично, без воды. В конце — одна фраза Арнольда. На русском."
         )
         ai_msg = ask_arnie(prompt, "Работа сделана. Отдыхай.")
 
-        report = (f"🏃 *ТРЕНИРОВКА* {icon}\n{header_ftp}\n\n"
-                  f"*{name}*\n"
+        report = (f"🏃 ТРЕНИРОВКА {icon}\n"
+                  f"{circles} FTP: {FTP_GARMIN}\n\n"
+                  f"{name}\n"
                   f"📍 {dist} км | 📈 TSS: {tss_last}\n"
                   f"🧬 Fit Age: {f_age}\n\n"
-                  f"🤖 *АРНИ:* \n_{ai_msg}_")
+                  f"🤖 АРНИ:\n{ai_msg}")
 
     send_tg(report)
 
