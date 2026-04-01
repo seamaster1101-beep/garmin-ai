@@ -289,26 +289,34 @@ def main():
     circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
 
     # --- 1. БАЗОВАЯ ФОРМА (Долгосрочная) ---
-    # VO2max и Жир — это фундамент. VO2max 32.7 для 63 лет — это мощно.
-    vo2_calc = vo2_val if vo2_val else 32.7  # <-- ДОБАВЬ ЭТУ СТРОКУ
-    base_age = get_bio_age() + (fat - 22) * 0.5 - (vo2_calc - 32) * 1.3
+    vo2_calc = vo2_val if vo2_val else 32.7
+
+    # Добавляем влияние пульса (чем ниже — тем моложе)
+    rhr_factor = (51 - rhr) * 0.3
+
+    base_age = (
+        get_bio_age()
+        + (fat - 22) * 0.5
+        - (vo2_calc - 32) * 2.0
+        - rhr_factor
+    )
 
     # --- 2. КОРРЕКЦИЯ СОСТОЯНИЯ (Краткосрочная) ---
-    # HRV: считаем отклонение от твоей нормы 85. Ограничиваем влияние!
+    # HRV — смягчаем влияние (убираем "жадность")
     hrv_dev = (hrv - 85) / 85
-    hrv_penalty = max(-1.0, min(1.0, -hrv_dev * 3)) 
+    hrv_penalty = max(-0.7, min(0.7, -hrv_dev * 2))
 
-    # Пульс: отклонение от нормы 51.
-    rhr_penalty = max(-0.5, min(0.5, (rhr - 51) * 0.05))
+    # Пульс — лёгкая коррекция (не дублируем сильно base)
+    rhr_penalty = max(-0.3, min(0.3, (rhr - 51) * 0.04))
 
-    # Сон: штраф к возрасту только при явном недосыпе
-    sleep_p = 1.0 if 0 < sleep_score < 60 else 0.4 if sleep_score < 75 else 0
+    # Сон — уменьшаем штраф
+    sleep_p = 0.7 if 0 < sleep_score < 60 else 0.3 if sleep_score < 75 else 0
 
     # --- 3. ИТОГ ---
     f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_p, 1)
-    
-    # Жесткий фиксатор, чтобы не прыгало выше реальности
-    f_age = max(45.0, min(get_bio_age() + 1.5, f_age))
+
+    # Более реалистичный диапазон
+    f_age = max(48.0, min(get_bio_age() - 2, f_age))
 
     update_fitness_age_in_sheet(today, f_age)
 
