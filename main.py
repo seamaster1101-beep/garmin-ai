@@ -251,13 +251,15 @@ def main():
 
     # 3. Качество сна (Sleep Score)
     if 0 < sleep_score < 55: 
-        score -= 1.5   # Серьезный недосып
-    elif 55 <= sleep_score < 75: 
-        score -= 1.0   # Средне
-    elif sleep_score > 85: 
-        score += 0.5   # Идеальный сон
+        score -= 1.5   # Плохо
+    elif 55 <= sleep_score < 65:
+        score -= 1.0   # Ниже среднего
+    elif 65 <= sleep_score < 80: 
+        score -= 0.5   # Нормально
+    elif sleep_score >= 80: 
+        score += 0.5   # Хорошо / отлично
 
-    # 4. Время восстановления (Recovery Time) — то, что мы чуть не забыли!
+    # 4. Время восстановления (Recovery Time)
     if recovery_h > 24:
         if hrv > 90:
             score -= 0.5  # Если HRV высокий, тело справляется быстрее (смягчаем штраф)
@@ -265,12 +267,19 @@ def main():
             score -= 1.0  # Обычный штраф за недовосстановление
 
     # 5. Форма (TSB)
-    if tsb < -25:
+    if tsb < -20:
         if hrv > 85:
-            score -= 0.5  # HRV "прощает" накопленную усталость
+            score -= 0.5
         else:
-            score -= 1.5  # Если и HRV низкий, и TSB в минусе — пора отдыхать
-    elif -20 <= tsb <= -5:
+            score -= 1.5
+
+    elif -20 <= tsb < -10:
+        if hrv > 85:
+            score += 0.5   # суперкомпенсация
+        else:
+             score -= 0.5
+
+    elif -10 <= tsb <= -5:
         score += 0.5
 
     # Финальный зажим в рамки 0-5
