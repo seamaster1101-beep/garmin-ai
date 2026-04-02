@@ -174,17 +174,17 @@ def main():
         print(f"❌ Sheets fail: {e}")
 
     # Metrics (Ключи строго как в заголовках таблицы)
-    rhr = safe_float(morning.get("RHR"), 60)
+    rhr = safe_float(morning.get("Resting_HR"), 60)
     hrv = safe_float(morning.get("HRV"), 45)
     weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
-    fat = safe_float(morning.get("Fat"), 18.3)
+    fat = safe_float(morning.get("Body_Fat"), 18.3)
     if fat > 100: fat /= 10
     
-    sleep = safe_float(morning.get("Sleep Hours"), 7.0)
+    sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
     if sleep > 24: sleep /= 10
         
-    ds_val = safe_float(morning.get("Deep Sleep"), 0.0)
+    ds_val = safe_float(morning.get("Deep_Sleep"), 0.0)
 
     if 0 < ds_val < 1.0:
         deep_sleep = round(sleep * ds_val, 1)
@@ -194,8 +194,8 @@ def main():
     if deep_sleep >= sleep and sleep > 0:
         deep_sleep = round(sleep * 0.25, 1)
 
-    sleep_score = int(safe_float(morning.get("Sleep Score"), 0)) 
-    recovery_h = int(safe_float(morning.get("Recovery Time"), 0))
+    sleep_score = int(safe_float(morning.get("Sleep_Score"), 0)) 
+    recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
         
     # Расчет производительности (обязательно!)
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
