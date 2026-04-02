@@ -29,7 +29,7 @@ GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 def safe_float(val, default=0.0):
     if val is None: return default
     # Превращаем в строку, убираем пробелы и заменяем запятую на точку
-    s_val = str(val).replace(',', '.').strip()
+    s_val = str(val).replace(',', '.').replace('\xa0', '').strip()
     if s_val in ["", "Н/Д", "None"]: return default
     try:
         v = float(s_val)
@@ -97,6 +97,7 @@ def update_fitness_age_in_sheet(target_date, f_age_val):
         for i, val in enumerate(dates):
             if target_date in val:
                 header = sheet.row_values(1)
+                header = [h.replace('\xa0', '').strip() for h in header]
                 if "Fitness_Age" in header:
                     sheet.update_cell(i + 1, header.index("Fitness_Age") + 1, f_age_val)
                     print(f"✅ FitAge {f_age_val} записан.")
@@ -196,6 +197,9 @@ def main():
     # Финальная страховка, чтобы не было "невозможных данных" для ИИ
     if deep_sleep >= sleep and sleep > 0:
         deep_sleep = round(sleep * 0.25, 1) # Если баг, ставим 25% от общего
+
+    sleep_score = int(safe_float(morning.get("Sleep_Score"), 0)) 
+    recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
         
     # Расчет производительности (обязательно!)
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
