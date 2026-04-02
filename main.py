@@ -173,43 +173,44 @@ def main():
     except Exception as e: 
         print(f"❌ Sheets fail: {e}")
 
-    # Metrics
-    rhr = safe_float(morning.get("Resting_HR"), 60)
+    # Metrics (Ключи строго как в заголовках таблицы)
+    rhr = safe_float(morning.get("RHR"), 60)
     hrv = safe_float(morning.get("HRV"), 45)
     weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
-    fat = safe_float(morning.get("Body_Fat"), 18.3)
+    fat = safe_float(morning.get("Fat"), 18.3)
     if fat > 100: fat /= 10
     
-    # Расширенные метрики сна и восстановления
-    sleep = safe_float(morning.get("Sleep_Hours"), 7.0)
+    sleep = safe_float(morning.get("Sleep Hours"), 7.0)
     if sleep > 24: sleep /= 10
         
-    # Читаем глубокий сон (теперь safe_float точно съест запятую)
-    ds_val = safe_float(morning.get("Deep_Sleep"), 0.0)
+    ds_val = safe_float(morning.get("Deep Sleep"), 0.0)
 
-    # Если число меньше 1.0 (например 0.6), пересчитываем в часы от общего сна
     if 0 < ds_val < 1.0:
         deep_sleep = round(sleep * ds_val, 1)
     else:
         deep_sleep = ds_val
 
-    # Финальная страховка, чтобы не было "невозможных данных" для ИИ
     if deep_sleep >= sleep and sleep > 0:
-        deep_sleep = round(sleep * 0.25, 1) # Если баг, ставим 25% от общего
+        deep_sleep = round(sleep * 0.25, 1)
 
-    sleep_score = int(safe_float(morning.get("Sleep_Score"), 0)) 
-    recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
+    sleep_score = int(safe_float(morning.get("Sleep Score"), 0)) 
+    recovery_h = int(safe_float(morning.get("Recovery Time"), 0))
         
     # Расчет производительности (обязательно!)
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
     
     # Оставляем только один расчет today_acts здесь
-    today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
+    today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
 
     ctl, atl = 0, 0
+
     # 2. Цикл накопления (проходим по всей истории)
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
+        # ИСКЛЮЧАЕМ тренировки за сегодня для фиксации утренней формы
+        if a.get("start_date_local", "")[:10] == today:
+            continue
+            
         tss = 0
         a_type = a.get("type")
         t_sec = a.get("moving_time", 0)
@@ -217,7 +218,8 @@ def main():
         if a_type in ["Ride", "VirtualRide"]:
             w = safe_float(a.get("average_watts"), 0)
             tss = (t_sec/3600)*(w/FTP_GARMIN)**2*100 if w > 0 else 0
-        elif a_type in ["Weight Training", "Workout"]:
+        # Расширенный список для силовых
+        elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
             tss = (t_sec / 60) * 0.6
         
         # ВАЖНО: Это то, что ты удалил. Без этого CTL/ATL всегда будут 0
@@ -238,7 +240,7 @@ def main():
 
     # 1. HRV — Твоя суперсила
     if hrv > 95: 
-        score += 1.5   # Рекордный отскок (как сегодня 102)
+        score += 1.2
     elif hrv > 75: 
         score += 0.5
     elif hrv < 50: 
@@ -317,7 +319,7 @@ def main():
     f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_p, 1)
 
     # Более реалистичный диапазон
-    f_age = max(48.0, min(get_bio_age() - 2, f_age))
+    f_age = round(max(48.0, min(get_bio_age() - 2, f_age)), 1)
 
     update_fitness_age_in_sheet(today, f_age)
 
@@ -371,7 +373,7 @@ def main():
         a_type_last = last.get("type")
         if a_type_last in ["Ride", "VirtualRide"]:
             tss_last = round((t_sec/3600)*(w_avg/FTP_GARMIN)**2*100, 1) if w_avg else 0
-        elif a_type_last in ["Weight Training", "Workout"]:
+        elif a_type_last in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
             tss_last = round((t_sec / 60) * 0.6, 1)
         else:
             tss_last = 0
