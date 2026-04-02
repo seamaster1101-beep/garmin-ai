@@ -197,9 +197,6 @@ def main():
     if deep_sleep >= sleep and sleep > 0:
         deep_sleep = round(sleep * 0.25, 1) # Если баг, ставим 25% от общего
         
-    sleep_score = int(safe_float(morning.get("Sleep_Score"), 0))
-    recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
-
     # Расчет производительности (обязательно!)
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
     
