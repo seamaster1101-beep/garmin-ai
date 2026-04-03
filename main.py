@@ -235,58 +235,60 @@ def main():
     
     tsb = round(ctl - atl, 1)
 
-    # Readiness & FitAge
-    score = 3.0  # Базовая точка
+    # --- 3. ПЕРСОНАЛИЗИРОВАННЫЙ РАСЧЕТ ГОТОВНОСТИ (v2.1) & FitAge
+    score = 3.5  # База: учитываем отличный Fitness Age 48
 
-    # 1. HRV — Твоя суперсила
-    if hrv > 95: 
-        score += 1.2
-    elif hrv > 75: 
+    # HRV: Вариабельность (твой диапазон 30-128)
+    if hrv > 95:
+        score += 1.0
+    elif hrv > 75:
         score += 0.5
-    elif hrv < 50: 
-        score -= 1.0
+    elif 40 <= hrv <= 75:
+        # В рабочей зоне смотрим на тренд относительно недели
+        if hrv < hrv_7d_avg * 0.8:
+            score -= 0.5
+        elif hrv > hrv_7d_avg * 1.1:
+            score += 0.3
+    elif hrv < 40:
+        # Умный штраф: если пульс в норме, значит это усталость, а не катастрофа
+        score -= 1.0 if rhr >= 55 else 0.5
 
-    # 2. Пульс покоя (RHR)
-    if rhr < 50: 
+    # RHR: Пульс покоя (твой диапазон 46-54)
+    if rhr <= 50:
         score += 0.5
-    elif rhr > 60: 
+    elif 51 <= rhr <= 54:
+        pass # Идеальное попадание в норму
+    elif rhr >= 55:
+        score -= 0.7
+
+    # Сон (Качество: Sleep Score)
+    if 0 < sleep_score < 50:
+        score -= 1.2 if rhr >= 55 else 0.7
+    elif 50 <= sleep_score < 65:
+        score -= 0.5
+    elif 65 <= sleep_score < 80:
+        score += 0.2
+    elif sleep_score >= 80:
+        score += 0.5
+
+    # Сон (Продолжительность: Sleep Hours)
+    if sleep_hours < 6:
         score -= 0.5
 
-    # 3. Качество сна (Sleep Score)
-    if 0 < sleep_score < 55: 
-        score -= 1.5   # Плохо
-    elif 55 <= sleep_score < 65:
-        score -= 1.0   # Ниже среднего
-    elif 65 <= sleep_score < 80: 
-        score -= 0.5   # Нормально
-    elif sleep_score >= 80: 
-        score += 0.5   # Хорошо / отлично
+    # Recovery Time (Время восстановления)
+    if recovery_h > 48:
+        score -= 0.8
+    elif recovery_h > 24:
+        score -= 0.3
 
-    # 4. Время восстановления (Recovery Time)
-    if recovery_h > 24:
-        if hrv > 90:
-            score -= 0.5  # Если HRV высокий, тело справляется быстрее (смягчаем штраф)
-        else:
-            score -= 1.0  # Обычный штраф за недовосстановление
-
-    # 5. Форма (TSB)
+    # Форма (TSB / Acute Load)
     if tsb < -20:
-        if hrv > 85:
-            score -= 0.5
-        else:
-            score -= 1.5
+        score -= 1.0 if hrv < 60 else 0.5
+    elif -10 <= tsb <= 5:
+        score += 0.3
 
-    elif -20 <= tsb < -10:
-        if hrv > 85:
-            score += 0.5   # суперкомпенсация
-        else:
-             score -= 0.5
-
-    elif -10 <= tsb <= -5:
-        score += 0.5
-
-    # Финальный зажим в рамки 0-5
-    score = max(0, min(5, round(score, 1)))
+    # Финальное ограничение диапазона [0...5]
+    score = max(0.0, min(5.0, round(score, 1)))
     
     icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
     circles = "🟢🟢🟢" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
