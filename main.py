@@ -335,6 +335,8 @@ def main():
     
     tsb = round(ctl - atl, 1)
 
+    
+
     # Recovery fallback: если из Morning не пришло значение, считаем сами
     if not recovery_h:
         recovery_h = estimate_recovery_hours(
@@ -347,6 +349,82 @@ def main():
         )
         print(f"DEBUG recovery_h estimated: {recovery_h}")
         update_recovery_in_sheet(today, recovery_h)
+
+    now_hour = now.hour
+
+    # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30) ---
+    if now.hour > 21 or (now.hour == 21 and now.minute >= 30):
+
+        day_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
+
+        total_tss = 0
+        total_minutes = 0
+        details = []
+
+        for a in sorted(day_acts, key=lambda x: x.get("start_date_local", "")):
+            a_type = a.get("type")
+            t_sec = a.get("moving_time", 0)
+            dur_min = round(t_sec / 60, 1)
+
+            tss = 0
+
+            if a_type in ["Ride", "VirtualRide"]:
+                w = safe_float(a.get("average_watts"), 0)
+                tss = (t_sec/3600)*(w/FTP_GARMIN)**2*100 if w > 0 else 0
+
+            elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
+                tss = (t_sec / 60) * 0.6
+
+            tss = round(tss, 1)
+
+            total_tss += tss
+            total_minutes += dur_min
+
+            name = a.get("name", "Тренировка")
+            details.append(f"• {name} — {dur_min} мин | TSS {tss}")
+
+        total_tss = round(total_tss, 1)
+        total_minutes = round(total_minutes, 1)
+
+        acts_text = "\n".join(details) if details else "Сегодня без тренировок."
+
+        prompt = (
+            f"Ты — АРНИ, стиль: коротко, точно, уверенно. "
+            f"Атлет {round(get_bio_age())} лет.\n"
+
+            f"ИТОГИ ДНЯ:\n"
+            f"Активностей: {len(day_acts)}\n"
+            f"Общее время: {total_minutes} мин\n"
+            f"Суммарный TSS: {total_tss}\n"
+
+            f"HRV {int(hrv)}, Пульс {int(rhr)}, Сон {sleep}ч, "
+            f"Recovery {recovery_h}ч, TSB {tsb}\n"
+
+            f"\nПРАВИЛА:\n"
+            f"- Учитывай суммарную нагрузку, а не одну тренировку\n"
+            f"- Если 2+ активности — оцени накопление усталости\n"
+            f"- Не преувеличивай и не обесценивай\n"
+
+            f"\nОТВЕТ СТРОГО:\n"
+            f"1. СТАТУС\n"
+            f"2. АНАЛИЗ\n"
+            f"3. ЗАВТРА\n"
+        )
+
+        ai_msg = ask_arnie(prompt, "День завершён. Работай по плану.")
+
+        report = (
+            f"🌙 ИТОГИ ДНЯ | FTP: {FTP_GARMIN}\n\n"
+            f"🏋️ Активностей: {len(day_acts)}\n"
+            f"⏱ Общее время: {total_minutes} мин\n"
+            f"📈 Суммарный TSS: {total_tss}\n\n"
+            f"{acts_text}\n\n"
+            f"🤖 АРНИ:\n{ai_msg}"
+        )
+
+        send_tg(report)
+        return
+        
 
     # Мы берем переменную sleep, которая уже была рассчитана выше в коде
     sleep_hours = sleep
