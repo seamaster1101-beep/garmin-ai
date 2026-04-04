@@ -1,4 +1,4 @@
-import os, requests, json, sys, gspread
+import os, requests, json, sys, gspread, html
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
@@ -38,12 +38,22 @@ def safe_float(val, default=0.0):
         return default
 
 def send_tg(msg):
-    if len(msg) > 4000: msg = msg[:3900]
+    if len(msg) > 4000: 
+        msg = msg[:3900]
     try:
-        res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                     json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
-        if res.status_code != 200: print(f"⚠️ TG Error: {res.text}")
-    except Exception as e: print(f"❌ TG Exception: {e}")
+        res = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": msg,
+                "parse_mode": "HTML"
+            },
+            timeout=15
+        )
+        if res.status_code != 200:
+            print(f"⚠️ TG Error: {res.text}")
+    except Exception as e:
+        print(f"❌ TG Exception: {e}")
 
 def ask_arnie(prompt, fallback_text):
     try:
@@ -75,7 +85,9 @@ def ask_arnie(prompt, fallback_text):
         data = res_ai.json()
         if "candidates" in data and data["candidates"]:
             # Убираем лишние символы форматирования, которые иногда мешают в Telegram
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("_", " ").replace("*", " ")
+            return html.escape(
+                data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("_", " ").replace("*", " ")
+            )    
             
     except Exception as e:
         print(f"⚠️ AI Error: {e}")
@@ -104,22 +116,93 @@ def update_fitness_age_in_sheet(target_date, f_age_val):
                     break
     except Exception as e: print(f"⚠️ Sheet update error: {e}")
 
-def estimate_performance(activities, weight=88.0):
+def estimate_performance(activities, weight):
     vals_vo2 = []
     hr_max = 208 - (0.7 * get_bio_age())
+
+    # страховка, если вес пустой/нулевой
+    if not weight or weight <= 0:
+        weight = 88.0
+
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
-        if a.get("type") not in ["Ride", "VirtualRide"]: continue
+        if a.get("type") not in ["Ride", "VirtualRide"]:
+            continue
+
         w = safe_float(a.get("average_watts"), 0)
         hr = safe_float(a.get("average_heartrate"), 0)
+
         if w > 10 and hr > 105:
             v = (10.51 * (w * (hr_max / hr)) / weight) + 7
-            if 20 < v < 65: vals_vo2.append(v)
-    
-    if not vals_vo2: return None, None
+            if 20 < v < 65:
+                vals_vo2.append(v)
+
+    if not vals_vo2:
+        return None, None
+
     avg_vo2 = round(sum(vals_vo2[-7:]) / len(vals_vo2[-7:]), 1)
-    # Ограничение eFTP 100-400 ватт
     eftp = max(100, min(400, int(round(avg_vo2 * weight * 0.071, 0))))
     return avg_vo2, eftp
+
+def estimate_recovery_hours(activities, today, ftp, hrv, rhr, tsb):
+    """
+    Fallback-расчет Recovery Time, если Garmin/таблица не дали значение.
+    Опирается на последнюю нетривиальную тренировку ДО сегодняшнего дня
+    и текущее утреннее состояние.
+    """
+    past_acts = [
+        a for a in activities
+        if a.get("start_date_local", "")[:10] < today
+        and a.get("type") not in ["Walk", "Hike"]
+    ]
+
+    if not past_acts:
+        return 0
+
+    last = sorted(past_acts, key=lambda x: x.get("start_date_local", ""))[-1]
+    a_type = last.get("type")
+    t_sec = last.get("moving_time", 0)
+
+    base_rec = 0
+
+    if a_type in ["Ride", "VirtualRide"]:
+        w_avg = safe_float(last.get("average_watts"), 0)
+        if w_avg > 0 and t_sec > 0:
+            tss_last = (t_sec / 3600) * (w_avg / ftp) ** 2 * 100
+            base_rec = tss_last * 0.5
+        else:
+            base_rec = (t_sec / 60) * 0.3
+
+    elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
+        base_rec = (t_sec / 60) * 0.35
+
+    else:
+        base_rec = (t_sec / 60) * 0.25
+
+    adj = 0
+
+    if hrv < 40:
+        adj += 10
+    elif hrv < 60:
+        adj += 5
+    elif hrv > 95:
+        adj -= 4
+    elif hrv > 80:
+        adj -= 2
+
+    if rhr >= 55:
+        adj += 5
+    elif rhr <= 48:
+        adj -= 2
+
+    if tsb < -20:
+        adj += 10
+    elif tsb < -10:
+        adj += 5
+    elif tsb > 5:
+        adj -= 3
+
+    recovery_h = round(base_rec + adj)
+    return max(0, min(72, recovery_h))
 
 # --- MAIN ---
 def main():
@@ -234,6 +317,17 @@ def main():
         atl *= 0.90
     
     tsb = round(ctl - atl, 1)
+    # Recovery fallback: если из Morning не пришло значение, считаем сами
+    if not recovery_h:
+        recovery_h = estimate_recovery_hours(
+            activities=activities,
+            today=today,
+            ftp=FTP_GARMIN,
+            hrv=hrv,
+            rhr=rhr,
+            tsb=tsb
+        )
+        print(f"DEBUG recovery_h estimated: {recovery_h}")
 
     # Мы берем переменную sleep, которая уже была рассчитана выше в коде
     sleep_hours = sleep
@@ -404,9 +498,9 @@ def main():
         a_type_last = last.get("type")
         
         # Собираем данные интенсивности
-        w_avg = last.get("average_watts", 0)
-        hr_avg = last.get("average_heartrate", 0)
-        hr_max_act = last.get("max_heartrate", 0)
+        w_avg = safe_float(last.get("average_watts"), 0)
+        hr_avg = safe_float(last.get("average_heartrate"), 0)
+        hr_max_act = safe_float(last.get("max_heartrate"), 0)
         
         # Расчет TSS
         if a_type_last in ["Ride", "VirtualRide"]:
@@ -418,19 +512,29 @@ def main():
 
         # Формируем умный промпт для анализа нагрузки
         prompt = (
-            f"Ты — АРНИ, стиль: коротко, точно, уважающий усилия. Разбери тренировку атлета 63 лет: {name}. "
-            f"ДАННЫЕ: Длительность {dur_min} мин, Дистанция {dist} км, TSS {tss_last}. "
-            f"Пульс ср/макс: {hr_avg}/{hr_max_act}. Утренняя готовность была {score}/5. "
+            f"Ты — АРНИ, стиль: коротко, точно, уважительно, без хамства. "
+            f"Разбери тренировку атлета {round(get_bio_age())} лет: {name}. "
+
+            f"ДАННЫЕ: Тип {a_type_last}. Длительность {dur_min} мин. Дистанция {dist} км. "
+            f"TSS {tss_last}. Средняя мощность {w_avg}. "
+            f"Пульс ср/макс: {hr_avg}/{hr_max_act}. "
+            f"Утренняя готовность была {score}/5. "
+
             f"\nПРАВИЛА АНАЛИЗА:\n"
-            f"- Если это велотренировка и есть данные о пульсе/мощности, не делай вывод только по TSS. "
-            f"- Если работа велась на высоком пульсе или мощности (Z4), называй её 'пороговой' или 'интенсивной', а не прогулкой. "
-            f"- Силовую тренировку ({dur_min} мин) оценивай как рабочий стимул, а не отдых. "
-            f"- Будь жестким в плане дисциплины, но признавай реальный труд. "
+            f"- Не делай вывод только по TSS.\n"
+            f"- Если это Ride или VirtualRide и средняя мощность заметная, а пульс высокий, не называй работу прогулкой.\n"
+            f"- Если это силовая тренировка длительностью {dur_min} мин, оценивай её как рабочий стимул, а не как отдых.\n"
+            f"- Признавай усилие, если тренировка реально была рабочей.\n"
+            f"- Будь строгим в дисциплине, но без унижения и обесценивания.\n"
+            f"- Каждый пункт максимум 2 коротких предложения.\n"
+
             f"\nОТВЕТЬ СТРОГО ПО ПУНКТАМ:\n"
             f"1. СТАТУС: Реальная интенсивность нагрузки.\n"
             f"2. ФИДБЕК: Что было сделано хорошо.\n"
             f"3. ЗАВТРА: Конкретный совет по восстановлению.\n"
-            f"\nБез вступлений. В конце — одна фраза Арнольда. На русском."
+
+            f"Без вступлений. Без фраз типа 'Слушай сюда'. "
+            f"В конце — одна короткая фраза Арнольда на русском."
         )
         ai_msg = ask_arnie(prompt, "Тренировка зафиксирована. Анализ будет позже.")
 
