@@ -114,7 +114,24 @@ def update_fitness_age_in_sheet(target_date, f_age_val):
                     sheet.update_cell(i + 1, header.index("Fitness_Age") + 1, f_age_val)
                     print(f"✅ FitAge {f_age_val} записан.")
                     break
-    except Exception as e: print(f"⚠️ Sheet update error: {e}")
+    except Exception as e:
+        print(f"⚠️ Sheet update error: {e}")
+
+def update_recovery_in_sheet(target_date, recovery_val):
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        dates = sheet.col_values(1)
+        for i, val in enumerate(dates):
+            if target_date in val:
+                header = sheet.row_values(1)
+                header = [h.replace('\xa0', '').strip() for h in header]
+                if "Recovery_Time" in header:
+                    sheet.update_cell(i + 1, header.index("Recovery_Time") + 1, recovery_val)
+                    print(f"✅ Recovery {recovery_val}ч записан.")
+                    break
+    except Exception as e:
+        print(f"⚠️ Recovery update error: {e}")
 
 def estimate_performance(activities, weight):
     vals_vo2 = []
@@ -317,6 +334,7 @@ def main():
         atl *= 0.90
     
     tsb = round(ctl - atl, 1)
+
     # Recovery fallback: если из Morning не пришло значение, считаем сами
     if not recovery_h:
         recovery_h = estimate_recovery_hours(
@@ -328,6 +346,7 @@ def main():
             tsb=tsb
         )
         print(f"DEBUG recovery_h estimated: {recovery_h}")
+        update_recovery_in_sheet(today, recovery_h)
 
     # Мы берем переменную sleep, которая уже была рассчитана выше в коде
     sleep_hours = sleep
@@ -539,7 +558,7 @@ def main():
         ai_msg = ask_arnie(prompt, "Тренировка зафиксирована. Анализ будет позже.")
 
         report = (f"🏃 ТРЕНИРОВКА {status_icon} | FTP: {FTP_GARMIN}\n\n"
-                  f"<b>{name}</b>\n"
+                  f"<b>{html.escape(name)}</b>\n"
                   f"📍 {dist} км | ⏱ {dur_min} мин | 📈 TSS: {tss_last}\n"
                   f"🧬 Fit Age: {f_age}\n\n"
                   f"🤖 АРНИ:\n{ai_msg}")
