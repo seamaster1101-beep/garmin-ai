@@ -487,6 +487,23 @@ def main():
 
     # Финальное ограничение диапазона [0...5]
     score = max(0.0, min(5.0, round(score, 1)))
+
+    # --- STATUS + RECOVERY TEXT ---
+    if score >= 4:
+        day_status = "🟢 Готов"
+    elif score >= 2.8:
+        day_status = "🟡 Осторожно"
+    else:
+        day_status = "🔴 Восстановление"
+
+    if recovery_h >= 24:
+        rec_text = f"{recovery_h}ч 🔴 (нужно восстановление)"
+    elif recovery_h >= 12:
+        rec_text = f"{recovery_h}ч 🟡 (есть усталость)"
+    elif recovery_h >= 6:
+        rec_text = f"{recovery_h}ч 🟡 (лёгкая усталость)"
+    else:
+        rec_text = f"{recovery_h}ч 🟢 (свежесть)"
     
     # --- 1. БАЗОВАЯ ФОРМА (Долгосрочная) ---
     vo2_calc = vo2_val if vo2_val else 32.7
@@ -580,7 +597,9 @@ def main():
  
         report = (f"🌅 УТРЕННИЙ СТАТУС {status_icon} | FTP: {FTP_GARMIN}{eftp_str}\n\n"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
+                  f"🛡 Статус: {day_status}\n"
                   f"🔋 Готовность: {score}/5\n"
+                  f"🕒 Восстановление: {rec_text}\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
                   f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val if vo2_val else 'н/д'}\n"
                   f"🧬 Fit Age: {f_age}\n\n"
