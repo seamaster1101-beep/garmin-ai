@@ -110,11 +110,15 @@ def update_fitness_age_in_sheet(target_date, f_age_val):
             if target_date in val:
                 header = sheet.row_values(1)
                 header = [h.replace('\xa0', '').strip() for h in header]
-                if "Fitness_Age" in header:
-                    sheet.update_cell(i + 1, header.index("Fitness_Age") + 1, f_age_val)
-                    print(f"✅ FitAge {f_age_val} записан.")
+                
+                # МЕНЯЕМ ЗДЕСЬ: ищем колонку FitAge_Strava вместо Fitness_Age
+                target_column = "FitAge_Strava" 
+                
+                if target_column in header:
+                    sheet.update_cell(i + 1, header.index(target_column) + 1, f_age_val)
+                    print(f"✅ FitAge_Strava {f_age_val} записан.")
                     break
-    except Exception as e:
+    except Exception as e: 
         print(f"⚠️ Sheet update error: {e}")
 
 def update_recovery_in_sheet(target_date, recovery_val):
