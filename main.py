@@ -101,7 +101,7 @@ def get_google_client():
                                                   scopes=["https://www.googleapis.com/auth/spreadsheets"])
     return gspread.authorize(creds)
 
-def update_fitness_age_in_sheet(target_date, f_age_val):
+def update_eftp_in_sheet(target_date, eftp_val):
     try:
         client = get_google_client()
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
@@ -110,15 +110,14 @@ def update_fitness_age_in_sheet(target_date, f_age_val):
             if target_date in val:
                 header = sheet.row_values(1)
                 header = [h.replace('\xa0', '').strip() for h in header]
-                
-                # МЕНЯЕМ ЗДЕСЬ: ищем колонку FitAge_Strava вместо Fitness_Age
-                target_column = "FitAge_Strava" 
-                
+
+                target_column = "eFTP_Strava"
+
                 if target_column in header:
-                    sheet.update_cell(i + 1, header.index(target_column) + 1, f_age_val)
-                    print(f"✅ FitAge_Strava {f_age_val} записан.")
+                    sheet.update_cell(i + 1, header.index(target_column) + 1, eftp_val)
+                    print(f"✅ eFTP_Strava {eftp_val} записан.")
                     break
-    except Exception as e: 
+    except Exception as e:
         print(f"⚠️ Sheet update error: {e}")
 
 def update_recovery_in_sheet(target_date, recovery_val):
@@ -587,12 +586,27 @@ def main():
     # Более реалистичный диапазон
     f_age = round(max(48.0, min(get_bio_age() - 2, f_age)), 1)
 
-    update_fitness_age_in_sheet(today, f_age)
+    if eftp_val:
+        update_eftp_in_sheet(today, eftp_val)
 
     # 6. --- ПРОМПТ И ОТЧЕТ (VERBATIM GITHUB) ---# Report
 
     status_icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
-    eftp_str = f" | eFTP: {eftp_val} ({eftp_val - FTP_GARMIN:+})" if eftp_val else ""
+    if eftp_val:
+        delta = eftp_val - FTP_GARMIN
+
+        if delta <= -15:
+            eftp_icon = "🔴"
+        elif delta <= -7:
+            eftp_icon = "🟡"
+        elif delta <= 5:
+             eftp_icon = "🟢"
+        else:
+             eftp_icon = "🚀"
+
+        eftp_str = f" | eFTP: {eftp_val} ({delta:+}) {eftp_icon}"
+    else:
+        eftp_str = ""
 
     if not today_acts:
         
@@ -606,7 +620,7 @@ def main():
 
              f"ДАННЫЕ: HRV {int(hrv)}, Пульс {int(rhr)}, Сон {sleep}ч (Глубокий: {deep_sleep}ч), "
              f"Sleep Score: {sleep_score}, Recovery: {recovery_h}ч, TSB {tsb}, Готовность {score}/5. "
-             f"Fit Age {f_age}. VO2max: {vo2_val}. "
+             f"Fit Age {f_age}. VO2max: {vo2_calc}. "
 
              f"\nПРАВИЛА АНАЛИЗА:\n"
              f"{sleep_note}"
