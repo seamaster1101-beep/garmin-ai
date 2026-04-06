@@ -284,9 +284,11 @@ def main():
         
         if records:
             morning = next(
-                (row for row in reversed(records) if today in str(row.get('Date', ''))), 
+                (row for row in reversed(records) if today in str(row.get('Date', ''))),
                 records[-1]
             )
+            morning = {str(k).replace('\xa0', '').strip(): v for k, v in morning.items()}
+
     except Exception as e: 
         print(f"❌ Sheets fail: {e}")
 
@@ -314,9 +316,11 @@ def main():
 
     sleep_score = int(safe_float(morning.get("Sleep_Score"), 0))
 
-    recovery_raw = morning.get("Recovery_Time")
+    recovery_raw = morning.get("Recovery_Time", None)
+    recovery_raw_str = str(recovery_raw).replace('\xa0', '').strip()
+
     recovery_h = int(safe_float(recovery_raw, 0))
-    recovery_present = str(recovery_raw).strip() not in ["", "None", "Н/Д"]
+    recovery_present = recovery_raw is not None and recovery_raw_str not in ["", "None", "Н/Д"]
         
     # Расчет производительности (обязательно!)
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
