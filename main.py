@@ -312,8 +312,11 @@ def main():
     if deep_sleep >= sleep and sleep > 0:
         deep_sleep = round(sleep * 0.25, 1)
 
-    sleep_score = int(safe_float(morning.get("Sleep_Score"), 0)) 
-    recovery_h = int(safe_float(morning.get("Recovery_Time"), 0))
+    sleep_score = int(safe_float(morning.get("Sleep_Score"), 0))
+
+    recovery_raw = morning.get("Recovery_Time")
+    recovery_h = int(safe_float(recovery_raw, 0))
+    recovery_present = str(recovery_raw).strip() not in ["", "None", "Н/Д"]
         
     # Расчет производительности (обязательно!)
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
@@ -356,7 +359,7 @@ def main():
     
 
     # Recovery fallback: если из Morning не пришло значение, считаем сами
-    if not recovery_h:
+    if not recovery_present:
         recovery_h = estimate_recovery_hours(
             activities=activities,
             today=today,
