@@ -37,7 +37,7 @@ def safe_float(val, default=0.0):
     except:
         return default
 
-def get_hrv_7d_avg_from_sheet(sheet, today_str):
+def get_hrv_14d_avg_from_sheet(sheet, today_str):
     try:
         all_values = sheet.get_all_values()
         if not all_values or len(all_values) < 2:
@@ -59,18 +59,19 @@ def get_hrv_7d_avg_from_sheet(sheet, today_str):
             row_date = str(row[date_idx]).strip()
             row_hrv = safe_float(row[hrv_idx], 0)
 
+            # исключаем сегодня
             if not row_date or today_str not in row_date:
                 if row_hrv > 0:
                     vals.append(row_hrv)
 
-            if len(vals) >= 7:
+            if len(vals) >= 14:
                 break
 
         if vals:
             return round(sum(vals) / len(vals), 1)
 
     except Exception as e:
-        print(f"⚠️ HRV 7d avg error: {e}")
+        print(f"⚠️ HRV 14d avg error: {e}")
 
     return 85.0
 
@@ -533,7 +534,7 @@ def main():
     sleep_hours = sleep
 
     # Данные для расчета (убедись, что они определены выше)
-    hrv_7d_avg = get_hrv_7d_avg_from_sheet(sheet, today) if sheet else 85.0
+    hrv_7d_avg = get_hrv_14d_avg_from_sheet(sheet, today) if sheet else 85.0
     print("DEBUG hrv_7d_avg:", hrv_7d_avg)
 
     # --- 3. ПЕРСОНАЛИЗИРОВАННЫЙ РАСЧЕТ ГОТОВНОСТИ (v2.1) & FitAge
