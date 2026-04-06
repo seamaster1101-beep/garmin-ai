@@ -716,7 +716,8 @@ def main():
 
         # 2. И только потом используем его в отчете
  
-        report = (f"🌅 УТРЕННИЙ СТАТУС {status_icon} | FTP: {FTP_GARMIN}{eftp_str}\n\n"
+        report = (f"🌅 УТРЕННИЙ СТАТУС {status_icon}\n\n"
+                  f"🚴 FTP: {FTP_GARMIN}{eftp_str}\n"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
                   f"🛡 Статус: {day_status}\n"
                   f"🔋 Готовность: {score}/5\n"
