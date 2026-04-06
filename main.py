@@ -314,13 +314,19 @@ def main():
     # Google Sheets Data
     morning = {}
     records = []
+    all_values = []
+    sheet = None
     try:
         client = get_google_client()
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
 
         all_values = sheet.get_all_values()
         if all_values and len(all_values) > 1:
-            header = [str(h).replace('\xa0', '').strip() for h in all_values[0]]
+           header = [str(h).replace('\xa0', '').strip() for h in all_values[0]]
+           records = [
+               {header[i]: row[i] if i < len(row) else "" for i in range(len(header))}
+               for row in all_values[1:]
+           ]
 
             for row in reversed(all_values[1:]):
                 if row and today in str(row[0]):
@@ -405,7 +411,7 @@ def main():
         
     tsb = round(ctl - atl, 1)    
     
-    if tsb_garmin != 999 and tsb_garmin != 0:
+    if tsb_garmin != 999:
         tsb = round(tsb_garmin, 1)
     
     # Recovery fallback: если из Morning не пришло значение, считаем сами
@@ -527,7 +533,7 @@ def main():
     sleep_hours = sleep
 
     # Данные для расчета (убедись, что они определены выше)
-    hrv_7d_avg = get_hrv_7d_avg_from_sheet(sheet, today)
+    hrv_7d_avg = get_hrv_7d_avg_from_sheet(sheet, today) if sheet else 85.0
     print("DEBUG hrv_7d_avg:", hrv_7d_avg)
 
     # --- 3. ПЕРСОНАЛИЗИРОВАННЫЙ РАСЧЕТ ГОТОВНОСТИ (v2.1) & FitAge
