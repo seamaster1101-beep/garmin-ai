@@ -714,18 +714,34 @@ def main():
         else:
             s_status = "Отлично"
 
+        if eftp_val:
+        delta = eftp_val - FTP_GARMIN
+
+        if delta <= -15:
+            eftp_icon = "🔴"
+        elif delta <= -7:
+            eftp_icon = "🟡"
+        elif delta <= 5:
+            eftp_icon = "🟢"
+        else:
+            eftp_icon = "🚀"
+       
+        ftp_line = f"🚴 FTP: {FTP_GARMIN} | ⚡ {eftp_val} ({delta:+}) {eftp_icon}"
+    else:
+        ftp_line = f"🚴 FTP: {FTP_GARMIN}"
+
         # 2. И только потом используем его в отчете
  
         report = (f"🌅 УТРЕННИЙ СТАТУС {status_icon}\n\n"
-                  f"🚴 FTP: {FTP_GARMIN}{eftp_str}\n"
+                  f"{ftp_line}\n"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
                   f"🛡 Статус: {day_status}\n"
                   f"🔋 Готовность: {score}/5\n"
                   f"🕒 Восстановление: {rec_text}\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
-                  f"📊 Форма (TSB): {tsb} | VO2max: {vo2_calc} ({vo2_source})\n"
+                  f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val}\n"
                   f"🧬 Fit Age: {f_age}\n\n"
-                  f"🤖 АРНИ:\n{ai_msg}")
+                  f"🤖 АРНИ:\n{ai_msg}"")
 
     else:
         # --- АНАЛИЗ ТРЕНИРОВКИ (v2.2) ---
