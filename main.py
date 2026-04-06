@@ -357,6 +357,8 @@ def main():
     if not today_acts:
         ctl *= 0.98
         atl *= 0.90
+        
+    tsb = round(ctl - atl, 1)    
     
     if tsb_garmin != 999:
         tsb = round(tsb_garmin, 1)    
