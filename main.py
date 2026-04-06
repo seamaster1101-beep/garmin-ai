@@ -280,6 +280,7 @@ def main():
     # Metrics (Ключи строго как в заголовках таблицы)
     rhr = safe_float(morning.get("Resting_HR"), 60)
     hrv = safe_float(morning.get("HRV"), 45)
+    vo2_garmin = safe_float(morning.get("VO2max_Garmin"), 0)
     weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
     fat = safe_float(morning.get("Body_Fat"), 18.3)
@@ -510,7 +511,9 @@ def main():
         rec_text = f"{recovery_h}ч 🟢 (свежесть)"
     
     # --- 1. БАЗОВАЯ ФОРМА (Долгосрочная) ---
-    vo2_calc = vo2_val if vo2_val else 32.7
+    ##vo2_calc = vo2_val if vo2_val else 32.7
+    vo2_calc = vo2_garmin if vo2_garmin > 0 else (vo2_val if vo2_val else 32.7)
+    vo2_source = "Garmin" if vo2_garmin > 0 else "Strava"
 
     # Добавляем влияние пульса (чем ниже — тем моложе)
     rhr_factor = (51 - rhr) * 0.3
@@ -605,7 +608,7 @@ def main():
                   f"🔋 Готовность: {score}/5\n"
                   f"🕒 Восстановление: {rec_text}\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
-                  f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val if vo2_val else 'н/д'}\n"
+                  f"📊 Форма (TSB): {tsb} | VO2max: {vo2_calc} ({vo2_source})\n"
                   f"🧬 Fit Age: {f_age}\n\n"
                   f"🤖 АРНИ:\n{ai_msg}")
 
