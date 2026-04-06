@@ -37,6 +37,43 @@ def safe_float(val, default=0.0):
     except:
         return default
 
+def get_hrv_7d_avg_from_sheet(sheet, today_str):
+    try:
+        all_values = sheet.get_all_values()
+        if not all_values or len(all_values) < 2:
+            return 85.0
+
+        header = [str(h).replace('\xa0', '').strip() for h in all_values[0]]
+
+        if "Date" not in header or "HRV" not in header:
+            return 85.0
+
+        date_idx = header.index("Date")
+        hrv_idx = header.index("HRV")
+
+        vals = []
+        for row in reversed(all_values[1:]):
+            if len(row) <= max(date_idx, hrv_idx):
+                continue
+
+            row_date = str(row[date_idx]).strip()
+            row_hrv = safe_float(row[hrv_idx], 0)
+
+            if not row_date or today_str not in row_date:
+                if row_hrv > 0:
+                    vals.append(row_hrv)
+
+            if len(vals) >= 7:
+                break
+
+        if vals:
+            return round(sum(vals) / len(vals), 1)
+
+    except Exception as e:
+        print(f"⚠️ HRV 7d avg error: {e}")
+
+    return 85.0
+
 def send_tg(msg):
     if len(msg) > 4000: 
         msg = msg[:3900]
@@ -490,7 +527,8 @@ def main():
     sleep_hours = sleep
 
     # Данные для расчета (убедись, что они определены выше)
-    hrv_7d_avg = 85 # Временная заглушка, пока не настроим авто-расчет
+    hrv_7d_avg = get_hrv_7d_avg_from_sheet(sheet, today)
+    print("DEBUG hrv_7d_avg:", hrv_7d_avg)
 
     # --- 3. ПЕРСОНАЛИЗИРОВАННЫЙ РАСЧЕТ ГОТОВНОСТИ (v2.1) & FitAge
     score = 3.5  # База: учитываем отличный Fitness Age 48
