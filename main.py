@@ -276,19 +276,26 @@ def main():
 
     # Google Sheets Data
     morning = {}
+    records = []
     try:
         client = get_google_client()
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
-        records = sheet.get_all_records()
-        
-        if records:
-            morning = next(
-                (row for row in reversed(records) if today in str(row.get('Date', ''))),
-                records[-1]
-            )
-            morning = {str(k).replace('\xa0', '').strip(): v for k, v in morning.items()}
 
-    except Exception as e: 
+        all_values = sheet.get_all_values()
+        if all_values and len(all_values) > 1:
+            header = [str(h).replace('\xa0', '').strip() for h in all_values[0]]
+
+            for row in reversed(all_values[1:]):
+                if row and today in str(row[0]):
+                    morning = {header[i]: row[i] if i < len(row) else "" for i in range(len(header))}
+                    break
+
+            if not morning:
+                last_row = all_values[-1]
+                morning = {header[i]: last_row[i] if i < len(last_row) else "" for i in range(len(header))}
+
+        
+    except Exception as e:
         print(f"❌ Sheets fail: {e}")
 
     # Metrics (Ключи строго как в заголовках таблицы)
@@ -297,9 +304,6 @@ def main():
     vo2_garmin = safe_float(morning.get("VO2max_Garmin"), 0)
     tsb_raw = morning.get("TSB_Garmin", None)
     tsb_garmin = safe_float(tsb_raw, 999)
-    print("DEBUG morning keys:", list(morning.keys()))
-    print("DEBUG raw TSB_Garmin:", morning.get("TSB_Garmin"))
-    print("DEBUG raw TSB_Garmin:", repr(tsb_raw), "parsed:", tsb_garmin)
     weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
     fat = safe_float(morning.get("Body_Fat"), 18.3)
@@ -366,8 +370,7 @@ def main():
     
     if tsb_garmin != 999:
         tsb = round(tsb_garmin, 1)
-    print("DEBUG final tsb:", tsb)    
-
+    
     # Recovery fallback: если из Morning не пришло значение, считаем сами
     if not recovery_present:
         recovery_h = estimate_recovery_hours(
