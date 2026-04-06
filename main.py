@@ -534,8 +534,8 @@ def main():
     sleep_hours = sleep
 
     # Данные для расчета (убедись, что они определены выше)
-    hrv_7d_avg = get_hrv_14d_avg_from_sheet(sheet, today) if sheet else 85.0
-    print("DEBUG hrv_7d_avg:", hrv_7d_avg)
+    hrv_14d_avg = get_hrv_14d_avg_from_sheet(sheet, today) if sheet else 85.0
+    print("DEBUG hrv_14d_avg:", hrv_14d_avg)
 
     # --- 3. ПЕРСОНАЛИЗИРОВАННЫЙ РАСЧЕТ ГОТОВНОСТИ (v2.1) & FitAge
     score = 3.5  # База: учитываем отличный Fitness Age 48
@@ -547,9 +547,9 @@ def main():
         score += 0.5
     elif 40 <= hrv <= 75:
         # В рабочей зоне смотрим на тренд относительно недели
-        if hrv < hrv_7d_avg * 0.8:
+        if hrv < hrv_14d_avg * 0.8:
             score -= 0.5
-        elif hrv > hrv_7d_avg * 1.1:
+        elif hrv > hrv_14d_avg * 1.1:
             score += 0.3
     elif hrv < 40:
         # Умный штраф: если пульс в норме, значит это усталость, а не катастрофа
