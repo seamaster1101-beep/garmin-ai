@@ -168,7 +168,7 @@ def estimate_recovery_hours(activities, today, ftp, hrv, rhr, tsb):
     """
     Fallback-расчет Recovery Time, если Garmin/таблица не дали значение.
     Опирается на последнюю нетривиальную тренировку ДО сегодняшнего дня
-    и текущее утреннее состояние.
+    и текущее утреннее состояние, с учетом дней отдыха после нее.
     """
     past_acts = [
         a for a in activities
@@ -182,6 +182,7 @@ def estimate_recovery_hours(activities, today, ftp, hrv, rhr, tsb):
     last = sorted(past_acts, key=lambda x: x.get("start_date_local", ""))[-1]
     a_type = last.get("type")
     t_sec = last.get("moving_time", 0)
+    last_date_str = last.get("start_date_local", "")[:10]
 
     base_rec = 0
 
@@ -223,6 +224,18 @@ def estimate_recovery_hours(activities, today, ftp, hrv, rhr, tsb):
         adj -= 3
 
     recovery_h = round(base_rec + adj)
+
+    # Списываем 8 часов за каждый полный день после последней тренировки
+    try:
+        last_date = datetime.strptime(last_date_str, "%Y-%m-%d")
+        today_date = datetime.strptime(today, "%Y-%m-%d")
+        days_since_last = (today_date - last_date).days
+
+        if days_since_last > 0:
+            recovery_h -= days_since_last * 8
+    except Exception as e:
+        print(f"⚠️ Recovery date parse error: {e}")
+
     return max(0, min(72, recovery_h))
 
 # --- MAIN ---
@@ -352,6 +365,31 @@ def main():
             rhr=rhr,
             tsb=tsb
         )
+
+        # Защита: если вчера не было тренировки, recovery не должен расти
+        try:
+            yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+            yesterday_acts = [
+                a for a in activities
+                if a.get("start_date_local", "")[:10] == yesterday
+                and a.get("type") not in ["Walk", "Hike"]
+            ]
+
+            if not yesterday_acts:
+                y_row = next(
+                    (row for row in reversed(records) if yesterday in str(row.get("Date", ""))),
+                    None
+                )
+
+                if y_row:
+                    y_recovery = int(float(y_row.get("Recovery_Time") or 0))
+                    if y_recovery > 0 and recovery_h > y_recovery:
+                        print(f"DEBUG recovery_h capped by yesterday: {recovery_h} -> {y_recovery}")
+                        recovery_h = y_recovery
+        except Exception as e:
+            print(f"⚠️ Recovery guard error: {e}")
+
         print(f"DEBUG recovery_h estimated: {recovery_h}")
         update_recovery_in_sheet(today, recovery_h)
 
