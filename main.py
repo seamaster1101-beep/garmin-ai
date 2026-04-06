@@ -328,12 +328,12 @@ def main():
                for row in all_values[1:]
            ]
 
-            for row in reversed(all_values[1:]):
+           for row in reversed(all_values[1:]):
                 if row and today in str(row[0]):
                     morning = {header[i]: row[i] if i < len(row) else "" for i in range(len(header))}
                     break
 
-            if not morning:
+           if not morning:
                 last_row = all_values[-1]
                 morning = {header[i]: last_row[i] if i < len(last_row) else "" for i in range(len(header))}
 
