@@ -647,22 +647,7 @@ def main():
     # 6. --- ПРОМПТ И ОТЧЕТ (VERBATIM GITHUB) ---# Report
 
     status_icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
-    if eftp_val:
-        delta = eftp_val - FTP_GARMIN
-
-        if delta <= -15:
-            eftp_icon = "🔴"
-        elif delta <= -7:
-            eftp_icon = "🟡"
-        elif delta <= 5:
-             eftp_icon = "🟢"
-        else:
-             eftp_icon = "🚀"
-
-        eftp_str = f" | eFTP: {eftp_val} ({delta:+}) {eftp_icon}"
-    else:
-        eftp_str = ""
-
+        
     if not today_acts:
         
         sleep_note = f"- ВАЖНО: Сон < 6.5ч. Жестко снижай интенсивность, запрети агрессивную Зону 3 (Z3).\n" if sleep < 6.5 else ""
@@ -715,20 +700,20 @@ def main():
             s_status = "Отлично"
 
         if eftp_val:
-        delta = eftp_val - FTP_GARMIN
+            delta = eftp_val - FTP_GARMIN
 
-        if delta <= -15:
-            eftp_icon = "🔴"
-        elif delta <= -7:
-            eftp_icon = "🟡"
-        elif delta <= 5:
-            eftp_icon = "🟢"
-        else:
-            eftp_icon = "🚀"
+            if delta <= -15:
+                eftp_icon = "🔴"
+            elif delta <= -7:
+                eftp_icon = "🟡"
+            elif delta <= 5:
+                eftp_icon = "🟢"
+            else:
+                eftp_icon = "🚀"
        
-        ftp_line = f"🚴 FTP: {FTP_GARMIN} | ⚡ {eftp_val} ({delta:+}) {eftp_icon}"
-    else:
-        ftp_line = f"🚴 FTP: {FTP_GARMIN}"
+            ftp_line = f"🚴 FTP: {FTP_GARMIN} | ⚡ {eftp_val} ({delta:+}) {eftp_icon}"
+        else:
+            ftp_line = f"🚴 FTP: {FTP_GARMIN}"
 
         # 2. И только потом используем его в отчете
  
@@ -739,9 +724,9 @@ def main():
                   f"🔋 Готовность: {score}/5\n"
                   f"🕒 Восстановление: {rec_text}\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
-                  f"📊 Форма (TSB): {tsb} | VO2max: {vo2_val}\n"
+                  f"📊 Форма (TSB): {tsb} | VO2max: {vo2_calc} ({vo2_source})\n"
                   f"🧬 Fit Age: {f_age}\n\n"
-                  f"🤖 АРНИ:\n{ai_msg}"")
+                  f"🤖 АРНИ:\n{ai_msg}")
 
     else:
         # --- АНАЛИЗ ТРЕНИРОВКИ (v2.2) ---
