@@ -368,7 +368,7 @@ def main():
         
     tsb = round(ctl - atl, 1)    
     
-    if tsb_garmin != 999:
+    if tsb_garmin != 999 and tsb_garmin != 0:
         tsb = round(tsb_garmin, 1)
     
     # Recovery fallback: если из Morning не пришло значение, считаем сами
