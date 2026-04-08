@@ -391,8 +391,8 @@ def main():
     rhr = safe_float(morning.get("Resting_HR"), 60)
     hrv = safe_float(morning.get("HRV"), 45)
     vo2_garmin = safe_float(morning.get("VO2max_Garmin"), 0)
-    tsb_raw = morning.get("TSB_Garmin", None)
-    tsb_garmin = safe_float(tsb_raw, 999)
+    ##tsb_raw = morning.get("TSB_Garmin", None)
+    ##tsb_garmin = safe_float(tsb_raw, 999)
     weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
     fat = safe_float(morning.get("Body_Fat"), 18.3)
@@ -457,8 +457,8 @@ def main():
         
     tsb = round(ctl - atl, 1)    
     
-    if tsb_garmin != 999:
-        tsb = round(tsb_garmin, 1)
+    ##if tsb_garmin != 999:
+        ##tsb = round(tsb_garmin, 1)
     
     # Recovery fallback: если из Morning не пришло значение, считаем сами
     if not recovery_present:
