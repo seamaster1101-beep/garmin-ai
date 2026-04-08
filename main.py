@@ -100,6 +100,10 @@ def ask_arnie(prompt, fallback_text):
             f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", 
             timeout=10
         )
+        
+        print("DEBUG models status:", res_m.status_code)
+        print("DEBUG models text:", res_m.text[:500])
+        
         models_data = res_m.json()
         available = [
             m["name"] for m in models_data.get("models", []) 
@@ -107,6 +111,7 @@ def ask_arnie(prompt, fallback_text):
         ]
         
         if not available:
+            print("DEBUG no available Gemini models")
             return fallback_text
             
         # 2. Выбираем Flash (она быстрее и стабильнее для таких задач)
@@ -119,6 +124,9 @@ def ask_arnie(prompt, fallback_text):
             json={"contents": [{"parts": [{"text": prompt}]}]}, 
             timeout=30
         )
+
+        print("DEBUG ai status:", res_ai.status_code)
+        print("DEBUG ai text:", res_ai.text[:1000])
         
         data = res_ai.json()
         if "candidates" in data and data["candidates"]:
@@ -127,11 +135,12 @@ def ask_arnie(prompt, fallback_text):
                 data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("_", " ").replace("*", " ")
             )    
             
+        print("DEBUG Gemini returned no candidates")
+        
     except Exception as e:
         print(f"⚠️ AI Error: {e}")
         
     return fallback_text
-
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_google_client():
