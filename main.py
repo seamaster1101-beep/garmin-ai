@@ -1,4 +1,4 @@
-import os, requests, json, sys, gspread, html
+import os, requests, json, sys, gspread, html, time
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
@@ -95,51 +95,58 @@ def send_tg(msg):
 
 def ask_arnie(prompt, fallback_text):
     try:
-        # 1. Сначала узнаем, какие модели сейчас доступны
         res_m = requests.get(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", 
+            f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}",
             timeout=10
         )
-        
-        print("DEBUG models status:", res_m.status_code)
-        print("DEBUG models text:", res_m.text[:500])
-        
         models_data = res_m.json()
         available = [
-            m["name"] for m in models_data.get("models", []) 
+            m["name"] for m in models_data.get("models", [])
             if "generateContent" in m.get("supportedGenerationMethods", [])
         ]
-        
-        if not available:
-            print("DEBUG no available Gemini models")
-            return fallback_text
-            
-        # 2. Выбираем Flash (она быстрее и стабильнее для таких задач)
-        target_model = next((m for m in available if "flash" in m), available[0])
-        
-        # 3. Делаем сам запрос
-        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
-        res_ai = requests.post(
-            url, 
-            json={"contents": [{"parts": [{"text": prompt}]}]}, 
-            timeout=30
-        )
 
-        print("DEBUG ai status:", res_ai.status_code)
-        print("DEBUG ai text:", res_ai.text[:1000])
-        
-        data = res_ai.json()
-        if "candidates" in data and data["candidates"]:
-            # Убираем лишние символы форматирования, которые иногда мешают в Telegram
-            return html.escape(
-                data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("_", " ").replace("*", " ")
-            )    
-            
-        print("DEBUG Gemini returned no candidates")
-        
+        if not available:
+            return fallback_text
+
+        target_model = next((m for m in available if "flash" in m), available[0])
+        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
+
+        for attempt in range(3):
+            try:
+                res_ai = requests.post(
+                    url,
+                    json={"contents": [{"parts": [{"text": prompt}]}]},
+                    timeout=30
+                )
+
+                data = res_ai.json()
+
+                if "candidates" in data and data["candidates"]:
+                    return html.escape(
+                        data["candidates"][0]["content"]["parts"][0]["text"]
+                        .strip()
+                        .replace("_", " ")
+                        .replace("*", " ")
+                    )
+
+                err = data.get("error", {})
+                code = err.get("code")
+                status = err.get("status", "")
+
+                if code in [429, 500, 503] or status in ["UNAVAILABLE", "RESOURCE_EXHAUSTED"]:
+                    if attempt < 2:
+                        time.sleep(5 * (attempt + 1))
+                        continue
+
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                print(f"⚠️ AI Error: {e}")
+
     except Exception as e:
         print(f"⚠️ AI Error: {e}")
-        
+
     return fallback_text
 
 # --- РАБОТА С ДАННЫМИ ---
@@ -166,6 +173,26 @@ def update_eftp_in_sheet(target_date, eftp_val):
                     break
     except Exception as e:
         print(f"⚠️ Sheet update error: {e}")
+
+def update_tsb_strava_in_sheet(target_date, tsb_val):
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        dates = sheet.col_values(1)
+
+        for i, val in enumerate(dates):
+            if str(val).startswith(target_date):
+                header = sheet.row_values(1)
+                header = [h.replace('\xa0', '').strip() for h in header]
+
+                target_column = "TSB_Strava"
+
+                if target_column in header:
+                    sheet.update_cell(i + 1, header.index(target_column) + 1, tsb_val)
+                    print(f"✅ TSB_Strava {tsb_val} записан.")
+                    break
+    except Exception as e:
+        print(f"⚠️ TSB_Strava update error: {e}")
 
 def update_morning_sheet(date_str, row_data):
     try:
@@ -400,8 +427,8 @@ def main():
     rhr = safe_float(morning.get("Resting_HR"), 60)
     hrv = safe_float(morning.get("HRV"), 45)
     vo2_garmin = safe_float(morning.get("VO2max_Garmin"), 0)
-    ##tsb_raw = morning.get("TSB_Garmin", None)
-    ##tsb_garmin = safe_float(tsb_raw, 999)
+    tsb_raw = morning.get("TSB_Garmin", None)
+    tsb_garmin = safe_float(tsb_raw, 999)
     weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
     fat = safe_float(morning.get("Body_Fat"), 18.3)
@@ -465,9 +492,15 @@ def main():
         atl *= 0.90
         
     tsb = round(ctl - atl, 1)    
+    tsb_strava = tsb
     
-    ##if tsb_garmin != 999:
-        ##tsb = round(tsb_garmin, 1)
+    if tsb_garmin != 999:
+        tsb = round(tsb_garmin, 1)
+
+    update_tsb_strava_in_sheet(today, tsb_strava)
+
+    if eftp_val:
+        update_eftp_in_sheet(today, eftp_val)
     
     # Recovery fallback: если из Morning не пришло значение, считаем сами
     if not recovery_present:
@@ -791,7 +824,8 @@ def main():
                   f"🔋 Готовность: {score}/5\n"
                   f"🕒 Восстановление: {rec_text}\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
-                  f"📊 Форма (TSB): {tsb} | VO2max: {vo2_calc} ({vo2_source})\n"
+                  f"📊 VO2max: {vo2_calc} ({vo2_source})\n"
+                  f"📊 Форма: Garmin {tsb_garmin if tsb_garmin != 999 else 'н/д'} | Strava {tsb_strava}\n"
                   f"🧬 Fit Age: {f_age}\n\n"
                   f"🤖 АРНИ:\n{ai_msg}")
 
