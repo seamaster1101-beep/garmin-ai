@@ -194,6 +194,32 @@ def get_yesterday_recovery_from_sheet(target_date):
 
     return None
 
+def estimate_performance(activities, weight):
+    vals_vo2 = []
+    hr_max = 208 - (0.7 * get_bio_age())
+
+    if not weight or weight <= 0:
+        weight = 88.0
+
+    for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
+        if a.get("type") not in ["Ride", "VirtualRide"]:
+            continue
+
+        w = safe_float(a.get("average_watts"), 0)
+        hr = safe_float(a.get("average_heartrate"), 0)
+
+        if w > 10 and hr > 105:
+            v = (10.51 * (w * (hr_max / hr)) / weight) + 7
+            if 20 < v < 65:
+                vals_vo2.append(v)
+
+    if not vals_vo2:
+        return None, None
+
+    avg_vo2 = round(sum(vals_vo2[-7:]) / len(vals_vo2[-7:]), 1)
+    eftp = max(100, min(400, int(round(avg_vo2 * weight * 0.071, 0))))
+    return avg_vo2, eftp
+
 def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
     """
     Fallback-расчет Recovery Time, если Garmin не дал значение.
