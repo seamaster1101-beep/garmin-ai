@@ -685,28 +685,8 @@ def main():
     # Более реалистичный диапазон
     f_age = round(max(48.0, min(get_bio_age() - 2, f_age)), 1)
 
-    row_data = [
-        f"'{today} 08:00",
-        weight,
-        fat,
-        "",
-        rhr,
-        hrv,
-        "",
-        sleep_score,
-        sleep,
-        deep_sleep,
-        "",
-        recovery_h,
-        "",
-        int(get_bio_age()),
-        f_age,
-        "",
-        vo2_garmin if vo2_garmin > 0 else "",
-        tsb
-    ]
-
-    update_morning_sheet(today, row_data)
+    if eftp_val:
+    update_eftp_in_sheet(today, eftp_val)
 
     if eftp_val:
         update_eftp_in_sheet(today, eftp_val)
