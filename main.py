@@ -926,14 +926,22 @@ def main():
         
         # Собираем данные интенсивности
         w_avg = safe_float(last.get("average_watts"), 0)
+        if_val = round(w_avg / FTP_GARMIN, 2) if FTP_GARMIN > 0 and w_avg > 0 else 0
         hr_avg = safe_float(last.get("average_heartrate"), 0)
         hr_max_act = safe_float(last.get("max_heartrate"), 0)
         
         # Расчет TSS
         if a_type_last in ["Ride", "VirtualRide"]:
-            tss_last = round((t_sec/3600)*(w_avg/FTP_GARMIN)**2*100, 1) if w_avg else 0
+            tss_last = round((t_sec / 3600) * (w_avg / FTP_GARMIN) ** 2 * 100, 1) if w_avg else 0
         elif a_type_last in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
-            tss_last = round((t_sec / 60) * 0.6, 1)
+            base = (t_sec / 60) * 0.45
+
+            if hr_avg >= 110:
+                base *= 1.15
+            elif hr_avg < 95:
+                base *= 0.9
+
+            tss_last = round(base, 1)
         else:
             tss_last = 0
 
@@ -942,8 +950,13 @@ def main():
             f"Ты — АРНИ, стиль: коротко, точно, уважительно, без хамства. "
             f"Разбери тренировку атлета {round(get_bio_age())} лет: {name}. "
 
+            f"- Если средняя мощность >= 90% FTP при длительности от 20 минут, не называй тренировку умеренной.\n"
+            f"- Если IF >= 0.90, трактуй работу как пороговую или близкую к пороговой.\n"
+            f"- Если много времени в Z4-Z5 по мощности или пульсу, подчеркивай высокую интенсивность.\n"
+            f"- Короткая длительность не должна занижать оценку, если мощность и пульс высокие.\n"
+
             f"ДАННЫЕ: Тип {a_type_last}. Длительность {dur_min} мин. Дистанция {dist} км. "
-            f"TSS {tss_last}. Средняя мощность {w_avg}. "
+            f"TSS {tss_last}. Средняя мощность {w_avg}. IF {if_val}. "
             f"Пульс ср/макс: {hr_avg}/{hr_max_act}. "
             f"Утренняя готовность была {score}/5. "
 
