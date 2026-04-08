@@ -685,11 +685,8 @@ def main():
     # Более реалистичный диапазон
     f_age = round(max(48.0, min(get_bio_age() - 2, f_age)), 1)
 
-    if eftp_val:
-    update_eftp_in_sheet(today, eftp_val)
-
-    if eftp_val:
-        update_eftp_in_sheet(today, eftp_val)
+    ##if eftp_val:
+        ##update_eftp_in_sheet(today, eftp_val)
 
     # 6. --- ПРОМПТ И ОТЧЕТ (VERBATIM GITHUB) ---# Report
 
