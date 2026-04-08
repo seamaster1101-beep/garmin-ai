@@ -561,6 +561,14 @@ def main():
                 base *= 0.9
 
             tss = round(base, 1)
+
+        tss = round(tss, 1)
+
+        total_tss += tss
+        total_minutes += dur_min
+
+        name = a.get("name", "Тренировка")
+        details.append(f"• {name} — {dur_min} мин | TSS {tss}")
         
         # ВАЖНО: Это то, что ты удалил. Без этого CTL/ATL всегда будут 0
         if tss > 0:
