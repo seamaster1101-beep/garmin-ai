@@ -158,127 +158,146 @@ def update_eftp_in_sheet(target_date, eftp_val):
     except Exception as e:
         print(f"⚠️ Sheet update error: {e}")
 
-def update_recovery_in_sheet(target_date, recovery_val):
+def update_morning_sheet(date_str, row_data):
     try:
         client = get_google_client()
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
         dates = sheet.col_values(1)
+        row_idx = None
         for i, val in enumerate(dates):
-            if target_date in val:
-                header = sheet.row_values(1)
-                header = [h.replace('\xa0', '').strip() for h in header]
-                if "Recovery_Time" in header:
-                    sheet.update_cell(i + 1, header.index("Recovery_Time") + 1, recovery_val)
-                    print(f"✅ Recovery {recovery_val}ч записан.")
-                    break
+            if str(val).startswith(date_str):
+                row_idx = i + 1
+                break
+        if row_idx:
+            sheet.update(values=[row_data], range_name=f"A{row_idx}:R{row_idx}", value_input_option='USER_ENTERED')
+            print(f"✅ Данные за {date_str} обновлены в таблице.")
+        else:
+            sheet.append_row(row_data, value_input_option='USER_ENTERED')
+            print(f"✅ Добавлена новая запись за {date_str}.")
     except Exception as e:
-        print(f"⚠️ Recovery update error: {e}")
+        print(f"⚠️ Sheet update error: {e}")
 
-def estimate_performance(activities, weight):
-    vals_vo2 = []
-    hr_max = 208 - (0.7 * get_bio_age())
+def get_yesterday_recovery_from_sheet(target_date):
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        records = sheet.get_all_records()
 
-    # страховка, если вес пустой/нулевой
-    if not weight or weight <= 0:
-        weight = 88.0
+        for row in reversed(records):
+            row_date = str(row.get("Date", "")).replace("'", "").strip()
+            if row_date.startswith(target_date):
+                val = row.get("Recovery_Time")
+                if val not in (None, "", "Н/Д"):
+                    return int(float(val))
+    except Exception as e:
+        print(f"⚠️ Yesterday recovery read error: {e}")
 
-    for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
-        if a.get("type") not in ["Ride", "VirtualRide"]:
-            continue
+    return None
 
-        w = safe_float(a.get("average_watts"), 0)
-        hr = safe_float(a.get("average_heartrate"), 0)
-
-        if w > 10 and hr > 105:
-            v = (10.51 * (w * (hr_max / hr)) / weight) + 7
-            if 20 < v < 65:
-                vals_vo2.append(v)
-
-    if not vals_vo2:
-        return None, None
-
-    avg_vo2 = round(sum(vals_vo2[-7:]) / len(vals_vo2[-7:]), 1)
-    eftp = max(100, min(400, int(round(avg_vo2 * weight * 0.071, 0))))
-    return avg_vo2, eftp
-
-def estimate_recovery_hours(activities, today, ftp, hrv, rhr, tsb):
+def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
     """
-    Fallback-расчет Recovery Time, если Garmin/таблица не дали значение.
-    Опирается на последнюю нетривиальную тренировку ДО сегодняшнего дня
-    и текущее утреннее состояние, с учетом дней отдыха после нее.
+    Fallback-расчет Recovery Time, если Garmin не дал значение.
+
+    Логика:
+    1) если есть вчерашний Recovery_Time в таблице — продолжаем остаток
+    2) если нет — считаем по всем вчерашним нетривиальным тренировкам
     """
-    past_acts = [
-        a for a in activities
-        if a.get("start_date_local", "")[:10] < today
+    yesterday_str = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    y_recovery = get_yesterday_recovery_from_sheet(yesterday_str)
+
+    # --- ВЕТКА 1: продолжаем вчерашний recovery ---
+    if y_recovery is not None and y_recovery > 0:
+        hours_passed = 8  # для утреннего запуска считаем, что за ночь списалось ~8 часов
+
+        recovery_h = y_recovery - hours_passed
+
+        # мягкая коррекция по утреннему состоянию
+        if hrv > 95:
+            recovery_h -= 1
+        elif hrv < 50:
+            recovery_h += 2
+
+        if rhr <= 48:
+            recovery_h -= 1
+        elif rhr >= 55:
+            recovery_h += 2
+
+        if tsb < -10:
+            recovery_h += 2
+        elif tsb > 5:
+            recovery_h -= 1
+
+        return max(0, min(72, round(recovery_h)))
+
+    # --- ВЕТКА 2: если нет вчерашнего recovery, считаем по ВСЕМ вчерашним тренировкам ---
+    yesterday_acts = [
+        a for a in acts
+        if a.get("start_date_local", "")[:10] == yesterday_str
         and a.get("type") not in ["Walk", "Hike"]
     ]
 
-    if not past_acts:
+    if not yesterday_acts:
         return 0
 
-    last = sorted(past_acts, key=lambda x: x.get("start_date_local", ""))[-1]
-    a_type = last.get("type")
-    t_sec = last.get("moving_time", 0)
-    last_date_str = last.get("start_date_local", "")[:10]
+    base_rec = 0.0
 
-    base_rec = 0
+    for a in yesterday_acts:
+        a_type = a.get("type")
+        t_sec = a.get("moving_time", 0) or 0
 
-    if a_type in ["Ride", "VirtualRide"]:
-        w_avg = safe_float(last.get("average_watts"), 0)
-        if w_avg > 0 and t_sec > 0:
-            tss_last = (t_sec / 3600) * (w_avg / ftp) ** 2 * 100
-            base_rec = tss_last * 0.5
+        if t_sec <= 0:
+            continue
+
+        if a_type in ["Ride", "VirtualRide"]:
+            w_avg = safe_float(a.get("average_watts"), 0)
+
+            if w_avg > 0 and ftp > 0:
+                tss_last = (t_sec / 3600) * (w_avg / ftp) ** 2 * 100
+                rec_add = tss_last * 0.65
+            else:
+                rec_add = (t_sec / 60) * 0.30
+
+        elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
+            rec_add = (t_sec / 60) * 0.08
+
         else:
-            base_rec = (t_sec / 60) * 0.3
+            rec_add = (t_sec / 60) * 0.20
 
-    elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
-        base_rec = (t_sec / 60) * 0.35
-
-    else:
-        base_rec = (t_sec / 60) * 0.25
+        base_rec += rec_add
 
     adj = 0
 
     if hrv < 40:
-        adj += 10
+        adj += 8
     elif hrv < 60:
-        adj += 5
+        adj += 4
     elif hrv > 95:
-        adj -= 4
+        adj -= 3
     elif hrv > 80:
-        adj -= 2
+        adj -= 1
 
     if rhr >= 55:
-        adj += 5
+        adj += 4
     elif rhr <= 48:
         adj -= 2
 
     if tsb < -20:
-        adj += 10
+        adj += 8
     elif tsb < -10:
-        adj += 5
+        adj += 4
     elif tsb > 5:
-        adj -= 3
+        adj -= 2
+    elif tsb >= 0:
+        adj -= 1
 
     recovery_h = round(base_rec + adj)
-
-    # Списываем 8 часов за каждый полный день после последней тренировки
-    try:
-        last_date = datetime.strptime(last_date_str, "%Y-%m-%d")
-        today_date = datetime.strptime(today, "%Y-%m-%d")
-        days_since_last = (today_date - last_date).days
-
-        if days_since_last > 0:
-            recovery_h -= days_since_last * 8
-    except Exception as e:
-        print(f"⚠️ Recovery date parse error: {e}")
-
     return max(0, min(72, recovery_h))
 
 # --- MAIN ---
 def main():
-    now = datetime.utcnow() + timedelta(hours=2)
-    today = now.strftime("%Y-%m-%d")
+    now_dt = datetime.now()
+    today = now_dt.strftime("%Y-%m-%d")
+    yesterday_str = (now_dt - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Strava Data
     activities = []
@@ -418,8 +437,8 @@ def main():
     # Recovery fallback: если из Morning не пришло значение, считаем сами
     if not recovery_present:
         recovery_h = estimate_recovery_hours(
-            activities=activities,
-            today=today,
+            acts=activities,
+            today_str=today,
             ftp=FTP_GARMIN,
             hrv=hrv,
             rhr=rhr,
@@ -428,17 +447,15 @@ def main():
 
         # Защита: если вчера не было тренировки, recovery не должен расти
         try:
-            yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-
             yesterday_acts = [
                 a for a in activities
-                if a.get("start_date_local", "")[:10] == yesterday
+                if a.get("start_date_local", "")[:10] == yesterday_str
                 and a.get("type") not in ["Walk", "Hike"]
             ]
 
             if not yesterday_acts:
                 y_row = next(
-                    (row for row in reversed(records) if yesterday in str(row.get("Date", ""))),
+                    (row for row in reversed(records) if yesterday_str in str(row.get("Date", ""))),
                     None
                 )
 
@@ -451,12 +468,9 @@ def main():
             print(f"⚠️ Recovery guard error: {e}")
 
         print(f"DEBUG recovery_h estimated: {recovery_h}")
-        update_recovery_in_sheet(today, recovery_h)
-
-    now_hour = now.hour
-
+    
     # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30) ---
-    if now.hour > 21 or (now.hour == 21 and now.minute >= 30):
+    if now_dt.hour > 21 or (now_dt.hour == 21 and now_dt.minute >= 30):
 
         day_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
 
@@ -518,7 +532,8 @@ def main():
         ai_msg = ask_arnie(prompt, "День завершён. Работай по плану.")
 
         report = (
-            f"🌙 ИТОГИ ДНЯ | FTP: {FTP_GARMIN}\n\n"
+            f"🌙 ИТОГИ ДНЯ \n\n"
+            f"⚡️ FTP: {FTP_GARMIN}\n"
             f"🏋️ Активностей: {len(day_acts)}\n"
             f"⏱ Общее время: {total_minutes} мин\n"
             f"📈 Суммарный TSS: {total_tss}\n\n"
@@ -528,7 +543,6 @@ def main():
 
         send_tg(report)
         return
-        
 
     # Мы берем переменную sleep, которая уже была рассчитана выше в коде
     sleep_hours = sleep
@@ -578,10 +592,14 @@ def main():
         score -= 0.5
 
     # Recovery Time (Время восстановления)
-    if recovery_h > 48:
+    if recovery_h > 36:
         score -= 0.8
     elif recovery_h > 24:
+        score -= 0.5
+    elif recovery_h > 12:
         score -= 0.3
+    elif recovery_h > 6:
+        score -= 0.1
 
     # Форма (TSB / Acute Load)
     if tsb < -20:
@@ -641,16 +659,53 @@ def main():
     # Более реалистичный диапазон
     f_age = round(max(48.0, min(get_bio_age() - 2, f_age)), 1)
 
+    row_data = [
+        f"'{today} 08:00",
+        weight,
+        fat,
+        "",
+        rhr,
+        hrv,
+        "",
+        sleep_score,
+        sleep,
+        deep_sleep,
+        "",
+        recovery_h,
+        "",
+        int(get_bio_age()),
+        f_age,
+        "",
+        vo2_garmin if vo2_garmin > 0 else "",
+        tsb
+    ]
+
+    update_morning_sheet(today, row_data)
+
     if eftp_val:
         update_eftp_in_sheet(today, eftp_val)
 
     # 6. --- ПРОМПТ И ОТЧЕТ (VERBATIM GITHUB) ---# Report
 
-    status_icon = "🔥🏆" if score >= 4 else "🟢🟢" if score >= 2.8 else "🟡"
+    if score >= 4.8:
+        status_icon = "🔥🏆"
+    elif score >= 4.0:
+        status_icon = "🟢🟢"
+    elif score >= 2.8:
+        status_icon = "🟡"
+    else:
+        status_icon = "🔴"
         
     if not today_acts:
         
-        sleep_note = f"- ВАЖНО: Сон < 6.5ч. Жестко снижай интенсивность, запрети агрессивную Зону 3 (Z3).\n" if sleep < 6.5 else ""
+        if sleep < 5.5 and score < 4.0:
+            sleep_note = "- ВАЖНО: Сон очень короткий и готовность неидеальна. Сегодня только лёгкая работа, без Зоны 3.\n"
+        elif sleep < 5.5 and score >= 4.0:
+            sleep_note = "- Сон короткий, но метрики сильные. Допустима умеренная работа в Z2, короткие включения выше — только без жёсткого объёма.\n"
+        elif sleep < 6.5:
+            sleep_note = "- Сон немного ограничен. Работай в Z2, Z3 — умеренно и без агрессии.\n"
+        else:
+            sleep_note = ""
 
         prompt = (
              f"Ты — АРНИ, стиль: жесткий, лаконичный, уверенный тренер. "
@@ -778,10 +833,10 @@ def main():
         )
         ai_msg = ask_arnie(prompt, "Тренировка зафиксирована. Анализ будет позже.")
 
-        report = (f"🏃 ТРЕНИРОВКА {status_icon} | FTP: {FTP_GARMIN}\n\n"
+        report = (f"🏃 ТРЕНИРОВКА {status_icon} \n\n"
                   f"<b>{html.escape(name)}</b>\n"
-                  f"📍 {dist} км | ⏱ {dur_min} мин | 📈 TSS: {tss_last}\n"
-                  f"🧬 Fit Age: {f_age}\n\n"
+                  f"📍 {dist} км | ⏱ {dur_min} мин \n"
+                  f" 📈 TSS: {tss_last}\n\n"
                   f"🤖 АРНИ:\n{ai_msg}")
     send_tg(report)
 
