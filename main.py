@@ -102,61 +102,96 @@ def ask_arnie(prompt, fallback_text):
             f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}",
             timeout=10
         )
+        res_m.raise_for_status()
+
         models_data = res_m.json()
         available = [
             m["name"] for m in models_data.get("models", [])
             if "generateContent" in m.get("supportedGenerationMethods", [])
         ]
 
+        print("DEBUG Gemini available models:", available)
+
         if not available:
             print("⚠️ Gemini: no available models")
             return fallback_text
 
-        target_model = next((m for m in available if "flash" in m), available[0])
-        url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
+        preferred_order = [
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+        ]
+
+        model_queue = []
+
+        for p in preferred_order:
+            for m in available:
+                if p in m and m not in model_queue:
+                    model_queue.append(m)
+
+        for m in available:
+            if m not in model_queue:
+                model_queue.append(m)
+
+        print("DEBUG Gemini model queue:", model_queue)
 
         last_error = None
 
-        for attempt in range(3):
-            try:
-                res_ai = requests.post(
-                    url,
-                    json={"contents": [{"parts": [{"text": prompt}]}]},
-                    timeout=30
-                )
+        for model_name in model_queue[:4]:
+            url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={GEMINI_API_KEY}"
 
-                print(f"DEBUG Gemini attempt {attempt+1}: status {res_ai.status_code}")
-
-                data = res_ai.json()
-
-                if "candidates" in data and data["candidates"]:
-                    text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    return html.escape(
-                        text.strip().replace("_", " ").replace("*", " ")
+            for attempt in range(2):
+                try:
+                    res_ai = requests.post(
+                        url,
+                        json={"contents": [{"parts": [{"text": prompt}]}]},
+                        timeout=30
                     )
 
-                err = data.get("error", {})
-                code = err.get("code")
-                status = err.get("status", "")
-                message = err.get("message", "")
+                    print(f"DEBUG Gemini model {model_name}, attempt {attempt + 1}: status {res_ai.status_code}")
 
-                last_error = f"code={code}, status={status}, message={message}"
-                print(f"⚠️ Gemini attempt {attempt+1} failed: {last_error}")
+                    try:
+                        data = res_ai.json()
+                    except Exception:
+                        data = {"raw_text": res_ai.text}
 
-                if code in [429, 500, 503] or status in ["UNAVAILABLE", "RESOURCE_EXHAUSTED"]:
-                    if attempt < 2:
-                        time.sleep(5 * (attempt + 1))
+                    if "candidates" in data and data["candidates"]:
+                        try:
+                            text = data["candidates"][0]["content"]["parts"][0]["text"]
+                            return html.escape(
+                                text.strip().replace("_", " ").replace("*", " ")
+                            )
+                        except Exception as e:
+                            last_error = f"model={model_name}, bad candidate format: {e}"
+                            print(f"⚠️ Gemini parse error: {last_error}")
+                            break
+
+                    err = data.get("error", {})
+                    code = err.get("code")
+                    status = err.get("status", "")
+                    message = err.get("message", "")
+
+                    if not err:
+                        message = str(data)[:500]
+
+                    last_error = f"model={model_name}, code={code}, status={status}, message={message}"
+                    print(f"⚠️ Gemini failed: {last_error}")
+
+                    if code in [429, 500, 503] or status in ["UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"]:
+                        if attempt < 1:
+                            time.sleep(3 * (attempt + 1))
+                            continue
+
+                    break
+
+                except Exception as e:
+                    last_error = f"model={model_name}, exception={e}"
+                    print(f"⚠️ Gemini exception: {last_error}")
+                    if attempt < 1:
+                        time.sleep(3 * (attempt + 1))
                         continue
-
-                break
-
-            except Exception as e:
-                last_error = str(e)
-                print(f"⚠️ Gemini attempt {attempt+1} exception: {e}")
-                if attempt < 2:
-                    time.sleep(5 * (attempt + 1))
-                    continue
-                break
+                    break
 
         print(f"⚠️ Gemini fallback used. Last error: {last_error}")
         return fallback_text
