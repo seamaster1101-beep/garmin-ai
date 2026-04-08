@@ -105,10 +105,30 @@ def ask_arnie(prompt, fallback_text):
         res_m.raise_for_status()
 
         models_data = res_m.json()
-        available = [
-            m["name"] for m in models_data.get("models", [])
-            if "generateContent" in m.get("supportedGenerationMethods", [])
-        ]
+        available = []
+
+        for m in models_data.get("models", []):
+            name = m.get("name", "")
+            methods = m.get("supportedGenerationMethods", [])
+
+            if "generateContent" not in methods:
+                continue
+
+            bad_markers = [
+                "tts",
+                "image",
+                "audio",
+                "lyria",
+                "robotics",
+                "computer-use",
+                "deep-research",
+                "nano-banana",
+            ]
+
+            if any(marker in name for marker in bad_markers):
+                continue
+
+            available.append(name)
 
         print("DEBUG Gemini available models:", available)
 
@@ -117,18 +137,21 @@ def ask_arnie(prompt, fallback_text):
             return fallback_text
 
         preferred_order = [
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
+            "models/gemini-2.5-flash",
+            "models/gemini-2.5-flash-lite",
+            "models/gemini-2.0-flash",
+            "models/gemini-2.0-flash-001",
+            "models/gemini-flash-latest",
+            "models/gemini-flash-lite-latest",
+            "models/gemini-2.5-pro",
+            "models/gemini-pro-latest",
         ]
 
         model_queue = []
 
         for p in preferred_order:
-            for m in available:
-                if p in m and m not in model_queue:
-                    model_queue.append(m)
+            if p in available and p not in model_queue:
+                model_queue.append(p)
 
         for m in available:
             if m not in model_queue:
