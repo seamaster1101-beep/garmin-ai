@@ -109,10 +109,13 @@ def ask_arnie(prompt, fallback_text):
         ]
 
         if not available:
+            print("⚠️ Gemini: no available models")
             return fallback_text
 
         target_model = next((m for m in available if "flash" in m), available[0])
         url = f"https://generativelanguage.googleapis.com/v1beta/{target_model}:generateContent?key={GEMINI_API_KEY}"
+
+        last_error = None
 
         for attempt in range(3):
             try:
@@ -122,35 +125,45 @@ def ask_arnie(prompt, fallback_text):
                     timeout=30
                 )
 
+                print(f"DEBUG Gemini attempt {attempt+1}: status {res_ai.status_code}")
+
                 data = res_ai.json()
 
                 if "candidates" in data and data["candidates"]:
+                    text = data["candidates"][0]["content"]["parts"][0]["text"]
                     return html.escape(
-                        data["candidates"][0]["content"]["parts"][0]["text"]
-                        .strip()
-                        .replace("_", " ")
-                        .replace("*", " ")
+                        text.strip().replace("_", " ").replace("*", " ")
                     )
 
                 err = data.get("error", {})
                 code = err.get("code")
                 status = err.get("status", "")
+                message = err.get("message", "")
+
+                last_error = f"code={code}, status={status}, message={message}"
+                print(f"⚠️ Gemini attempt {attempt+1} failed: {last_error}")
 
                 if code in [429, 500, 503] or status in ["UNAVAILABLE", "RESOURCE_EXHAUSTED"]:
                     if attempt < 2:
                         time.sleep(5 * (attempt + 1))
                         continue
 
+                break
+
             except Exception as e:
+                last_error = str(e)
+                print(f"⚠️ Gemini attempt {attempt+1} exception: {e}")
                 if attempt < 2:
                     time.sleep(5 * (attempt + 1))
                     continue
-                print(f"⚠️ AI Error: {e}")
+                break
+
+        print(f"⚠️ Gemini fallback used. Last error: {last_error}")
+        return fallback_text
 
     except Exception as e:
         print(f"⚠️ AI Error: {e}")
-
-    return fallback_text
+        return fallback_text
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_google_client():
@@ -792,8 +805,16 @@ def main():
              f"2. АНАЛИЗ: Оценка базы (Fit Age, RHR, VO2max).\n"
              f"3. ВЕРДИКТ: План на день (зона и время).\n"
         )
-        ai_msg = ask_arnie(prompt, "1. СОСТОЯНИЕ: Данные получены.\n2. АНАЛИЗ: База стабильна.\n3. ВЕРДИКТ: Держи план дня по готовности.")
-
+        fallback_text = (
+             f"1. СОСТОЯНИЕ: HRV {int(hrv)} и пульс {int(rhr)} выглядят сильно. "
+             f"TSB {tsb} показывает текущий баланс нагрузки.\n"
+             f"2. АНАЛИЗ: Fit Age {f_age} и VO2max {vo2_calc} подтверждают стабильную базу. "
+             f"Сон {sleep}ч и восстановление {recovery_h}ч учитывай в плане дня.\n"
+             f"3. ВЕРДИКТ: Работай по готовности {score}/5. "
+             f"Объём и интенсивность держи под контроль."
+        )
+        ai_msg = ask_arnie(prompt, fallback_text)
+        
         # 1. Сначала определяем текстовый статус (s_status)
         if sleep_score < 55:
             s_status = "Плохо"
