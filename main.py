@@ -26,13 +26,16 @@ GEMINI_API_KEY = get_env('GEMINI_API_KEY')
 GOOGLE_CREDS_JSON = get_env('GOOGLE_CREDS')
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-def safe_float(val, default=0.0):
-    if val is None: return default
-    # Превращаем в строку, убираем пробелы и заменяем запятую на точку
+def safe_float(val, default=0.0, allow_negative=False):
+    if val is None:
+        return default
     s_val = str(val).replace(',', '.').replace('\xa0', '').strip()
-    if s_val in ["", "Н/Д", "None"]: return default
+    if s_val in ["", "Н/Д", "None"]:
+        return default
     try:
         v = float(s_val)
+        if allow_negative:
+            return v
         return v if v >= 0 else default
     except:
         return default
@@ -428,7 +431,7 @@ def main():
     hrv = safe_float(morning.get("HRV"), 45)
     vo2_garmin = safe_float(morning.get("VO2max_Garmin"), 0)
     tsb_raw = morning.get("TSB_Garmin", None)
-    tsb_garmin = safe_float(tsb_raw, 999)
+    tsb_garmin = safe_float(tsb_raw, 999, allow_negative=True)
     weight = safe_float(morning.get("Weight"), 88.0)
     if weight > 500: weight /= 10
     fat = safe_float(morning.get("Body_Fat"), 18.3)
@@ -824,8 +827,8 @@ def main():
                   f"🔋 Готовность: {score}/5\n"
                   f"🕒 Восстановление: {rec_text}\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
-                  f"📊 VO2max: {vo2_calc} ({vo2_source})\n"
-                  f"📊 Форма: Garmin {tsb_garmin if tsb_garmin != 999 else 'н/д'} | Strava {tsb_strava}\n"
+                  f"🫁 VO2max: {vo2_calc} ({vo2_source})\n"
+                  f"📊 Форма (TSB): Garmin {tsb_garmin if tsb_garmin != 999 else 'н/д'} | Strava {tsb_strava}\n"
                   f"🧬 Fit Age: {f_age}\n\n"
                   f"🤖 АРНИ:\n{ai_msg}")
 
