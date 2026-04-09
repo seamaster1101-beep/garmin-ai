@@ -620,8 +620,8 @@ def main():
 
         print(f"DEBUG recovery_h estimated: {recovery_h}")
     
-    # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30) ---
-    if now_dt.hour > 21 or (now_dt.hour == 21 and now_dt.minute >= 30):
+    # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30 UTC+2) ---
+    if now_dt.hour > 19 or (now_dt.hour == 19 and now_dt.minute >= 30):
 
         day_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
 
