@@ -549,7 +549,8 @@ def main():
 
         if a_type in ["Ride", "VirtualRide"]:
             w = safe_float(a.get("average_watts"), 0)
-            tss = (t_sec/3600)*(w/FTP_GARMIN)**2*100 if w > 0 else 0
+            tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1) if w > 0 else 0
+            
         # Расширенный список для силовых
         elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
             hr_a = safe_float(a.get("average_heartrate"), 0)
@@ -561,14 +562,6 @@ def main():
                 base *= 0.9
 
             tss = round(base, 1)
-
-        tss = round(tss, 1)
-
-        total_tss += tss
-        total_minutes += dur_min
-
-        name = a.get("name", "Тренировка")
-        details.append(f"• {name} — {dur_min} мин | TSS {tss}")
         
         # ВАЖНО: Это то, что ты удалил. Без этого CTL/ATL всегда будут 0
         if tss > 0:
@@ -627,8 +620,8 @@ def main():
 
         print(f"DEBUG recovery_h estimated: {recovery_h}")
     
-    # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30 UTC+2) ---
-    if now_dt.hour > 19 or (now_dt.hour == 19 and now_dt.minute >= 30):
+    # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30) ---
+    if now_dt.hour > 21 or (now_dt.hour == 21 and now_dt.minute >= 30):
 
         day_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
 
@@ -1010,12 +1003,12 @@ def main():
         )
 
         fallback_text = (
-            f"1. СТАТУС: Короткая, но очень плотная работа высокой интенсивности. "
-            f"IF {if_val} и средняя мощность {w_avg} Вт для {dur_min} минут показывают, что сессия была близка к пороговой, а не умеренной.\n"
-            f"2. ФИДБЕК: Ты хорошо удержал мощность по всей работе и не просел к концу. "
-            f"Пульс {hr_avg}/{hr_max_act} и TSS {tss_last} подтверждают, что нагрузка получилась качественной и реально рабочей.\n"
-            f"3. ЗАВТРА: Оптимально активное восстановление в Z1 20-40 минут или лёгкий день по самочувствию. "
-            f"Этого достаточно, чтобы снять остаточную нагрузку и сохранить тонус без лишнего стресса."
+            f"1. СТАТУС: Это короткая, но плотная работа высокой интенсивности. "
+            f"IF {if_val} и средняя мощность {w_avg} Вт для {dur_min} минут показывают, что нагрузка была близка к пороговой, а не умеренной.\n"
+            f"2. ФИДБЕК: Ты хорошо удержал мощность на всём отрезке и не развалил работу по ходу сессии. "
+            f"Пульс {hr_avg}/{hr_max_act} и TSS {tss_last} подтверждают, что это была качественная рабочая тренировка.\n"
+            f"3. ЗАВТРА: Оптимально Z1 20-40 минут или лёгкий день по самочувствию. "
+            f"Полный отдых нужен только если к утру просядут HRV, пульс покоя или появится тяжесть в ногах."
         )
         ai_msg = ask_arnie(prompt, fallback_text)
 
