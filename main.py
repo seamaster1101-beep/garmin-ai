@@ -814,7 +814,7 @@ def main():
     f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_p, 1)
 
     # Более реалистичный диапазон
-    f_age = round(max(48.0, min(get_bio_age() - 2, f_age)), 1)
+    f_age = round(max(52.0, min(get_bio_age() - 2, f_age)), 1)
 
     ##if eftp_val:
         ##update_eftp_in_sheet(today, eftp_val)
