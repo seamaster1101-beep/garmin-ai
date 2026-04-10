@@ -138,8 +138,8 @@ def ask_arnie(prompt, fallback_text):
 
         preferred_order = [
             "models/gemini-2.5-flash",
-            "models/gemini-2.5-flash-lite",
             "models/gemini-2.0-flash",
+            "models/gemini-2.5-flash-lite",
             "models/gemini-2.0-flash-001",
             "models/gemini-flash-latest",
             "models/gemini-flash-lite-latest",
@@ -164,7 +164,7 @@ def ask_arnie(prompt, fallback_text):
         for model_name in model_queue[:4]:
             url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={GEMINI_API_KEY}"
 
-            for attempt in range(2):
+            for attempt in range(1):
                 try:
                     res_ai = requests.post(
                         url,
@@ -871,6 +871,8 @@ def main():
             f"- Отдых предлагай только если Recovery >24ч, Sleep Score <60 или HRV реально просел.\n"
 
             f"- Контроль зон: <2.0 отдых; 2.0–3.0 Z1–Z2; 3.0–3.5 осторожно Z2; >3.5 можно Z3.\n"
+            f"- Не повторяй цифры из входных данных почти дословно. Интерпретируй их.\n"
+            f"- Если показатели хорошие, объясни, что это значит для тренировки сегодня, а не просто перечисляй HRV, RHR и VO2max.\n"
 
             f"- Каждый пункт — максимум 2-3 коротких предложения.\n"
             f"- Строго соблюдай формат из 3 пунктов.\n"
@@ -880,7 +882,7 @@ def main():
             f"\nВЫДАЙ СТРОГО ПО ПУНКТАМ:\n"
             f"1. СОСТОЯНИЕ: Сначала оцени HRV и пульс, затем только потом TSB.\n"
             f"2. АНАЛИЗ: Оценка базы (Fit Age, RHR, VO2max).\n"
-            f"3. ВЕРДИКТ: Конкретный план на день. Не занижай нагрузку без явных признаков усталости.\n"
+            f"3. ВЕРДИКТ: Конкретный план на день с объёмом/интенсивностью, а не общая фраза. Не занижай нагрузку без явных признаков усталости.\n"
         )
        
         fallback_text = (
