@@ -96,6 +96,10 @@ def send_tg(msg):
     except Exception as e:
         print(f"❌ TG Exception: {e}")
 
+print("DEBUG PROMPT START")
+print(prompt)
+print("DEBUG PROMPT END")
+
 def ask_arnie(prompt, fallback_text):
     try:
         res_m = requests.get(
@@ -638,7 +642,7 @@ def main():
 
             if a_type in ["Ride", "VirtualRide"]:
                 w = safe_float(a.get("average_watts"), 0)
-                tss = (t_sec/3600)*(w/FTP_GARMIN)**2*100 if w > 0 else 0
+                tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1) if w > 0 else 0
 
             elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
                 hr_a = safe_float(a.get("average_heartrate"), 0)
@@ -655,7 +659,7 @@ def main():
             total_minutes += dur_min
 
             name = a.get("name", "Тренировка")
-            details.append(f"• {name} — {dur_min} мин | TSS {tss}")
+            details.append(f"• {name} — {dur_min} мин | TSS {tss:.1f}")
 
         total_tss = round(total_tss, 1)
         total_minutes = round(total_minutes, 1)
@@ -666,7 +670,7 @@ def main():
             f"Ты — АРНИ, стиль: коротко, точно, уверенно. "
             f"Атлет {round(get_bio_age())} лет.\n"
 
-            f"ИТОГИ ДНЯ:\n"
+            f"ИТОГИ ДНЯ [ROUND-CHECK]\n\n"
             f"Активностей: {len(day_acts)}\n"
             f"Общее время: {total_minutes} мин\n"
             f"Суммарный TSS: {total_tss}\n"
