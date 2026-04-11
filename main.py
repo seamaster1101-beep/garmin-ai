@@ -389,7 +389,7 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
 
             if w_avg > 0 and ftp > 0:
                 tss_last = (t_sec / 3600) * (w_avg / ftp) ** 2 * 100
-                rec_add = tss_last * 0.65
+                rec_add = tss_last * 0.30
             else:
                 rec_add = (t_sec / 60) * 0.30
 
