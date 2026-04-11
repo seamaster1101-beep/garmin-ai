@@ -96,10 +96,6 @@ def send_tg(msg):
     except Exception as e:
         print(f"❌ TG Exception: {e}")
 
-print("DEBUG PROMPT START")
-print(prompt)
-print("DEBUG PROMPT END")
-
 def ask_arnie(prompt, fallback_text):
     try:
         res_m = requests.get(
@@ -347,7 +343,7 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
 
     # --- ВЕТКА 1: продолжаем вчерашний recovery ---
     if y_recovery is not None and y_recovery > 0:
-        hours_passed = 8  # для утреннего запуска считаем, что за ночь списалось ~8 часов
+        hours_passed = 14 # для утреннего запуска считаем, что за ночь списалось ~8 часов
 
         recovery_h = y_recovery - hours_passed
 
@@ -799,7 +795,7 @@ def main():
     base_age = (
         get_bio_age()
         + (fat - 22) * 0.5
-        - (vo2_calc - 32) * 2.0
+        - (vo2_calc - 32) * 1.2
         - rhr_factor
     )
 
