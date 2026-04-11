@@ -130,7 +130,7 @@ def ask_arnie(prompt, fallback_text):
 
             available.append(name)
 
-        print("DEBUG Gemini available models:", available)
+        #print("DEBUG Gemini available models:", available)
 
         if not available:
             print("⚠️ Gemini: no available models")
@@ -157,7 +157,7 @@ def ask_arnie(prompt, fallback_text):
             if m not in model_queue:
                 model_queue.append(m)
 
-        print("DEBUG Gemini model queue:", model_queue)
+        ##print("DEBUG Gemini model queue:", model_queue)
 
         last_error = None
 
@@ -172,7 +172,7 @@ def ask_arnie(prompt, fallback_text):
                         timeout=30
                     )
 
-                    print(f"DEBUG Gemini model {model_name}, attempt {attempt + 1}: status {res_ai.status_code}")
+                    ##print(f"DEBUG Gemini model {model_name}, attempt {attempt + 1}: status {res_ai.status_code}")
 
                     try:
                         data = res_ai.json()
@@ -613,28 +613,30 @@ def main():
                 if y_row:
                     y_recovery = int(float(y_row.get("Recovery_Time") or 0))
                     if y_recovery > 0 and recovery_h > y_recovery:
-                        print(f"DEBUG recovery_h capped by yesterday: {recovery_h} -> {y_recovery}")
+                        ##print(f"DEBUG recovery_h capped by yesterday: {recovery_h} -> {y_recovery}")
                         recovery_h = y_recovery
         except Exception as e:
             print(f"⚠️ Recovery guard error: {e}")
 
-        print(f"DEBUG recovery_h estimated: {recovery_h}")
+        ##print(f"DEBUG recovery_h estimated: {recovery_h}")
     
     # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30 UTC+2) ---
     if now_dt.hour > 19 or (now_dt.hour == 19 and now_dt.minute >= 30):
 
-        day_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
+        all_day_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
+        day_acts = [a for a in all_day_acts if a.get("type") not in ["Walk", "Hike"]]
 
         total_tss = 0
         total_minutes = 0
         details = []
 
-        for a in sorted(day_acts, key=lambda x: x.get("start_date_local", "")):
+        for a in sorted(all_day_acts, key=lambda x: x.get("start_date_local", "")):
             a_type = a.get("type")
             t_sec = a.get("moving_time", 0)
             dur_min = round(t_sec / 60, 1)
 
             tss = 0
+            include_in_stats = a_type not in ["Walk", "Hike"]
 
             if a_type in ["Ride", "VirtualRide"]:
                 w = safe_float(a.get("average_watts"), 0)
@@ -651,11 +653,16 @@ def main():
 
                 tss = round(base, 1)
 
-            total_tss += tss
-            total_minutes += dur_min
+            if include_in_stats:
+                total_tss += tss
+                total_minutes += dur_min
 
             name = a.get("name", "Тренировка")
-            details.append(f"• {name} — {dur_min} мин | TSS {tss:.1f}")
+
+            if include_in_stats:
+                details.append(f"• {name} — {dur_min} мин | TSS {tss:.1f}")
+            else:
+                details.append(f"• {name} — {dur_min} мин")
 
         total_tss = round(total_tss, 1)
         total_minutes = round(total_minutes, 1)
@@ -666,7 +673,7 @@ def main():
             f"Ты — АРНИ, стиль: коротко, точно, уверенно. "
             f"Атлет {round(get_bio_age())} лет.\n"
 
-            f"ИТОГИ ДНЯ [ROUND-CHECK]\n\n"
+            f"ИТОГИ ДНЯ\n\n"
             f"Активностей: {len(day_acts)}\n"
             f"Общее время: {total_minutes} мин\n"
             f"Суммарный TSS: {total_tss}\n"
@@ -706,7 +713,7 @@ def main():
 
     # Данные для расчета (убедись, что они определены выше)
     hrv_14d_avg = get_hrv_14d_avg_from_sheet(sheet, today) if sheet else 85.0
-    print("DEBUG hrv_14d_avg:", hrv_14d_avg)
+    ##print("DEBUG hrv_14d_avg:", hrv_14d_avg)
 
     # --- 3. ПЕРСОНАЛИЗИРОВАННЫЙ РАСЧЕТ ГОТОВНОСТИ (v2.1) & FitAge
     score = 3.5  # База: учитываем отличный Fitness Age 48
@@ -1014,7 +1021,7 @@ def main():
         )
         ai_msg = ask_arnie(prompt, fallback_text)
 
-        report = (f"🏃 ТРЕНИРОВКА {status_icon} \n\n"
+        report = (f"🏃 ТРЕНИРОВКА {status_icon}\n\n"
                   f"<b>{html.escape(name)}</b>\n"
                   f"📍 {dist} км | ⏱ {dur_min} мин \n"
                   f" 📈 TSS: {tss_last}\n\n"
