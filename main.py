@@ -522,8 +522,10 @@ def main():
         deep_sleep = round(sleep * 0.25, 1)
 
     sleep_score = int(safe_float(morning.get("Sleep_Score"), 0))
-    feel = int(safe_float(morning.get("Feel"), 0))
-    effort = int(safe_float(morning.get("Effort"), 0))
+    strength_feel = int(safe_float(morning.get("Strength_Feel"), 0))
+    strength_effort = int(safe_float(morning.get("Strength_Effort"), 0))
+    ride_feel = int(safe_float(morning.get("Ride_Feel"), 0))
+    ride_effort = int(safe_float(morning.get("Ride_Effort"), 0))
 
     recovery_raw = morning.get("Recovery_Time", None)
     recovery_raw_str = str(recovery_raw).replace('\xa0', '').strip()
@@ -682,16 +684,21 @@ def main():
             f"Суммарный TSS: {total_tss}\n"
 
             f"HRV {int(hrv)}, Пульс {int(rhr)}, Сон {sleep}ч, "
-            f"Recovery {recovery_h}ч, TSB {tsb}, Feel {feel}, Effort {effort}\n"
+            f"Recovery {recovery_h}ч, TSB {tsb}, "
+            f"Strength_Feel {strength_feel}, Strength_Effort {strength_effort}, "
+            f"Ride_Feel {ride_feel}, Ride_Effort {ride_effort}\n"
 
             f"\nПРАВИЛА:\n"
             f"- Учитывай суммарную нагрузку, а не одну тренировку\n"
             f"- Если 2+ активности — оцени накопление усталости\n"
             f"- Не преувеличивай и не обесценивай\n"
             f"- Не пиши общих фраз вроде 'сильный' или 'тренируйся', если можно сказать конкретнее\n"
-            f"- Если Feel и Effort указаны, обязательно учитывай их в выводе.\n"
+            
+            f"- Если указаны Strength_Feel / Strength_Effort, учитывай их как субъективную оценку силовой.\n"
+            f"- Если указаны Ride_Feel / Ride_Effort, учитывай их как субъективную оценку вело.\n"
             f"- Feel: 1=Very Weak, 2=Weak, 3=Normal, 4=Strong, 5=Very Strong.\n"
             f"- Effort: 1-10, где 1 очень легко, 10 максимум.\n"
+            f"- Не смешивай тяжёлую силовую и лёгкое вело в одну общую субъективную оценку, если оценки различаются.\n"
 
             f"\nОТВЕТ СТРОГО:\n"
             f"1. СТАТУС: Оцени суммарную нагрузку дня.\n"
@@ -708,7 +715,8 @@ def main():
             f"🚶 Всего активностей: {len(all_day_acts)}\n"
             f"⏱ Общее время: {total_minutes} мин\n"
             f"📈 Суммарный TSS: {total_tss}\n"
-            f"🧠 Feel: {feel if feel > 0 else 'н/д'} | Effort: {effort if effort > 0 else 'н/д'}\n\n"
+            f"🏋️ Силовая: Feel {strength_feel if strength_feel > 0 else 'н/д'} | Effort {strength_effort if strength_effort > 0 else 'н/д'}\n"
+            f"🚴 Вело: Feel {ride_feel if ride_feel > 0 else 'н/д'} | Effort {ride_effort if ride_effort > 0 else 'н/д'}\n\n"
             f"{acts_text}\n\n"
             f"🤖 АРНИ:\n{ai_msg}"
         )
@@ -995,13 +1003,18 @@ def main():
             f"IF: {if_val}\n"
             f"Пульс ср/макс: {hr_avg}/{hr_max_act}\n"
             f"Утренняя готовность: {score}/5\n"
-            f"Feel: {feel}\n"
-            f"Effort: {effort}\n\n"
+            f"Strength_Feel: {strength_feel}\n"
+            f"Strength_Effort: {strength_effort}\n"
+            f"Ride_Feel: {ride_feel}\n"
+            f"Ride_Effort: {ride_effort}\n\n"
 
             f"ПРАВИЛА РАЗБОРА:\n"
             f"- Это должен быть именно анализ, а не сухое повторение цифр.\n"
             f"- Обязательно интерпретируй цифры: что они значат по интенсивности и плотности работы.\n"
-            f"- Если Feel и Effort указаны, обязательно используй их в разборе.\n"
+            f"- Если указаны Strength_Feel / Strength_Effort, учитывай их как субъективную оценку силовой.\n"
+            f"- Если указаны Ride_Feel / Ride_Effort, учитывай их как субъективную оценку вело.\n"
+            f"- Для силовой опирайся в первую очередь на Strength_Feel / Strength_Effort.\n"
+            f"- Для вело опирайся в первую очередь на Ride_Feel / Ride_Effort.\n"
             f"- Feel: 1=Very Weak, 2=Weak, 3=Normal, 4=Strong, 5=Very Strong.\n"
             f"- Effort: 1-10, где 1 очень легко, 10 максимум.\n"
             f"- Если IF >= 0.90, прямо говори: работа высокая, близкая к пороговой.\n"
@@ -1038,7 +1051,8 @@ def main():
                   f"<b>{html.escape(name)}</b>\n"
                   f"📍 {dist} км | ⏱ {dur_min} мин \n"
                   f"📈 TSS: {tss_last}\n"
-                  f"🧠 Feel: {feel if feel > 0 else 'н/д'} | Effort: {effort if effort > 0 else 'н/д'}\n\n"
+                  f"🏋️ Силовая: Feel {strength_feel if strength_feel > 0 else 'н/д'} | Effort {strength_effort if strength_effort > 0 else 'н/д'}\n"
+                  f"🚴 Вело: Feel {ride_feel if ride_feel > 0 else 'н/д'} | Effort {ride_effort if ride_effort > 0 else 'н/д'}\n\n"
                   f"🤖 АРНИ:\n{ai_msg}")
     send_tg(report)
 
