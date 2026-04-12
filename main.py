@@ -662,11 +662,18 @@ def main():
                 total_minutes += dur_min
 
             name = a.get("name", "Тренировка")
+            dist_km = round((a.get("distance", 0) or 0) / 1000, 2)
+            steps = int(a.get("steps") or 0)
 
             if include_in_stats:
                 details.append(f"• {name} — {dur_min} мин | TSS {tss:.1f}")
             else:
-                details.append(f"• {name} — {dur_min} мин")
+                if dist_km > 0 and steps > 0:
+                    details.append(f"• {name} — {dist_km} км | {dur_min} мин | {steps} шагов")
+                elif dist_km > 0:
+                    details.append(f"• {name} — {dist_km} км | {dur_min} мин")
+                else:
+                    details.append(f"• {name} — {dur_min} мин")
 
         total_tss = round(total_tss, 1)
         total_minutes = round(total_minutes, 1)
