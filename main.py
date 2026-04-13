@@ -666,7 +666,10 @@ def main():
             steps = int(a.get("steps") or 0)
 
             if include_in_stats:
-                details.append(f"• {name} — {dur_min} мин | TSS {tss:.1f}")
+                if a_type in ["Ride", "VirtualRide"] and dist_km > 0:
+                    details.append(f"• {name} — {dist_km} км | {dur_min} мин | TSS {tss:.1f}")
+                else:
+                    details.append(f"• {name} — {dur_min} мин | TSS {tss:.1f}")
             else:
                 if dist_km > 0 and steps > 0:
                     details.append(f"• {name} — {dist_km} км | {dur_min} мин | {steps} шагов")
@@ -980,7 +983,8 @@ def main():
         name = last.get("name", "Тренировка")
         t_sec = last.get("moving_time", 0)
         dur_min = round(t_sec / 60, 1)
-        a_type_last = last.get("type")
+        is_ride = a_type_last in ["Ride", "VirtualRide"]
+        is_strength = a_type_last in ["Weight Training", "Workout", "WeightTraining", "Gym"]
         
         # Собираем данные интенсивности
         w_avg = safe_float(last.get("average_watts"), 0)
@@ -1027,10 +1031,11 @@ def main():
             f"ПРАВИЛА РАЗБОРА:\n"
             f"- Это должен быть именно анализ, а не сухое повторение цифр.\n"
             f"- Обязательно интерпретируй цифры: что они значат по интенсивности и плотности работы.\n"
-            f"- Если указаны Strength_Feel / Strength_Effort, учитывай их как субъективную оценку силовой.\n"
-            f"- Если указаны Ride_Feel / Ride_Effort, учитывай их как субъективную оценку вело.\n"
-            f"- Для силовой опирайся в первую очередь на Strength_Feel / Strength_Effort.\n"
-            f"- Для вело опирайся в первую очередь на Ride_Feel / Ride_Effort.\n"
+            f"- Разбирай только текущую тренировку, а не весь день целиком.\n"
+            f"- Если текущая тренировка силовая, опирайся в первую очередь на Strength_Feel / Strength_Effort.\n"
+            f"- Если текущая тренировка вело, опирайся в первую очередь на Ride_Feel / Ride_Effort.\n"
+            f"- Не обсуждай силовую в разборе велотренировки, если силовая не анализируется прямо сейчас.\n"
+            f"- Не обсуждай вело в разборе силовой, если вело не анализируется прямо сейчас.\n"
             f"- Feel: 1=Very Weak, 2=Weak, 3=Normal, 4=Strong, 5=Very Strong.\n"
             f"- Effort по шкале Garmin: 1=очень легко, 2=легко, 3=умеренно, 4=довольно тяжело, 5-6=трудно, 7-8=очень трудно, 9=очень тяжело, 10=максимум.\n"
             f"- Не называй Effort 4-5 экстремальной нагрузкой. Это рабочая, но не предельная тяжесть.\n"
@@ -1076,12 +1081,17 @@ def main():
         )
         ai_msg = ask_arnie(prompt, fallback_text)
 
+        subjective_line = ""
+        if is_strength:
+            subjective_line = f"🏋️ Силовая: Feel {strength_feel if strength_feel > 0 else 'н/д'} | Effort {strength_effort if strength_effort > 0 else 'н/д'}\n"
+        elif is_ride:
+            subjective_line = f"🚴 Вело: Feel {ride_feel if ride_feel > 0 else 'н/д'} | Effort {ride_effort if ride_effort > 0 else 'н/д'}\n"
+
         report = (f"🏃 ТРЕНИРОВКА {status_icon}\n\n"
                   f"<b>{html.escape(name)}</b>\n"
                   f"📍 {dist} км | ⏱ {dur_min} мин \n"
                   f"📈 TSS: {tss_last}\n"
-                  f"🏋️ Силовая: Feel {strength_feel if strength_feel > 0 else 'н/д'} | Effort {strength_effort if strength_effort > 0 else 'н/д'}\n"
-                  f"🚴 Вело: Feel {ride_feel if ride_feel > 0 else 'н/д'} | Effort {ride_effort if ride_effort > 0 else 'н/д'}\n\n"
+                  f"{subjective_line}\n"
                   f"🤖 АРНИ:\n{ai_msg}")
     send_tg(report)
 
