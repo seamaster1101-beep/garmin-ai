@@ -268,6 +268,26 @@ def update_tsb_strava_in_sheet(target_date, tsb_val):
     except Exception as e:
         print(f"⚠️ TSB_Strava update error: {e}")
 
+def update_recovery_in_sheet(target_date, recovery_val):
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        dates = sheet.col_values(1)
+
+        for i, val in enumerate(dates):
+            if str(val).startswith(target_date):
+                header = sheet.row_values(1)
+                header = [h.replace('\xa0', '').strip() for h in header]
+
+                target_column = "Recovery_Time"
+
+                if target_column in header:
+                    sheet.update_cell(i + 1, header.index(target_column) + 1, recovery_val)
+                    print(f"✅ Recovery_Time {recovery_val} записан.")
+                    break
+    except Exception as e:
+        print(f"⚠️ Recovery_Time update error: {e}")
+
 def update_morning_sheet(date_str, row_data):
     try:
         client = get_google_client()
@@ -638,6 +658,8 @@ def main():
                         recovery_h = y_recovery
         except Exception as e:
             print(f"⚠️ Recovery guard error: {e}")
+
+        update_recovery_in_sheet(today, recovery_h)
 
         ##print(f"DEBUG recovery_h estimated: {recovery_h}")
     
