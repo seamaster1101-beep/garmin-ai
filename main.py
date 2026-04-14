@@ -386,10 +386,13 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
 
         if a_type in ["Ride", "VirtualRide"]:
             w_avg = safe_float(a.get("average_watts"), 0)
+            hr_a = safe_float(a.get("average_heartrate"), 0)
 
             if w_avg > 0 and ftp > 0:
                 tss_last = (t_sec / 3600) * (w_avg / ftp) ** 2 * 100
                 rec_add = tss_last * 0.30
+            elif hr_a > 0:
+                rec_add = (t_sec / 60) * 0.43
             else:
                 rec_add = (t_sec / 60) * 0.30
 
@@ -553,7 +556,21 @@ def main():
 
         if a_type in ["Ride", "VirtualRide"]:
             w = safe_float(a.get("average_watts"), 0)
-            tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1) if w > 0 else 0
+            hr_a = safe_float(a.get("average_heartrate"), 0)
+
+            if w > 0:
+                tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1)
+            elif hr_a > 0:
+                base = (t_sec / 60) * 0.35
+
+                if hr_a >= 135:
+                    base *= 1.15
+                elif hr_a < 110:
+                    base *= 0.9
+
+                tss = round(base, 1)
+            else:
+                tss = 0
             
         # Расширенный список для силовых
         elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
@@ -644,7 +661,21 @@ def main():
 
             if a_type in ["Ride", "VirtualRide"]:
                 w = safe_float(a.get("average_watts"), 0)
-                tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1) if w > 0 else 0
+                hr_a = safe_float(a.get("average_heartrate"), 0)
+
+                if w > 0:
+                    tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1)
+                elif hr_a > 0:
+                    base = (t_sec / 60) * 0.35
+
+                    if hr_a >= 135:
+                        base *= 1.15
+                    elif hr_a < 110:
+                        base *= 0.9
+
+                    tss = round(base, 1)
+                else:
+                    tss = 0
 
             elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
                 hr_a = safe_float(a.get("average_heartrate"), 0)
@@ -979,6 +1010,7 @@ def main():
     else:
         # --- АНАЛИЗ ТРЕНИРОВКИ (v2.2) ---
         last = sorted(today_acts, key=lambda x: x.get("start_date_local"))[-1]
+        a_type_last = last.get("type", "")
         dist = round(last.get("distance", 0) / 1000, 2)
         name = last.get("name", "Тренировка")
         t_sec = last.get("moving_time", 0)
@@ -991,10 +1023,45 @@ def main():
         if_val = round(w_avg / FTP_GARMIN, 2) if FTP_GARMIN > 0 and w_avg > 0 else 0
         hr_avg = safe_float(last.get("average_heartrate"), 0)
         hr_max_act = safe_float(last.get("max_heartrate"), 0)
+
+        if is_ride:
+            distance_prompt = f"Дистанция: {dist} км\n"
+        else:
+            distance_prompt = ""
+
+        if is_ride and w_avg > 0:
+            power_prompt = (
+                f"Средняя мощность: {w_avg} Вт\n"
+                f"IF: {if_val}\n"
+            )
+            power_rules_prompt = (
+                f"- IF < 0.75 = лёгкая или умеренная работа.\n"
+                f"- IF 0.75-0.85 = уверенная рабочая интенсивность, но не экстремальная.\n"
+                f"- IF 0.86-0.90 = тяжёлая работа.\n"
+                f"- Если IF >= 0.90, прямо говори: работа высокая, близкая к пороговой.\n"
+            )
+        elif is_ride:
+            power_prompt = ""
+            power_rules_prompt = ""
+        else:
+            power_prompt = ""
+            power_rules_prompt = ""
         
         # Расчет TSS
         if a_type_last in ["Ride", "VirtualRide"]:
-            tss_last = round((t_sec / 3600) * (w_avg / FTP_GARMIN) ** 2 * 100, 1) if w_avg else 0
+            if w_avg > 0:
+                tss_last = round((t_sec / 3600) * (w_avg / FTP_GARMIN) ** 2 * 100, 1)
+            elif hr_avg > 0:
+                base = (t_sec / 60) * 0.35
+
+                if hr_avg >= 135:
+                    base *= 1.15
+                elif hr_avg < 110:
+                    base *= 0.9
+
+                tss_last = round(base, 1)
+            else:
+                tss_last = 0
         elif a_type_last in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
             base = (t_sec / 60) * 0.45
 
@@ -1007,6 +1074,19 @@ def main():
         else:
             tss_last = 0
 
+        if is_strength:
+            subjective_prompt = (
+                f"Strength_Feel: {strength_feel}\n"
+                f"Strength_Effort: {strength_effort}\n\n"
+            )
+        elif is_ride:
+            subjective_prompt = (
+                f"Ride_Feel: {ride_feel}\n"
+                f"Ride_Effort: {ride_effort}\n\n"
+            )
+        else:
+            subjective_prompt = ""
+
         # Формируем умный промпт для анализа нагрузки
         prompt = (
             f"Ты — АРНИ, жёсткий, точный, уверенный тренер. "
@@ -1017,16 +1097,12 @@ def main():
             f"Тренировка: {name}\n"
             f"Тип: {a_type_last}\n"
             f"Длительность: {dur_min} мин\n"
-            f"Дистанция: {dist} км\n"
+            f"{distance_prompt}"
             f"TSS: {tss_last}\n"
-            f"Средняя мощность: {w_avg} Вт\n"
-            f"IF: {if_val}\n"
+            f"{power_prompt}"
             f"Пульс ср/макс: {hr_avg}/{hr_max_act}\n"
             f"Утренняя готовность: {score}/5\n"
-            f"Strength_Feel: {strength_feel}\n"
-            f"Strength_Effort: {strength_effort}\n"
-            f"Ride_Feel: {ride_feel}\n"
-            f"Ride_Effort: {ride_effort}\n\n"
+            f"{subjective_prompt}"
 
             f"ПРАВИЛА РАЗБОРА:\n"
             f"- Это должен быть именно анализ, а не сухое повторение цифр.\n"
@@ -1048,11 +1124,9 @@ def main():
             f"  Shoulders, calves and abs = 4 упражнения на плечи по 4x10, 3 упражнения на икры по 4x15, плюс пресс 2x30.\n"
             f"- Если Strength_Effort высокий или Strength_Feel низкий, значит стандартный объём дался тяжелее обычного.\n"
             f"- Если Strength_Effort умеренный и Strength_Feel высокий, значит объём перенесён хорошо.\n"
-            f"- IF < 0.75 = лёгкая или умеренная работа.\n"
-            f"- IF 0.75-0.85 = уверенная рабочая интенсивность, но не экстремальная.\n"
-            f"- IF 0.86-0.90 = тяжёлая работа.\n"
-            f"- Если IF >= 0.90, прямо говори: работа высокая, близкая к пороговой.\n"
-            f"- Если тренировка короче 30 минут, но IF высокий и мощность высокая, пиши: короткая, но плотная и качественная работа.\n"
+            f"{power_rules_prompt}"
+            f"- Если тренировка короче 30 минут, но интенсивность высокая по мощности или по пульсу, пиши: короткая, но плотная и качественная работа.\n"
+            f"- Если у вело нет мощности, оцени плотность и тяжесть по пульсу, длительности, TSS и субъективной оценке, а не делай вывод по IF.\n"
             f"- Не называй такую работу умеренной.\n"
             f"- Не советуй полный отдых автоматически только из-за одной интенсивной, но короткой тренировки.\n"
             f"- Для завтра выбирай: отдых, Z1 или Z2. Но объясни выбор по нагрузке.\n"
@@ -1071,14 +1145,25 @@ def main():
             f"В конце дай одну короткую сильную фразу на русском."
         )
 
-        fallback_text = (
-            f"1. СТАТУС: Это была рабочая тренировка. "
-            f"IF {if_val} и средняя мощность {w_avg} Вт для {dur_min} минут показывают, что нагрузка была ощутимой, но не обязательно предельной.\n"
-            f"2. ФИДБЕК: Ты ровно провёл сессию и удержал рабочий темп по ходу тренировки. "
-            f"Пульс {hr_avg}/{hr_max_act} и TSS {tss_last} подтверждают качественную нагрузку без явных признаков развала.\n"
-            f"3. ЗАВТРА: Выбор между отдыхом, Z1 или лёгкой Z2 делай по утреннему состоянию. "
-            f"Жёсткий отдых нужен не автоматически, а только если утром просядут HRV, сон или появится заметная тяжесть."
-        )
+        if is_ride and w_avg > 0:
+            fallback_text = (
+                f"1. СТАТУС: Это была рабочая тренировка. "
+                f"IF {if_val} и средняя мощность {w_avg} Вт для {dur_min} минут показывают, что нагрузка была ощутимой, но не обязательно предельной.\n"
+                f"2. ФИДБЕК: Ты ровно провёл сессию и удержал рабочий темп по ходу тренировки. "
+                f"Пульс {hr_avg}/{hr_max_act} и TSS {tss_last} подтверждают качественную нагрузку без явных признаков развала.\n"
+                f"3. ЗАВТРА: Выбор между отдыхом, Z1 или лёгкой Z2 делай по утреннему состоянию. "
+                f"Жёсткий отдых нужен не автоматически, а только если утром просядут HRV, сон или появится заметная тяжесть."
+            )
+        else:
+            fallback_text = (
+                f"1. СТАТУС: Это была рабочая тренировка. "
+                f"Длительность {dur_min} минут и TSS {tss_last} показывают, что нагрузка была ощутимой, но не обязательно предельной.\n"
+                f"2. ФИДБЕК: Ты ровно провёл сессию и удержал рабочий темп по ходу тренировки. "
+                f"Пульс {hr_avg}/{hr_max_act} и TSS {tss_last} подтверждают качественную нагрузку без явных признаков развала.\n"
+                f"3. ЗАВТРА: Выбор между отдыхом, Z1 или лёгкой Z2 делай по утреннему состоянию. "
+                f"Жёсткий отдых нужен не автоматически, а только если утром просядут HRV, сон или появится заметная тяжесть."
+            )
+            
         ai_msg = ask_arnie(prompt, fallback_text)
 
         subjective_line = ""
@@ -1087,9 +1172,14 @@ def main():
         elif is_ride:
             subjective_line = f"🚴 Вело: Feel {ride_feel if ride_feel > 0 else 'н/д'} | Effort {ride_effort if ride_effort > 0 else 'н/д'}\n"
 
+        if is_ride:
+            header_line = f"📍 {dist} км | ⏱ {dur_min} мин"
+        else:
+            header_line = f"⏱ {dur_min} мин"
+
         report = (f"🏃 ТРЕНИРОВКА {status_icon}\n\n"
                   f"<b>{html.escape(name)}</b>\n"
-                  f"📍 {dist} км | ⏱ {dur_min} мин \n"
+                  f"{header_line}\n"
                   f"📈 TSS: {tss_last}\n"
                   f"{subjective_line}\n"
                   f"🤖 АРНИ:\n{ai_msg}")
