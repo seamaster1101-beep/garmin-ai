@@ -494,7 +494,7 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
         elif tsb > 5:
             recovery_h -= 1
 
-        return max(0, min(72, round(recovery_h)))
+        return max(0, min(72, int(recovery_h)))
 
     # --- ВЕТКА 2: если нет вчерашнего recovery, считаем только вклад вчерашних тренировок ---
     if not yesterday_acts:
