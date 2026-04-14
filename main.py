@@ -324,6 +324,73 @@ def get_yesterday_recovery_from_sheet(target_date):
 
     return None
 
+def get_morning_datetime_from_sheet(target_date):
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        all_values = sheet.get_all_values()
+
+        if not all_values or len(all_values) < 2:
+            return None
+
+        header = [str(h).replace('\xa0', '').replace("'", "").strip() for h in all_values[0]]
+
+        if "Date" not in header:
+            print("⚠️ В таблице не найдена колонка Date")
+            return None
+
+        date_idx = header.index("Date")
+
+        for row in reversed(all_values[1:]):
+            if len(row) <= date_idx:
+                continue
+
+            row_date = str(row[date_idx]).replace("'", "").strip()
+
+            if row_date.startswith(target_date):
+                try:
+                    return datetime.strptime(row_date[:16], "%Y-%m-%d %H:%M")
+                except Exception:
+                    try:
+                        return datetime.strptime(row_date[:19], "%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        return None
+
+    except Exception as e:
+        print(f"⚠️ Morning datetime read error: {e}")
+
+    return None
+
+def get_last_activity_end_yesterday(acts, yesterday_str):
+    last_end = None
+
+    for a in acts:
+        if a.get("start_date_local", "")[:10] != yesterday_str:
+            continue
+        if a.get("type") in ["Walk", "Hike"]:
+            continue
+
+        start_str = a.get("start_date_local", "")
+        dur_sec = a.get("moving_time", 0) or 0
+
+        if not start_str or dur_sec <= 0:
+            continue
+
+        try:
+            start_dt = datetime.strptime(start_str[:19], "%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            try:
+                start_dt = datetime.strptime(start_str[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+
+        end_dt = start_dt + timedelta(seconds=dur_sec)
+
+        if last_end is None or end_dt > last_end:
+            last_end = end_dt
+
+    return last_end
+
 def estimate_performance(activities, weight):
     vals_vo2 = []
     hr_max = 208 - (0.7 * get_bio_age())
@@ -361,39 +428,15 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
     yesterday_str = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     y_recovery = get_yesterday_recovery_from_sheet(yesterday_str)
 
-    # --- ВЕТКА 1: продолжаем вчерашний recovery ---
-    if y_recovery is not None and y_recovery > 0:
-        hours_passed = 14 # для утреннего запуска считаем, что за ночь списалось ~8 часов
+    yesterday_wake_dt = get_morning_datetime_from_sheet(yesterday_str)
+    today_wake_dt = get_morning_datetime_from_sheet(today_str)
+    last_end_dt = get_last_activity_end_yesterday(acts, yesterday_str)
 
-        recovery_h = y_recovery - hours_passed
-
-        # мягкая коррекция по утреннему состоянию
-        if hrv > 95:
-            recovery_h -= 1
-        elif hrv < 50:
-            recovery_h += 2
-
-        if rhr <= 48:
-            recovery_h -= 1
-        elif rhr >= 55:
-            recovery_h += 2
-
-        if tsb < -10:
-            recovery_h += 2
-        elif tsb > 5:
-            recovery_h -= 1
-
-        return max(0, min(72, round(recovery_h)))
-
-    # --- ВЕТКА 2: если нет вчерашнего recovery, считаем по ВСЕМ вчерашним тренировкам ---
     yesterday_acts = [
         a for a in acts
         if a.get("start_date_local", "")[:10] == yesterday_str
         and a.get("type") not in ["Walk", "Hike"]
     ]
-
-    if not yesterday_acts:
-        return 0
 
     base_rec = 0.0
 
@@ -424,6 +467,39 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
 
         base_rec += rec_add
 
+    # --- ВЕТКА 1: продолжаем вчерашний recovery по реальному времени ---
+    if y_recovery is not None and y_recovery > 0 and yesterday_wake_dt and today_wake_dt and last_end_dt:
+        carryover_to_last_end = max(
+            0,
+            y_recovery - ((last_end_dt - yesterday_wake_dt).total_seconds() / 3600)
+        )
+
+        recovery_h = carryover_to_last_end + base_rec - (
+            (today_wake_dt - last_end_dt).total_seconds() / 3600
+        )
+
+        # мягкая коррекция по утреннему состоянию
+        if hrv > 95:
+            recovery_h -= 1
+        elif hrv < 50:
+            recovery_h += 2
+
+        if rhr <= 48:
+            recovery_h -= 1
+        elif rhr >= 55:
+            recovery_h += 2
+
+        if tsb < -10:
+            recovery_h += 2
+        elif tsb > 5:
+            recovery_h -= 1
+
+        return max(0, min(72, round(recovery_h)))
+
+    # --- ВЕТКА 2: если нет вчерашнего recovery, считаем только вклад вчерашних тренировок ---
+    if not yesterday_acts:
+        return 0
+        
     adj = 0
 
     if hrv < 40:
