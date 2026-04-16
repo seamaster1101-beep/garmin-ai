@@ -40,6 +40,9 @@ def safe_float(val, default=0.0, allow_negative=False):
     except:
         return default
 
+def power_is_trusted(a):
+    return a.get("type") == "VirtualRide"
+
 def get_hrv_14d_avg_from_sheet(sheet, today_str):
     try:
         all_values = sheet.get_all_values()
@@ -399,7 +402,7 @@ def estimate_performance(activities, weight):
         weight = 88.0
 
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
-        if a.get("type") not in ["Ride", "VirtualRide"]:
+        if not power_is_trusted(a):
             continue
 
         w = safe_float(a.get("average_watts"), 0)
@@ -451,7 +454,7 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
             w_avg = safe_float(a.get("average_watts"), 0)
             hr_a = safe_float(a.get("average_heartrate"), 0)
 
-            if w_avg > 0 and ftp > 0:
+            if power_is_trusted(a) and w_avg > 0 and ftp > 0:
                 tss_last = (t_sec / 3600) * (w_avg / ftp) ** 2 * 100
                 rec_add = tss_last * 0.30
             elif hr_a > 0:
@@ -654,7 +657,7 @@ def main():
             w = safe_float(a.get("average_watts"), 0)
             hr_a = safe_float(a.get("average_heartrate"), 0)
 
-            if w > 0:
+            if power_is_trusted(a) and w > 0:
                 tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1)
             elif hr_a > 0:
                 base = (t_sec / 60) * 0.35
@@ -761,7 +764,7 @@ def main():
                 w = safe_float(a.get("average_watts"), 0)
                 hr_a = safe_float(a.get("average_heartrate"), 0)
 
-                if w > 0:
+                if power_is_trusted(a) and w > 0:
                     tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1)
                 elif hr_a > 0:
                     base = (t_sec / 60) * 0.35
@@ -1121,6 +1124,7 @@ def main():
         dur_min = round(t_sec / 60, 1)
         is_ride = a_type_last in ["Ride", "VirtualRide"]
         is_strength = a_type_last in ["Weight Training", "Workout", "WeightTraining", "Gym"]
+        power_trusted = power_is_trusted(last)
         
         # Собираем данные интенсивности
         w_avg = safe_float(last.get("average_watts"), 0)
@@ -1133,7 +1137,7 @@ def main():
         else:
             distance_prompt = ""
 
-        if is_ride and w_avg > 0:
+        if is_ride and power_trusted and w_avg > 0:
             power_prompt = (
                 f"Средняя мощность: {w_avg} Вт\n"
                 f"IF: {if_val}\n"
@@ -1153,7 +1157,7 @@ def main():
         
         # Расчет TSS
         if a_type_last in ["Ride", "VirtualRide"]:
-            if w_avg > 0:
+            if power_trusted and w_avg > 0:
                 tss_last = round((t_sec / 3600) * (w_avg / FTP_GARMIN) ** 2 * 100, 1)
             elif hr_avg > 0:
                 base = (t_sec / 60) * 0.35
@@ -1166,6 +1170,7 @@ def main():
                 tss_last = round(base, 1)
             else:
                 tss_last = 0
+                
         elif a_type_last in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
             base = (t_sec / 60) * 0.45
 
@@ -1249,7 +1254,7 @@ def main():
             f"В конце дай одну короткую сильную фразу на русском."
         )
 
-        if is_ride and w_avg > 0:
+        if is_ride and power_trusted and w_avg > 0:
             fallback_text = (
                 f"1. СТАТУС: Это была рабочая тренировка. "
                 f"IF {if_val} и средняя мощность {w_avg} Вт для {dur_min} минут показывают, что нагрузка была ощутимой, но не обязательно предельной.\n"
