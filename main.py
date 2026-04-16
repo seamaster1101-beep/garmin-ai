@@ -641,18 +641,6 @@ def main():
     # Оставляем только один расчет today_acts здесь
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
 
-    print(f"DEBUG today={today}")
-    print(f"DEBUG activities_count={len(activities)}")
-    print(f"DEBUG today_acts_count={len(today_acts)}")
-
-    for a in activities[:10]:
-        print(
-            "DEBUG activity:",
-            a.get("name"),
-            "| type=", a.get("type"),
-            "| start_date_local=", a.get("start_date_local")
-        )
-
     ctl, atl = 0, 0
 
     # 2. Цикл накопления (проходим по всей истории)
