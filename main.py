@@ -1303,6 +1303,11 @@ def main():
         elif is_ride:
             subjective_line = f"🚴 Вело: Feel {ride_feel if ride_feel > 0 else 'н/д'} | Effort {ride_effort if ride_effort > 0 else 'н/д'}\n"
 
+        ftp_context_line = ""
+        if is_ride and eftp_val is not None and eftp_val > 0:
+            delta = int(round(eftp_val - FTP_GARMIN))
+            ftp_context_line = f"🚴 FTP/eFTP: {FTP_GARMIN}/{int(round(eftp_val))} ({delta:+})\n"
+
         if is_ride:
             header_line = f"📍 {dist} км | ⏱ {dur_min} мин"
         else:
@@ -1310,6 +1315,7 @@ def main():
 
         report = (f"🏃 ТРЕНИРОВКА {status_icon}\n\n"
                   f"<b>{html.escape(name)}</b>\n"
+                  f"{ftp_context_line}"
                   f"{header_line}\n"
                   f"📈 TSS: {tss_last}\n"
                   f"{subjective_line}\n"
