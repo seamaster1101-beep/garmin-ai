@@ -81,6 +81,58 @@ def get_hrv_14d_avg_from_sheet(sheet, today_str):
 
     return 85.0
 
+def get_eftp_trend_from_sheet(sheet, today_str, current_eftp, lookback=7):
+    try:
+        if not sheet or not current_eftp:
+            return "", None
+
+        all_values = sheet.get_all_values()
+        if not all_values or len(all_values) < 2:
+            return "", None
+
+        header = [str(h).replace('\xa0', '').strip() for h in all_values[0]]
+
+        if "Date" not in header or "eFTP_Strava" not in header:
+            return "", None
+
+        date_idx = header.index("Date")
+        eftp_idx = header.index("eFTP_Strava")
+
+        vals = []
+        for row in reversed(all_values[1:]):
+            if len(row) <= max(date_idx, eftp_idx):
+                continue
+
+            row_date = str(row[date_idx]).strip()
+            if row_date.startswith(today_str):
+                continue
+
+            v = safe_float(row[eftp_idx], 0)
+            if v > 0:
+                vals.append(v)
+
+            if len(vals) >= lookback:
+                break
+
+        if len(vals) < 3:
+            return "", None
+
+        prev_avg = round(sum(vals) / len(vals), 1)
+        delta = round(current_eftp - prev_avg, 1)
+
+        if delta >= 3:
+            arrow = "↑"
+        elif delta <= -3:
+            arrow = "↓"
+        else:
+            arrow = "→"
+
+        return f" {arrow}{delta:+.1f}/7д", prev_avg
+
+    except Exception as e:
+        print(f"⚠️ eFTP trend error: {e}")
+        return "", None
+
 def send_tg(msg):
     if len(msg) > 4000: 
         msg = msg[:3900]
@@ -743,6 +795,10 @@ def main():
 
         update_recovery_in_sheet(today, recovery_h)
 
+    eftp_trend_text = ""
+    if sheet and eftp_val is not None and eftp_val > 0:
+        eftp_trend_text, _ = get_eftp_trend_from_sheet(sheet, today, eftp_val)
+
     if eftp_val is not None and eftp_val > 0:
         delta = int(round(eftp_val - FTP_GARMIN))
 
@@ -755,7 +811,7 @@ def main():
         else:
             eftp_icon = "🚀"
 
-        ftp_line = f"🚴 FTP: {FTP_GARMIN} | ⚡ {int(round(eftp_val))} ({delta:+}) {eftp_icon}"
+        ftp_line = f"🚴 FTP/eFTP: {FTP_GARMIN}/{int(round(eftp_val))} ({delta:+}) {eftp_icon}{eftp_trend_text}"
     else:
         ftp_line = f"🚴 FTP: {FTP_GARMIN}"
         
@@ -1306,7 +1362,7 @@ def main():
         ftp_context_line = ""
         if is_ride and eftp_val is not None and eftp_val > 0:
             delta = int(round(eftp_val - FTP_GARMIN))
-            ftp_context_line = f"🚴 FTP/eFTP: {FTP_GARMIN}/{int(round(eftp_val))} ({delta:+})\n"
+            ftp_context_line = f"🚴 FTP/eFTP: {FTP_GARMIN}/{int(round(eftp_val))} ({delta:+}){eftp_trend_text}\n"
 
         if is_ride:
             header_line = f"📍 {dist} км | ⏱ {dur_min} мин"
