@@ -606,6 +606,8 @@ def main():
     tsb_raw = morning.get("TSB_Garmin", None)
     tsb_garmin = safe_float(tsb_raw, 999, allow_negative=True)
     weight = safe_float(morning.get("Weight"), 88.0)
+    eftp_sheet = safe_float(morning.get("eFTP_Strava"), 0)
+    
     if weight > 500: weight /= 10
     fat = safe_float(morning.get("Body_Fat"), 18.3)
     if fat > 100: fat /= 10
@@ -637,6 +639,8 @@ def main():
         
     # Расчет производительности (обязательно!)
     vo2_val, eftp_val = estimate_performance(activities, weight=weight)
+    if (eftp_val is None or eftp_val <= 0) and eftp_sheet > 0:
+        eftp_val = int(round(eftp_sheet))
     
     # Оставляем только один расчет today_acts здесь
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
@@ -694,7 +698,7 @@ def main():
         ctl *= 0.98
         atl *= 0.90
         
-    tsb = round(ctl - atl, 1)    
+    tsb = round(ctl - atl, 1)
     tsb_strava = tsb
     
     if tsb_garmin != 999:
@@ -702,9 +706,9 @@ def main():
 
     update_tsb_strava_in_sheet(today, tsb_strava)
 
-    if eftp_val:
+    if eftp_val is not None and eftp_val > 0:
         update_eftp_in_sheet(today, eftp_val)
-    
+
     # Recovery fallback: если из Morning не пришло значение, считаем сами
     if not recovery_present:
         recovery_h = estimate_recovery_hours(
@@ -733,15 +737,28 @@ def main():
                 if y_row:
                     y_recovery = int(float(y_row.get("Recovery_Time") or 0))
                     if y_recovery > 0 and recovery_h > y_recovery:
-                        ##print(f"DEBUG recovery_h capped by yesterday: {recovery_h} -> {y_recovery}")
                         recovery_h = y_recovery
         except Exception as e:
             print(f"⚠️ Recovery guard error: {e}")
 
         update_recovery_in_sheet(today, recovery_h)
 
-        ##print(f"DEBUG recovery_h estimated: {recovery_h}")
-    
+    if eftp_val is not None and eftp_val > 0:
+        delta = int(round(eftp_val - FTP_GARMIN))
+
+        if delta <= -15:
+            eftp_icon = "🔴"
+        elif delta <= -7:
+            eftp_icon = "🟡"
+        elif delta <= 5:
+            eftp_icon = "🟢"
+        else:
+            eftp_icon = "🚀"
+
+        ftp_line = f"🚴 FTP: {FTP_GARMIN} | ⚡ {int(round(eftp_val))} ({delta:+}) {eftp_icon}"
+    else:
+        ftp_line = f"🚴 FTP: {FTP_GARMIN}"
+        
     # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30 UTC+2) ---
     if now_dt.hour > 19 or (now_dt.hour == 19 and now_dt.minute >= 30):
 
@@ -864,7 +881,7 @@ def main():
 
         report = (
             f"🌙 ИТОГИ ДНЯ \n\n"
-            f"⚡️ FTP: {FTP_GARMIN}\n"
+            f"{ftp_line}\n"
             f"🏋️ Тренировок: {len(day_acts)}\n"
             f"🚶 Всего активностей: {len(all_day_acts)}\n"
             f"⏱ Общее время: {total_minutes} мин\n"
@@ -1083,22 +1100,6 @@ def main():
             s_status = "Средне"
         else:
             s_status = "Отлично"
-
-        if eftp_val:
-            delta = eftp_val - FTP_GARMIN
-
-            if delta <= -15:
-                eftp_icon = "🔴"
-            elif delta <= -7:
-                eftp_icon = "🟡"
-            elif delta <= 5:
-                eftp_icon = "🟢"
-            else:
-                eftp_icon = "🚀"
-       
-            ftp_line = f"🚴 FTP: {FTP_GARMIN} | ⚡ {eftp_val} ({delta:+}) {eftp_icon}"
-        else:
-            ftp_line = f"🚴 FTP: {FTP_GARMIN}"
 
         # 2. И только потом используем его в отчете
  
