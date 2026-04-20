@@ -825,8 +825,8 @@ def main():
     else:
         ftp_line = f"🚴 FTP: {FTP_GARMIN}"
         
-    # --- ВЕЧЕРНИЙ ОТЧЁТ (после 21:30 UTC+2) ---
-    if now_dt.hour > 19 or (now_dt.hour == 19 and now_dt.minute >= 30):
+    # --- ВЕЧЕРНИЙ ОТЧЁТ (после 20:30 UTC+2) ---
+    if now_dt.hour > 18 or (now_dt.hour == 19 and now_dt.minute >= 30):
 
         all_day_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
         day_acts = [a for a in all_day_acts if a.get("type") not in ["Walk", "Hike"]]
