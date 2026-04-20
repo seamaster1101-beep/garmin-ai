@@ -793,6 +793,16 @@ def main():
         except Exception as e:
             print(f"⚠️ Recovery guard error: {e}")
 
+        # Финальная развязка: если утро явно свежее, мелкий остаток recovery обнуляем
+        if (
+            0 < recovery_h <= 8
+            and rhr <= 48
+            and hrv >= 60
+            and tsb >= 5
+            and sleep_score >= 80
+        ):
+            recovery_h = 0
+
         update_recovery_in_sheet(today, recovery_h)
 
     eftp_trend_text = ""
