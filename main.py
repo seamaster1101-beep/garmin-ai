@@ -41,7 +41,23 @@ def safe_float(val, default=0.0, allow_negative=False):
         return default
 
 def power_is_trusted(a):
-    return a.get("type") == "VirtualRide"
+    w = safe_float(a.get("average_watts"), 0)
+    if w <= 0:
+        return False
+
+    name = str(a.get("name", "")).lower()
+    sport_type = str(a.get("sport_type", "")).lower()
+
+    return (
+        a.get("type") == "VirtualRide"
+        or sport_type == "virtualride"
+        or bool(a.get("device_watts"))
+        or bool(a.get("trainer"))
+        or "зальный велоспорт" in name
+        or "indoor" in name
+        or "virtual" in name
+        or "technogym" in name
+    )
 
 def get_hrv_14d_avg_from_sheet(sheet, today_str):
     try:
@@ -826,7 +842,7 @@ def main():
         ftp_line = f"🚴 FTP: {FTP_GARMIN}"
         
     # --- ВЕЧЕРНИЙ ОТЧЁТ (после 20:30 UTC+2) ---
-    if now_dt.hour > 18 or (now_dt.hour == 18 and now_dt.minute >= 30):
+    if now_dt.hour > 22 or (now_dt.hour == 22 and now_dt.minute >= 30):
 
         all_day_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today]
         day_acts = [a for a in all_day_acts if a.get("type") not in ["Walk", "Hike"]]
