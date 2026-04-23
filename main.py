@@ -723,9 +723,8 @@ def main():
     recovery_present = recovery_raw is not None and recovery_raw_str not in ["", "None", "Н/Д"]
         
     # Расчет производительности (обязательно!)
-    vo2_val, eftp_val = estimate_performance(activities, weight=weight)
-    if (eftp_val is None or eftp_val <= 0) and eftp_sheet > 0:
-        eftp_val = int(round(eftp_sheet))
+    vo2_val, eftp_calc_val = estimate_performance(activities, weight=weight)
+    eftp_val = int(round(eftp_calc_val)) if eftp_calc_val is not None and eftp_calc_val > 0 else None
     
     # Оставляем только один расчет today_acts здесь
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
@@ -1422,9 +1421,11 @@ def main():
             subjective_line = f"🚴 Вело: Feel {ride_feel if ride_feel > 0 else 'н/д'} | Effort {ride_effort if ride_effort > 0 else 'н/д'}\n"
 
         ftp_context_line = ""
-        if is_ride and eftp_val is not None and eftp_val > 0:
-            delta = int(round(eftp_val - FTP_GARMIN))
-            ftp_context_line = f"🚴 FTP/eFTP: {FTP_GARMIN}/{int(round(eftp_val))} ({delta:+}){eftp_trend_text}\n"
+        if is_ride and eftp_is_eligible(last) and eftp_val is not None and eftp_val > 0:
+           delta = int(round(eftp_val - FTP_GARMIN))
+           ftp_context_line = f"🚴 FTP/eFTP: {FTP_GARMIN}/{int(round(eftp_val))} ({delta:+}){eftp_trend_text}\n"
+        elif is_ride:
+           ftp_context_line = f"🚴 FTP: {FTP_GARMIN}\n"
 
         if is_ride:
             header_line = f"📍 {dist} км | ⏱ {dur_min} мин"
