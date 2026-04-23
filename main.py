@@ -59,6 +59,23 @@ def power_is_trusted(a):
         or "technogym" in name
     )
 
+def eftp_is_eligible(a):
+    if not power_is_trusted(a):
+        return False
+
+    t_sec = a.get("moving_time", 0) or 0
+    w = safe_float(a.get("average_watts"), 0)
+    hr = safe_float(a.get("average_heartrate"), 0)
+
+    if t_sec < 30 * 60:   # меньше 30 минут не берём для eFTP
+        return False
+    if w < 120:
+        return False
+    if hr < 115:
+        return False
+
+    return True
+
 def get_hrv_14d_avg_from_sheet(sheet, today_str):
     try:
         all_values = sheet.get_all_values()
@@ -306,7 +323,7 @@ def update_eftp_in_sheet(target_date, eftp_val):
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
         dates = sheet.col_values(1)
         for i, val in enumerate(dates):
-            if target_date in val:
+            if str(val).startswith(target_date):
                 header = sheet.row_values(1)
                 header = [h.replace('\xa0', '').strip() for h in header]
 
@@ -470,7 +487,7 @@ def estimate_performance(activities, weight):
         weight = 88.0
 
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
-        if not power_is_trusted(a):
+        if not eftp_is_eligible(a):
             continue
 
         w = safe_float(a.get("average_watts"), 0)
