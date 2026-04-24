@@ -1185,16 +1185,50 @@ def main():
     vo2_source = "Garmin" if vo2_garmin > 0 else "Strava"
 
     # 4. РАСЧЕТ FIT AGE
-    rhr_f = (51 - rhr) * 0.3
-    base_age = get_bio_age() + (fat - 22) * 0.5 - (vo2_calc - 32) * 1.2 - rhr_f
+    base_age = (
+        get_bio_age()
+        - (vo2_calc - 35) * 0.75
+        + (fat - 18) * 0.30
+        + (rhr - 51) * 0.25
+    )
 
-    hrv_base = hrv_14d_avg if hrv_14d_avg > 0 else 85
-    h_p = max(-0.7, min(0.7, -((hrv - hrv_base) / hrv_base) * 2))
-    r_p = max(-0.3, min(0.3, (rhr - 51) * 0.04))
-    s_p = 0.7 if 0 < sleep_score < 60 else 0.3 if sleep_score < 75 else 0
+    freshness_adj = 0.0
 
-    f_age = round(base_age + h_p + r_p + s_p, 1)
-    f_age = round(max(47.0, min(get_bio_age() - 2, f_age)), 1)
+    # HRV относительно твоего 14-дневного тренда
+    if hrv_14d_avg > 0:
+        hrv_delta = hrv - hrv_14d_avg
+
+        if hrv_delta >= 20:
+            freshness_adj -= 0.8
+        elif hrv_delta >= 10:
+            freshness_adj -= 0.5
+        elif hrv_delta <= -20:
+            freshness_adj += 0.8
+        elif hrv_delta <= -10:
+            freshness_adj += 0.5
+
+    # Сон
+    if sleep_score >= 75:
+        freshness_adj -= 0.1
+    elif 0 < sleep_score < 60:
+        freshness_adj += 0.5
+
+    # Recovery
+    if recovery_h <= 6:
+        freshness_adj -= 0.3
+    elif recovery_h > 24:
+        freshness_adj += 0.5
+    elif recovery_h > 12:
+        freshness_adj += 0.2
+
+    # TSB
+    if tsb > 5:
+        freshness_adj -= 0.2
+    elif tsb < -10:
+        freshness_adj += 0.4
+
+    f_age_raw = base_age + freshness_adj
+    f_age = round(max(49.0, min(get_bio_age() - 1.0, f_age_raw)), 1)
 
     ##if eftp_val:
         ##update_eftp_in_sheet(today, eftp_val)
