@@ -698,8 +698,30 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
 
         return max(0, min(72, int(recovery_h)))
 
-    # --- ВЕТКА 2: если нет вчерашнего recovery, считаем только вклад вчерашних тренировок ---
+    # --- ВЕТКА 2: если вчера тренировок не было, догорает только старый recovery ---
     if not yesterday_acts:
+        if y_recovery is not None and y_recovery > 0 and yesterday_wake_dt and today_wake_dt:
+            recovery_h = y_recovery - (
+                (today_wake_dt - yesterday_wake_dt).total_seconds() / 3600
+            )
+
+            if hrv > 95:
+                recovery_h -= 1
+            elif hrv < 50:
+                recovery_h += 2
+
+            if rhr <= 48:
+                recovery_h -= 1
+            elif rhr >= 55:
+                recovery_h += 2
+
+            if tsb < -10:
+                recovery_h += 2
+            elif tsb > 5:
+                recovery_h -= 1
+
+            return max(0, min(72, int(recovery_h)))
+
         return 0
         
     adj = 0
@@ -1157,43 +1179,25 @@ def main():
         rec_text = f"{recovery_h}ч 🟡 (лёгкая усталость)"
     else:
         rec_text = f"{recovery_h}ч 🟢 (свежесть)"
-    
-    # --- 1. БАЗОВАЯ ФОРМА (Долгосрочная) ---
-    ##vo2_calc = vo2_val if vo2_val else 32.7
+
+    # --- БАЗА ДЛЯ VO2 / FIT AGE ---
     vo2_calc = vo2_garmin if vo2_garmin > 0 else (vo2_val if vo2_val else 32.7)
     vo2_source = "Garmin" if vo2_garmin > 0 else "Strava"
 
-    # Добавляем влияние пульса (чем ниже — тем моложе)
-    rhr_factor = (51 - rhr) * 0.3
+    # 4. РАСЧЕТ FIT AGE
+    rhr_f = (51 - rhr) * 0.3
+    base_age = get_bio_age() + (fat - 22) * 0.5 - (vo2_calc - 32) * 1.2 - rhr_f
 
-    base_age = (
-        get_bio_age()
-        + (fat - 22) * 0.5
-        - (vo2_calc - 32) * 1.2
-        - rhr_factor
-    )
+    hrv_base = hrv_14d_avg if hrv_14d_avg > 0 else 85
+    h_p = max(-0.7, min(0.7, -((hrv - hrv_base) / hrv_base) * 2))
+    r_p = max(-0.3, min(0.3, (rhr - 51) * 0.04))
+    s_p = 0.7 if 0 < sleep_score < 60 else 0.3 if sleep_score < 75 else 0
 
-    # --- 2. КОРРЕКЦИЯ СОСТОЯНИЯ (Краткосрочная) ---
-    # HRV — смягчаем влияние (убираем "жадность")
-    hrv_dev = (hrv - 85) / 85
-    hrv_penalty = max(-0.7, min(0.7, -hrv_dev * 2))
-
-    # Пульс — лёгкая коррекция (не дублируем сильно base)
-    rhr_penalty = max(-0.3, min(0.3, (rhr - 51) * 0.04))
-
-    # Сон — уменьшаем штраф
-    sleep_p = 0.7 if 0 < sleep_score < 60 else 0.3 if sleep_score < 75 else 0
-
-    # --- 3. ИТОГ ---
-    f_age = round(base_age + hrv_penalty + rhr_penalty + sleep_p, 1)
-
-    # Более реалистичный диапазон
-    f_age = round(max(52.0, min(get_bio_age() - 2, f_age)), 1)
+    f_age = round(base_age + h_p + r_p + s_p, 1)
+    f_age = round(max(47.0, min(get_bio_age() - 2, f_age)), 1)
 
     ##if eftp_val:
         ##update_eftp_in_sheet(today, eftp_val)
-
-    # 6. --- ПРОМПТ И ОТЧЕТ (VERBATIM GITHUB) ---# Report
 
     if score >= 4.8:
         status_icon = "🔥🏆"
