@@ -114,6 +114,46 @@ def get_hrv_14d_avg_from_sheet(sheet, today_str):
 
     return 85.0
 
+def get_7d_load_from_activities(activities, today_str):
+    vals = []
+
+    for a in activities:
+        date = a.get("start_date_local", "")[:10]
+        if date == today_str:
+            continue
+
+        t_sec = a.get("moving_time", 0) or 0
+        if t_sec <= 0:
+            continue
+
+        a_type = a.get("type")
+
+        if a_type in ["Ride", "VirtualRide"]:
+            w = safe_float(a.get("average_watts"), 0)
+            hr_a = safe_float(a.get("average_heartrate"), 0)
+
+            if power_is_trusted(a) and w > 0:
+                tss = (t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100
+            elif hr_a > 0:
+                tss = (t_sec / 60) * 0.35
+            else:
+                continue
+
+        elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
+            tss = (t_sec / 60) * 0.45
+
+        else:
+            continue
+
+        vals.append(tss)
+
+    if not vals:
+        return 0, 0
+
+    last7 = vals[-7:]
+    avg7 = round(sum(last7) / len(last7), 1)
+    return avg7, round(sum(last7), 1)
+
 def get_eftp_trend_from_sheet(sheet, today_str, current_eftp, lookback=7):
     try:
         if not sheet or not current_eftp:
@@ -677,9 +717,8 @@ def main():
                     break
 
            if not morning:
-                last_row = all_values[-1]
-                morning = {header[i]: last_row[i] if i < len(last_row) else "" for i in range(len(header))}
-
+                print(f"⚠️ Morning: строки за сегодня {today} нет. Использую пустые/default значения, а не старую строку.")
+                morning = {}
         
     except Exception as e:
         print(f"❌ Sheets fail: {e}")
@@ -728,6 +767,7 @@ def main():
     
     # Оставляем только один расчет today_acts здесь
     today_acts = [a for a in activities if a.get("start_date_local", "")[:10] == today and a.get("type") not in ["Walk", "Hike"]]
+    tss7_avg, tss7_sum = get_7d_load_from_activities(activities, today)
 
     ctl, atl = 0, 0
 
@@ -929,7 +969,8 @@ def main():
         total_minutes = round(total_minutes, 1)
 
         acts_text = "\n".join(details) if details else "Сегодня без тренировок."
-
+        
+        #---END OF DAY REPORT
         prompt = (
             f"Ты — АРНИ, стиль: коротко, точно, уверенно. "
             f"Атлет {round(get_bio_age())} лет.\n"
@@ -939,6 +980,8 @@ def main():
             f"Всего активностей: {len(all_day_acts)}\n"
             f"Общее время: {total_minutes} мин\n"
             f"Суммарный TSS: {total_tss}\n"
+            f"Нагрузка 7д: {tss7_sum} (ср {tss7_avg})\n"
+            f"\nАКТИВНОСТИ ДНЯ:\n{acts_text}\n"
 
             f"HRV {int(hrv)}, Пульс {int(rhr)}, Сон {sleep}ч, "
             f"Recovery {recovery_h}ч, TSB {tsb}, "
@@ -1139,7 +1182,8 @@ def main():
             sleep_note = "- Сон немного ограничен. Работай в Z2, Z3 — умеренно и без агрессии.\n"
         else:
             sleep_note = ""
-
+        
+        #---MORNING REPORT
         prompt = (
             f"Ты — АРНИ, стиль: жесткий, лаконичный, уверенный тренер. "
             f"Без хамства, без крика, без панибратства. "
@@ -1149,6 +1193,9 @@ def main():
             f"ДАННЫЕ: HRV {int(hrv)}, Пульс {int(rhr)}, Сон {sleep}ч (Глубокий: {deep_sleep}ч), "
             f"Sleep Score: {sleep_score}, Recovery: {recovery_h}ч, TSB {tsb}, Готовность {score}/5. "
             f"Fit Age {f_age}. VO2max: {vo2_calc}. "
+
+            f"Нагрузка 7д: {tss7_sum} (ср {tss7_avg})\n"
+            f"HRV тренд: {int(hrv)} vs ср {int(hrv_14d_avg)}\n"
 
             f"\nПРАВИЛА АНАЛИЗА:\n"
             f"{sleep_note}"
@@ -1303,6 +1350,7 @@ def main():
             subjective_prompt = ""
 
         # Формируем умный промпт для анализа нагрузки
+        #---ACTIVITY REPORT
         prompt = (
             f"Ты — АРНИ, точный, уверенный, опытный тренер. "
             f"Пиши спокойно, плотно и по делу. "
@@ -1384,11 +1432,8 @@ def main():
             f"- После короткой, но интенсивной велосессии длительностью около 20-30 минут с IF около 0.85-0.90 и TSS около 25-35 не назначай строго только Z1 как единственный вариант. Базовый вывод на завтра — Z1 или лёгкая Z2, если нет явных признаков накопленной усталости.\n"
             f"- Формулировки для завтра не делай слишком узкими без явных причин. Если восстановление выглядит нормальным, пиши: Z1 или лёгкая Z2, а не только Z1.\n"
             f"- В пункте ЗАВТРА опирайся только на текущую анализируемую тренировку и текущее состояние. Не пиши про вчерашнюю работу, если она явно не дана во входных данных.\n"
+            f"- Если IF высокий, но TSS невысокий из-за короткой длительности, пиши: короткая, но плотная рабочая сессия; суммарный стресс невысокий, но интенсивность заметная.\n"
             
-            f"- Если у велотренировки есть trusted power, обязательно учитывай распределение нагрузки по мощности и не делай вывод только по низкому TSS.\n"
-            f"- Короткая тренировка с низким TSS может быть всё равно рабочей по характеру, если значимая часть времени прошла в sweet spot / threshold / Z4 power.\n"
-            f"- Если почти половина тренировки или около того пришлась на Z4 power, не называй такую сессию восстановительной, даже если она короткая.\n"
-            f"- В таком случае пиши: короткая, но плотная рабочая сессия; суммарный стресс невысокий из-за длительности, но интенсивность заметная.\n"
             f"ОТВЕТ СТРОГО ПО ПУНКТАМ:\n"
             f"1. СТАТУС:\n"
             f"2. ФИДБЕК:\n"
