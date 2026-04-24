@@ -115,11 +115,27 @@ def get_hrv_14d_avg_from_sheet(sheet, today_str):
     return 85.0
 
 def get_7d_load_from_activities(activities, today_str):
-    vals = []
+    """
+    TSS за последние 7 календарных дней до сегодня.
+    Сегодня исключаем, чтобы утром не мешать текущую активность с базовой формой.
+    """
+    vals_by_day = {}
+
+    try:
+        today_dt = datetime.strptime(today_str, "%Y-%m-%d").date()
+        start_dt = today_dt - timedelta(days=7)
+    except Exception:
+        return 0, 0
 
     for a in activities:
-        date = a.get("start_date_local", "")[:10]
-        if date == today_str:
+        date_str = a.get("start_date_local", "")[:10]
+
+        try:
+            act_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            continue
+
+        if not (start_dt <= act_date < today_dt):
             continue
 
         t_sec = a.get("moving_time", 0) or 0
@@ -127,6 +143,7 @@ def get_7d_load_from_activities(activities, today_str):
             continue
 
         a_type = a.get("type")
+        tss = 0
 
         if a_type in ["Ride", "VirtualRide"]:
             w = safe_float(a.get("average_watts"), 0)
@@ -135,24 +152,33 @@ def get_7d_load_from_activities(activities, today_str):
             if power_is_trusted(a) and w > 0:
                 tss = (t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100
             elif hr_a > 0:
-                tss = (t_sec / 60) * 0.35
-            else:
-                continue
+                base = (t_sec / 60) * 0.35
+
+                if hr_a >= 135:
+                    base *= 1.15
+                elif hr_a < 110:
+                    base *= 0.9
+
+                tss = base
 
         elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
-            tss = (t_sec / 60) * 0.45
+            hr_a = safe_float(a.get("average_heartrate"), 0)
+            base = (t_sec / 60) * 0.45
 
-        else:
-            continue
+            if hr_a >= 110:
+                base *= 1.15
+            elif hr_a < 95:
+                base *= 0.9
 
-        vals.append(tss)
+            tss = base
 
-    if not vals:
-        return 0, 0
+        if tss > 0:
+            vals_by_day[date_str] = vals_by_day.get(date_str, 0) + tss
 
-    last7 = vals[-7:]
-    avg7 = round(sum(last7) / len(last7), 1)
-    return avg7, round(sum(last7), 1)
+    total7 = round(sum(vals_by_day.values()), 1)
+    avg7 = round(total7 / 7, 1)
+
+    return avg7, total7
 
 def get_eftp_trend_from_sheet(sheet, today_str, current_eftp, lookback=7):
     try:
