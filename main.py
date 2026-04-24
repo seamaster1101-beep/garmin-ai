@@ -142,35 +142,7 @@ def get_7d_load_from_activities(activities, today_str):
         if t_sec <= 0:
             continue
 
-        a_type = a.get("type")
-        tss = 0
-
-        if a_type in ["Ride", "VirtualRide"]:
-            w = safe_float(a.get("average_watts"), 0)
-            hr_a = safe_float(a.get("average_heartrate"), 0)
-
-            if power_is_trusted(a) and w > 0:
-                tss = (t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100
-            elif hr_a > 0:
-                base = (t_sec / 60) * 0.35
-
-                if hr_a >= 135:
-                    base *= 1.15
-                elif hr_a < 110:
-                    base *= 0.9
-
-                tss = base
-
-        elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
-            hr_a = safe_float(a.get("average_heartrate"), 0)
-            base = (t_sec / 60) * 0.45
-
-            if hr_a >= 110:
-                base *= 1.15
-            elif hr_a < 95:
-                base *= 0.9
-
-            tss = base
+        tss = calc_activity_tss(a, FTP_GARMIN)
 
         if tss > 0:
             vals_by_day[date_str] = vals_by_day.get(date_str, 0) + tss
@@ -231,6 +203,82 @@ def get_eftp_trend_from_sheet(sheet, today_str, current_eftp, lookback=7):
     except Exception as e:
         print(f"⚠️ eFTP trend error: {e}")
         return "", None
+
+def detect_anomalies(hrv, rhr, tss_today, eftp_val, ftp):
+    flags = []
+
+    if hrv > 130 or hrv < 25:
+        flags.append("HRV аномалия")
+
+    if rhr > 65 or rhr < 38:
+        flags.append("RHR вне диапазона")
+
+    if tss_today > 250:
+        flags.append("очень высокий TSS")
+
+    if eftp_val and abs(eftp_val - ftp) > 40:
+        flags.append("eFTP скачок")
+
+    return flags
+
+def calc_activity_tss(a, ftp):
+    a_type = a.get("type")
+    t_sec = a.get("moving_time", 0) or 0
+
+    if t_sec <= 0:
+        return 0.0
+
+    if a_type in ["Ride", "VirtualRide"]:
+        w = safe_float(a.get("average_watts"), 0)
+        hr_a = safe_float(a.get("average_heartrate"), 0)
+
+        if power_is_trusted(a) and w > 0 and ftp > 0:
+            return round((t_sec / 3600) * (w / ftp) ** 2 * 100, 1)
+
+        if hr_a > 0:
+            base = (t_sec / 60) * 0.35
+
+            if hr_a >= 135:
+                base *= 1.15
+            elif hr_a < 110:
+                base *= 0.9
+
+            return round(base, 1)
+
+        return 0.0
+
+    if a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
+        hr_a = safe_float(a.get("average_heartrate"), 0)
+        base = (t_sec / 60) * 0.45
+
+        if hr_a >= 110:
+            base *= 1.15
+        elif hr_a < 95:
+            base *= 0.9
+
+        return round(base, 1)
+
+    return 0.0
+
+def get_accumulated_fatigue_flag(hrv, hrv_14d_avg, tss7_sum, recovery_h, tsb):
+    reasons = []
+
+    if hrv_14d_avg > 0 and hrv < hrv_14d_avg * 0.85:
+        reasons.append("HRV ниже тренда")
+
+    if tss7_sum >= 180:
+        reasons.append("высокая 7д нагрузка")
+
+    if recovery_h >= 12:
+        reasons.append("остаток восстановления")
+
+    if tsb < -10:
+        reasons.append("TSB в заметном минусе")
+
+    if len(reasons) >= 2:
+        return "⚠️ Накопленная усталость: " + ", ".join(reasons)
+
+    return ""
 
 def send_tg(msg):
     if len(msg) > 4000: 
@@ -606,7 +654,7 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
             hr_a = safe_float(a.get("average_heartrate"), 0)
 
             if power_is_trusted(a) and w_avg > 0 and ftp > 0:
-                tss_last = (t_sec / 3600) * (w_avg / ftp) ** 2 * 100
+                tss_last = calc_activity_tss(a, ftp)
                 rec_add = tss_last * 0.30
             elif hr_a > 0:
                 rec_add = (t_sec / 60) * 0.43
@@ -748,6 +796,13 @@ def main():
         
     except Exception as e:
         print(f"❌ Sheets fail: {e}")
+        
+    core_morning_keys = ["Resting_HR", "HRV", "Sleep_Score", "Sleep_Hours", "Recovery_Time"]
+
+    morning_is_fresh = any(
+        str(morning.get(k, "")).replace('\xa0', '').strip() not in ["", "None", "Н/Д"]
+        for k in core_morning_keys
+    )    
 
     # Metrics (Ключи строго как в заголовках таблицы)
     rhr = safe_float(morning.get("Resting_HR"), 60)
@@ -756,8 +811,7 @@ def main():
     tsb_raw = morning.get("TSB_Garmin", None)
     tsb_garmin = safe_float(tsb_raw, 999, allow_negative=True)
     weight = safe_float(morning.get("Weight"), 88.0)
-    eftp_sheet = safe_float(morning.get("eFTP_Strava"), 0)
-    
+        
     if weight > 500: weight /= 10
     fat = safe_float(morning.get("Body_Fat"), 18.3)
     if fat > 100: fat /= 10
@@ -803,39 +857,7 @@ def main():
         if a.get("start_date_local", "")[:10] == today:
             continue
             
-        tss = 0
-        a_type = a.get("type")
-        t_sec = a.get("moving_time", 0)
-
-        if a_type in ["Ride", "VirtualRide"]:
-            w = safe_float(a.get("average_watts"), 0)
-            hr_a = safe_float(a.get("average_heartrate"), 0)
-
-            if power_is_trusted(a) and w > 0:
-                tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1)
-            elif hr_a > 0:
-                base = (t_sec / 60) * 0.35
-
-                if hr_a >= 135:
-                    base *= 1.15
-                elif hr_a < 110:
-                    base *= 0.9
-
-                tss = round(base, 1)
-            else:
-                tss = 0
-            
-        # Расширенный список для силовых
-        elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
-            hr_a = safe_float(a.get("average_heartrate"), 0)
-            base = (t_sec / 60) * 0.45
-
-            if hr_a >= 110:
-                base *= 1.15
-            elif hr_a < 95:
-                base *= 0.9
-
-            tss = round(base, 1)
+        tss = calc_activity_tss(a, FTP_GARMIN)
         
         # ВАЖНО: Это то, что ты удалил. Без этого CTL/ATL всегда будут 0
         if tss > 0:
@@ -938,37 +960,8 @@ def main():
             t_sec = a.get("moving_time", 0)
             dur_min = round(t_sec / 60, 1)
 
-            tss = 0
             include_in_stats = a_type not in ["Walk", "Hike"]
-
-            if a_type in ["Ride", "VirtualRide"]:
-                w = safe_float(a.get("average_watts"), 0)
-                hr_a = safe_float(a.get("average_heartrate"), 0)
-
-                if power_is_trusted(a) and w > 0:
-                    tss = round((t_sec / 3600) * (w / FTP_GARMIN) ** 2 * 100, 1)
-                elif hr_a > 0:
-                    base = (t_sec / 60) * 0.35
-
-                    if hr_a >= 135:
-                        base *= 1.15
-                    elif hr_a < 110:
-                        base *= 0.9
-
-                    tss = round(base, 1)
-                else:
-                    tss = 0
-
-            elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
-                hr_a = safe_float(a.get("average_heartrate"), 0)
-                base = (t_sec / 60) * 0.45
-
-                if hr_a >= 110:
-                    base *= 1.15
-                elif hr_a < 95:
-                    base *= 0.9
-
-                tss = round(base, 1)
+            tss = calc_activity_tss(a, FTP_GARMIN)
 
             if include_in_stats:
                 total_tss += tss
@@ -993,6 +986,9 @@ def main():
 
         total_tss = round(total_tss, 1)
         total_minutes = round(total_minutes, 1)
+
+        flags = detect_anomalies(hrv, rhr, total_tss, eftp_val, FTP_GARMIN)
+        flags_text = f"⚠️ {' | '.join(flags)}\n\n" if flags else ""
 
         acts_text = "\n".join(details) if details else "Сегодня без тренировок."
         
@@ -1056,10 +1052,12 @@ def main():
         report = (
             f"🌙 ИТОГИ ДНЯ \n\n"
             f"{ftp_line}\n"
+            f"{flags_text}"
             f"🏋️ Тренировок: {len(day_acts)}\n"
             f"🚶 Всего активностей: {len(all_day_acts)}\n"
             f"⏱ Общее время: {total_minutes} мин\n"
             f"📈 Суммарный TSS: {total_tss}\n"
+            f"📦 Нагрузка 7д: {tss7_sum} TSS | ср {tss7_avg}/день\n"
             f"🏋️ Силовая: Feel {strength_feel if strength_feel > 0 else 'н/д'} | Effort {strength_effort if strength_effort > 0 else 'н/д'}\n"
             f"🚴 Вело: Feel {ride_feel if ride_feel > 0 else 'н/д'} | Effort {ride_effort if ride_effort > 0 else 'н/д'}\n\n"
             f"{acts_text}\n\n"
@@ -1074,6 +1072,14 @@ def main():
 
     # Данные для расчета (убедись, что они определены выше)
     hrv_14d_avg = get_hrv_14d_avg_from_sheet(sheet, today) if sheet else 85.0
+    
+    fatigue_flag = get_accumulated_fatigue_flag(
+        hrv=hrv,
+        hrv_14d_avg=hrv_14d_avg,
+        tss7_sum=tss7_sum,
+        recovery_h=recovery_h,
+        tsb=tsb
+    )
     ##print("DEBUG hrv_14d_avg:", hrv_14d_avg)
 
     # --- 3. ПЕРСОНАЛИЗИРОВАННЫЙ РАСЧЕТ ГОТОВНОСТИ (v2.1) & FitAge
@@ -1222,6 +1228,8 @@ def main():
 
             f"Нагрузка 7д: {tss7_sum} (ср {tss7_avg})\n"
             f"HRV тренд: {int(hrv)} vs ср {int(hrv_14d_avg)}\n"
+            f"Morning fresh: {morning_is_fresh}\n"
+            f"Fatigue flag: {fatigue_flag if fatigue_flag else 'нет'}\n"
 
             f"\nПРАВИЛА АНАЛИЗА:\n"
             f"{sleep_note}"
@@ -1229,6 +1237,7 @@ def main():
             f"- ЛИЧНЫЕ ДИАПАЗОНЫ:\n"
             f"  RHR: 46–54 (норма), <50 отлично, >55 сигнал усталости.\n"
             f"  HRV: <40 низко; 40–70 нижняя зона; 70–95 норма; >95 пик готовности.\n"
+            f"- Если Morning fresh = False, отчёт предварительный: не делай жёстких выводов по HRV, пульсу, сну и Recovery.\n"
 
             f"- Если HRV и пульс в норме (RHR ≤54 и HRV ≥70), не называй состояние истощением.\n"
             f"- HRV <40 — это усталость, но не катастрофа, если пульс в норме.\n"
@@ -1241,6 +1250,7 @@ def main():
             f"- При HRV >95, пульсе <=45, сне >=7ч и recovery <=6ч не рекомендуй отдых.\n"
             f"- В таком случае базовый вердикт: работа Z2-Z3, а не Z1 и не полный отдых.\n"
             f"- Отдых предлагай только если Recovery >24ч, Sleep Score <60 или HRV реально просел.\n"
+            f"- Если утренние данные отсутствуют и используются default значения, явно напиши, что отчёт предварительный.\n"
 
             f"- Контроль зон: <2.0 отдых; 2.0–3.0 Z1–Z2; 3.0–3.5 осторожно Z2; >3.5 можно Z3.\n"
             f"- Не повторяй точные цифры почти дословно. В большинстве случаев давай интерпретацию, а не пересказ.\n"
@@ -1280,16 +1290,24 @@ def main():
             s_status = "Отлично"
 
         # 2. И только потом используем его в отчете
+
+        flags = detect_anomalies(hrv, rhr, 0, eftp_val, FTP_GARMIN)
+        flags_text = f"⚠️ {' | '.join(flags)}\n\n" if flags else ""
  
         report = (f"🌅 УТРЕННИЙ СТАТУС {status_icon}\n\n"
+                  f"{'✅ Morning свежий' if morning_is_fresh else '⚠️ Morning данных за сегодня нет'}\n"
                   f"{ftp_line}\n"
+                  f"{flags_text}"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
+                  f"📉 HRV тренд: {int(hrv)} vs ср {int(hrv_14d_avg)}\n"
                   f"🛡 Статус: {day_status}\n"
                   f"🔋 Готовность: {score}/5\n"
                   f"🕒 Восстановление: {rec_text}\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
                   f"🫁 VO2max: {vo2_calc} ({vo2_source})\n"
                   f"📊 Форма (TSB): Garmin {tsb_garmin if tsb_garmin != 999 else 'н/д'} | Strava {tsb_strava}\n"
+                  f"📦 Нагрузка 7д: {tss7_sum} TSS | ср {tss7_avg}/день\n"
+                  f"{fatigue_flag + chr(10) if fatigue_flag else ''}"
                   f"🧬 Fit Age: {f_age}\n\n"
                   f"🤖 АРНИ:\n{ai_msg}")
 
@@ -1335,32 +1353,7 @@ def main():
             power_rules_prompt = ""
         
         # Расчет TSS
-        if a_type_last in ["Ride", "VirtualRide"]:
-            if power_trusted and w_avg > 0:
-                tss_last = round((t_sec / 3600) * (w_avg / FTP_GARMIN) ** 2 * 100, 1)
-            elif hr_avg > 0:
-                base = (t_sec / 60) * 0.35
-
-                if hr_avg >= 135:
-                    base *= 1.15
-                elif hr_avg < 110:
-                    base *= 0.9
-
-                tss_last = round(base, 1)
-            else:
-                tss_last = 0
-                
-        elif a_type_last in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
-            base = (t_sec / 60) * 0.45
-
-            if hr_avg >= 110:
-                base *= 1.15
-            elif hr_avg < 95:
-                base *= 0.9
-
-            tss_last = round(base, 1)
-        else:
-            tss_last = 0
+        tss_last = calc_activity_tss(last, FTP_GARMIN)
 
         if is_strength:
             subjective_prompt = (
