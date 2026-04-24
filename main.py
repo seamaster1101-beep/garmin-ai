@@ -450,6 +450,34 @@ def update_eftp_in_sheet(target_date, eftp_val):
     except Exception as e:
         print(f"⚠️ Sheet update error: {e}")
 
+def update_age_in_sheet(target_date, age_val):
+    try:
+        client = get_google_client()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Morning")
+        dates = sheet.col_values(1)
+
+        for i, val in enumerate(dates):
+            if str(val).startswith(target_date):
+                header = sheet.row_values(1)
+                header = [str(h).replace('\xa0', '').strip() for h in header]
+
+                possible_columns = ["Age"]
+                target_idx = None
+
+                for col in possible_columns:
+                    if col in header:
+                        target_idx = header.index(col) + 1
+                        break
+
+                if target_idx:
+                    sheet.update_cell(i + 1, target_idx, round(age_val, 1))
+                    print(f"✅ Age {round(age_val, 1)} записан.")
+                else:
+                    print(f"⚠️ Колонка Age не найдена. Header: {header}")
+                break
+    except Exception as e:
+        print(f"⚠️ Age update error: {e}")
+
 def update_tsb_strava_in_sheet(target_date, tsb_val):
     try:
         client = get_google_client()
@@ -1259,6 +1287,7 @@ def main():
     f_age = round(max(49.0, min(get_bio_age() - 1.0, f_age_raw)), 1)
     
     update_fit_age_in_sheet(today, f_age)
+    update_age_in_sheet(today, get_bio_age())
 
     ##if eftp_val:
         ##update_eftp_in_sheet(today, eftp_val)
