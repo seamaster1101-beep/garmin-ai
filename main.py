@@ -1392,7 +1392,7 @@ def main():
         flags_text = f"⚠️ {' | '.join(flags)}\n\n" if flags else ""
  
         report = (f"🌅 УТРЕННИЙ СТАТУС {status_icon}\n\n"
-                  f"{'✅ Morning свежий' if morning_is_fresh else '⚠️ Morning данных за сегодня нет'}\n"
+                  f"{'✅ Утренние данные за сегодня получены' if morning_is_fresh else '⚠️ Утренние данные неполные'}\n"
                   f"{ftp_line}\n"
                   f"{flags_text}"
                   f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"
