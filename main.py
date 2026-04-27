@@ -67,7 +67,7 @@ def eftp_is_eligible(a):
     w = safe_float(a.get("average_watts"), 0)
     hr = safe_float(a.get("average_heartrate"), 0)
 
-    if t_sec < 30 * 60:   # меньше 30 минут не берём для eFTP
+    if t_sec < 20 * 60:   # меньше 20 минут не берём для eFTP
         return False
     if w < 120:
         return False
