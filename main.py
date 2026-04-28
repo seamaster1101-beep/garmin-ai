@@ -1446,6 +1446,7 @@ def main():
             distance_prompt = f"Дистанция: {dist} км\n"
         else:
             distance_prompt = ""
+            
         # POWER RULES PROMPT
         if is_ride and power_trusted and w_avg > 0:
             power_prompt = (
@@ -1468,8 +1469,49 @@ def main():
         else:
             power_prompt = ""
             power_rules_prompt = ""
-        
-        # Расчет TSS
+
+        # --- LONG OUTDOOR RIDE RULES ---
+        name_lc = str(name).lower()
+        is_indoor_like = (
+            a_type_last == "VirtualRide"
+            or "зальный велоспорт" in name_lc
+            or "indoor" in name_lc
+            or "virtual" in name_lc
+            or "technogym" in name_lc
+            or bool(last.get("trainer"))
+        )
+
+        if is_ride and not is_indoor_like and dur_min >= 90:
+            elev_gain = safe_float(last.get("total_elevation_gain"), 0)
+
+            long_ride_rules = (
+                f"- Если длительность >= 90 минут, классифицируй тренировку как длительную аэробную (endurance).\n"
+                f"- Если длительность >= 150 минут, используй формулировки: длительная, объёмная, базовая тренировка на выносливость.\n"
+                f"- Для длительных поездок НЕ используй формулировки: лёгкая тренировка, короткая сессия.\n"
+                f"- Даже при низком IF/TSS подчёркивай объём: значительный объём работы.\n"
+                f"- Если Effort <= 3, используй: контролируемая, комфортная, хорошо перенесённая нагрузка.\n"
+                f"- Если Feel >= 4, добавляй: тренировка прошла уверенно и без признаков перегрузки.\n"
+                f"- Для длительных поездок НЕ делай акцент на IF как на главном показателе.\n"
+                f"- Главный акцент: длительность, объём, стабильность работы.\n"
+                f"- Если большая часть времени в Z1-Z2, пиши: работа в аэробной зоне с контролируемым темпом.\n"
+                f"- Если есть выходы в Z3 на рельефе, формулируй: естественные повышения интенсивности на подъёмах.\n"
+                f"- После длительных поездок (>=150 мин) в разделе 'ЗАВТРА' НЕ предлагай рабочие тренировки.\n"
+                f"- Используй: восстановительная активность, Z1 или лёгкая Z2, без акцента на нагрузку.\n"
+            )
+
+            if elev_gain > 300:
+                long_ride_rules += (
+                    f"- Обязательно упомяни рельеф: холмистый маршрут, набор высоты, работа на подъёмах.\n"
+                )
+
+            if elev_gain > 600:
+                long_ride_rules += (
+                    f"- Подчеркни: значительный рельеф или существенный набор высоты.\n"
+                )
+
+            power_rules_prompt += long_ride_rules
+     
+        # РАСЧЁТ TSS
         tss_last = calc_activity_tss(last, FTP_GARMIN)
 
         if is_strength:
