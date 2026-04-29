@@ -708,14 +708,16 @@ def estimate_recovery_hours(acts, today_str, ftp, hrv, rhr, tsb):
         if a_type in ["Ride", "VirtualRide"]:
             w_avg = safe_float(a.get("average_watts"), 0)
             hr_a = safe_float(a.get("average_heartrate"), 0)
+            tss_last = calc_activity_tss(a, ftp)
 
-            if power_is_trusted(a) and w_avg > 0 and ftp > 0:
-                tss_last = calc_activity_tss(a, ftp)
+            if power_is_trusted(a) and w_avg > 0 and ftp > 0 and tss_last > 0:
                 rec_add = tss_last * 0.30
+            elif hr_a > 0 and tss_last > 0:
+                rec_add = tss_last * 0.22
             elif hr_a > 0:
-                rec_add = (t_sec / 60) * 0.43
+                rec_add = (t_sec / 60) * 0.18
             else:
-                rec_add = (t_sec / 60) * 0.30
+                rec_add = (t_sec / 60) * 0.12
 
         elif a_type in ["Weight Training", "Workout", "WeightTraining", "Gym"]:
             rec_add = (t_sec / 60) * 0.08
