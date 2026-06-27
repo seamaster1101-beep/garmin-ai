@@ -4,7 +4,7 @@ from google.oauth2.service_account import Credentials
 
 # --- CONFIG ---
 BIRTH_DATE = datetime(1963, 5, 29)
-FTP_GARMIN = 242 
+FTP_GARMIN = 239 
 SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
 
 def get_bio_age():
@@ -1475,7 +1475,7 @@ def main():
                   f"🛡 Статус: {day_status}\n"
                   f"😴 Качество сна: {sleep_score} ({s_status})\n"
                   f"📉 HRV тренд: {int(hrv)} vs ср {int(hrv_14d_avg)}\n"
-                  f"❤️ Пульс: {int(rhr)} | 🌀 HRV: {int(hrv)}\n"                  
+                  f"❤️ Пульс: {int(rhr)}\n"                  
                   f"🫁 VO2max: {vo2_calc} ({vo2_source})\n"
                   f"{ftp_line}\n"
                   f"{flags_text}"                  
