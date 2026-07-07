@@ -651,10 +651,11 @@ def get_last_activity_end_yesterday(acts, yesterday_str):
 
 def estimate_performance(activities, weight):
     vals_vo2 = []
-    hr_max = 208 - (0.7 * get_bio_age())
+    ##hr_max = 208 - (0.7 * get_bio_age())
+    hr_max = 172
 
     if not weight or weight <= 0:
-        weight = 88.0
+        weight = 88.8
 
     for a in sorted(activities, key=lambda x: x.get("start_date_local", "")):
         if not eftp_is_eligible(a):
