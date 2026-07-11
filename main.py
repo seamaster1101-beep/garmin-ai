@@ -652,7 +652,7 @@ def get_last_activity_end_yesterday(acts, yesterday_str):
 def estimate_performance(activities, weight):
     vals_vo2 = []
     ##hr_max = 208 - (0.7 * get_bio_age())
-    hr_max = 172
+    hr_max = 169
 
     if not weight or weight <= 0:
         weight = 88.8
