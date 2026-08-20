@@ -4,7 +4,7 @@ from google.oauth2.service_account import Credentials
 
 # --- CONFIG ---
 BIRTH_DATE = datetime(1963, 5, 29)
-FTP_GARMIN = 242 
+FTP_GARMIN = 241 
 SPREADSHEET_ID = "1rxg5oqDXWXwHSHMmR-RbJuad8rXe2OdmCEMUMY2SBT4"
 
 def get_bio_age():
